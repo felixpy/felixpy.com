@@ -32,9 +32,6 @@ const styles = theme => ({
   },
   actions: {
     display: 'flex'
-  },
-  avatar: {
-    backgroundColor: red[500]
   }
 });
 
@@ -47,6 +44,7 @@ class Profile extends React.Component {
         <CardHeader
           avatar={
             <Avatar
+              alt="Felix"
               aria-label="Felix"
               className={classes.avatar}
               src={avatar}
