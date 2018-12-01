@@ -58,7 +58,10 @@ class Profile extends React.Component {
           title="Keyboard"
         />
         <CardContent>
-          <Typography component="p">Try it yourself.</Typography>
+          <Typography component="p">
+            <span>Try it yourself. Blog: </span>
+            <a href="//felixpy.github.io">felixpy.github.io</a>
+          </Typography>
         </CardContent>
         <CardActions className={classes.actions} disableActionSpacing>
           <IconButton
