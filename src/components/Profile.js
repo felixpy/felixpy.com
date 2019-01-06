@@ -9,6 +9,7 @@ import CardActions from '@material-ui/core/CardActions';
 import Avatar from '@material-ui/core/Avatar';
 import IconButton from '@material-ui/core/IconButton';
 import Typography from '@material-ui/core/Typography';
+import { faCodeBranch, faCode } from '@fortawesome/free-solid-svg-icons';
 import {
   faGithub,
   faTwitter,
@@ -59,8 +60,7 @@ class Profile extends React.Component {
         />
         <CardContent>
           <Typography component="p">
-            <span>Try it yourself. Blog: </span>
-            <a href="//felixpy.github.io">felixpy.github.io</a>
+            <span>Try it yourself. 👇👇👇</span>
           </Typography>
         </CardContent>
         <CardActions className={classes.actions} disableActionSpacing>
@@ -73,12 +73,26 @@ class Profile extends React.Component {
           </IconButton>
           <IconButton
             target="_blank"
+            href="//github.com/codetrial"
+            aria-label="Codetrial Github"
+          >
+            <FontAwesomeIcon icon={faCodeBranch} />
+          </IconButton>
+          <IconButton
+            target="_blank"
             href="//felixpy.github.io"
             aria-label="Blog"
           >
             <FontAwesomeIcon icon={faTree} />
           </IconButton>
           <IconButton
+            target="_blank"
+            href="//codetrial.github.io"
+            aria-label="Codetrial Docs"
+          >
+            <FontAwesomeIcon icon={faCode} />
+          </IconButton>
+          {/* <IconButton
             target="_blank"
             href="//500px.com/gofelixpy"
             aria-label="500px"
@@ -98,7 +112,7 @@ class Profile extends React.Component {
             aria-label="Facebook"
           >
             <FontAwesomeIcon icon={faFacebook} />
-          </IconButton>
+          </IconButton> */}
         </CardActions>
       </Card>
     );
