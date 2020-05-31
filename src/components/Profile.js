@@ -14,25 +14,25 @@ import {
   faGithub,
   faTwitter,
   faFacebook,
-  fa500px
+  fa500px,
 } from '@fortawesome/free-brands-svg-icons';
 import { faTree } from '@fortawesome/free-solid-svg-icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import avatar from '../static/images/avatar.jpg';
 import keyboard from '../static/images/keyboard.jpg';
 
-const styles = theme => ({
+const styles = (theme) => ({
   card: {
     maxWidth: 400,
-    margin: '50px auto 0 auto'
+    margin: '50px auto 0 auto',
   },
   media: {
     height: 0,
-    paddingTop: '56.25%' // 16:9
+    paddingTop: '56.25%', // 16:9
   },
   actions: {
-    display: 'flex'
-  }
+    display: 'flex',
+  },
 });
 
 class Profile extends React.Component {
@@ -73,8 +73,8 @@ class Profile extends React.Component {
           </IconButton>
           <IconButton
             target="_blank"
-            href="//github.com/codetrial"
-            aria-label="Codetrial Github"
+            href="//github.com/openfext"
+            aria-label="FEXT Github"
           >
             <FontAwesomeIcon icon={faCodeBranch} />
           </IconButton>
@@ -87,8 +87,8 @@ class Profile extends React.Component {
           </IconButton>
           <IconButton
             target="_blank"
-            href="//codetrial.github.io"
-            aria-label="Codetrial Docs"
+            href="//openfext.github.io/docs"
+            aria-label="FEXT Docs"
           >
             <FontAwesomeIcon icon={faCode} />
           </IconButton>
@@ -120,7 +120,7 @@ class Profile extends React.Component {
 }
 
 Profile.propTypes = {
-  classes: PropTypes.object.isRequired
+  classes: PropTypes.object.isRequired,
 };
 
 export default withStyles(styles)(Profile);
