@@ -11,6 +11,10 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -26,4 +30,4 @@ jobs:
       - run: npm run build
       - name: Verify preinstalled Chrome
         run: google-chrome --version
-      - run: npm test
+      - run: npm test -- --shard=${{ matrix.shard }}/3
