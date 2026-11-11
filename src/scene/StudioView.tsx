@@ -956,19 +956,21 @@ declare global {
 
 export default function StudioView(props: Props) {
   const mapMarker = useRef<SVGGElement>(null);
+  // Keep camera projection and pointer coordinates in CSS pixels on software-rendered test runners.
+  const e2e = import.meta.env.DEV && import.meta.env.VITE_STUDIO_E2E === '1';
   return (
     <>
       <Canvas
         className="studio-canvas"
         shadows={props.environment.quality === 'high'}
-        dpr={props.environment.quality === 'high' ? [1, 1.5] : 1}
+        dpr={e2e ? 0.5 : props.environment.quality === 'high' ? [1, 1.5] : 1}
         camera={{
           fov: viewFov,
           near: 0.028,
           far: waterfrontFarClip,
           position: [eye.x, eye.y, eye.defaultZ],
         }}
-        gl={{ antialias: true, powerPreference: 'high-performance', alpha: false }}
+        gl={{ antialias: !e2e, powerPreference: 'high-performance', alpha: false }}
         onCreated={({ gl }) => {
           gl.toneMapping = T.AgXToneMapping;
           gl.toneMappingExposure = 1.04;
