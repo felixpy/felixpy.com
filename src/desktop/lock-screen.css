@@ -1,0 +1,132 @@
+.flow-wallpaper {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 72% 108%, #427a79 0, transparent 62%),
+    radial-gradient(ellipse at 6% 92%, #223d57 0, transparent 56%),
+    linear-gradient(155deg, #0a141e 12%, #142635 76%, #1a3442);
+}
+
+.lock-screen {
+  position: absolute;
+  z-index: 1100;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  color: #f4f4e9;
+  isolation: isolate;
+  overflow: hidden;
+  opacity: 1;
+  transition:
+    opacity 230ms ease,
+    transform 260ms cubic-bezier(0.24, 0.7, 0.2, 1);
+}
+
+.lock-screen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background: linear-gradient(180deg, #09131b42, transparent 60%, #0a15267d);
+}
+
+.lock-screen-leaving {
+  opacity: 0;
+  transform: translateY(-2%);
+}
+.lock-top {
+  display: flex;
+  justify-content: end;
+  gap: 0.4em;
+  padding: clamp(9px, 2.8cqh, 21px);
+  font-size: clamp(12px, 2.7cqh, 16px);
+}
+.lock-top button {
+  display: grid;
+  place-items: center;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0 0.4em;
+  border-radius: 4px;
+  color: #e1eeec;
+}
+.lock-top button:hover {
+  background: #daeae31f;
+}
+.lock-top svg {
+  width: 1.15em;
+  height: 1.15em;
+}
+.lock-main {
+  align-self: start;
+  margin-top: clamp(10px, 10cqh, 92px);
+  text-align: center;
+}
+.lock-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  margin-bottom: clamp(7px, 2.2cqh, 18px);
+  color: #bdd4d4;
+  font-size: clamp(10px, 2.45cqh, 15px);
+}
+.lock-status svg {
+  width: 1em;
+  height: 1em;
+}
+.lock-clock p {
+  font-size: clamp(13px, 4cqh, 23px);
+  font-weight: 500;
+}
+.lock-clock time {
+  display: block;
+  font-size: clamp(54px, 21cqh, 156px);
+  line-height: 1.05;
+  font-weight: 500;
+  letter-spacing: -0.063em;
+  font-variant-numeric: tabular-nums;
+}
+.lock-access {
+  display: grid;
+  justify-items: center;
+  gap: 0.55em;
+  padding: 0 0 clamp(18px, 10cqh, 86px);
+}
+.lock-owner {
+  font-size: clamp(12px, 3cqh, 17px);
+  letter-spacing: 0.035em;
+}
+.lock-unlock {
+  display: inline-flex;
+  align-items: center;
+  gap: 1.2em;
+  min-height: 38px;
+  padding: 0.45em 0.95em 0.45em 1.15em;
+  border-radius: 999px;
+  border: 1px solid #e8f3ea61;
+  background: #0d232d78;
+  color: #f6f9f3;
+  font-size: clamp(12px, 3cqh, 17px);
+  transition: background 160ms ease;
+}
+.lock-unlock:hover {
+  background: #253f48;
+}
+.lock-unlock svg {
+  width: 1.08em;
+  height: 1.08em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lock-screen,
+  .lock-unlock {
+    transition: none;
+  }
+}
+
+.compact-studio .lock-top {
+  padding-right: 62px;
+}

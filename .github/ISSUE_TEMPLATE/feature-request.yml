@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest an improvement to Felix Studio.
+body:
+  - type: markdown
+    attributes:
+      value: English and Simplified Chinese are both welcome. Please search existing issues first.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to improve?
+      description: Describe where it comes up and what you are trying to do.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe how you would like the site to behave.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: References or alternatives
+      description: Share relevant examples, mockups, or other approaches you considered.

@@ -1,0 +1,1 @@
+node scripts/git/check-commit.mjs "$1"

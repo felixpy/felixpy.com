@@ -1,0 +1,37 @@
+name: Bug report
+description: Report a reproducible problem in Felix Studio.
+body:
+  - type: markdown
+    attributes:
+      value: English and Simplified Chinese are both welcome. Please search existing issues first.
+  - type: input
+    id: location
+    attributes:
+      label: Page or view
+      placeholder: Studio window, desktop music player, mobile profile, or a URL
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: Start from the page or view where the problem occurs.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: Describe what you expected to happen and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Browser and operating system
+      placeholder: Chrome on Windows 11, 1440 × 900 viewport
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots, recordings, or console errors
+      description: Attach anything that helps reproduce the issue. Remove personal information and secrets before sharing.
