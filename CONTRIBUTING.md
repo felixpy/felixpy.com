@@ -31,4 +31,4 @@ The `commit-msg` hook checks [Conventional Commits](https://www.conventionalcomm
 
 ## Open a pull request
 
-Explain what changed, why it changed, and how you verified it. Link related issues and call out anything reviewers should check manually. [GitHub Actions](.github/workflows/ci.yml) runs the build and browser suite, and validates pull request titles.
+Explain what changed, why it changed, and how you verified it. Link related issues and call out anything reviewers should check manually. [GitHub Actions](.github/workflows/ci.yml) validates pull request titles, builds the site, and runs `npm run test:ci`. Run `npm test` locally for the full suite, including the `@webgl` tests.

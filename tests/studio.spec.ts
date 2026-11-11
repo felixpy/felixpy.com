@@ -148,7 +148,7 @@ test('the panorama covers the window from the seat and across the room', () => {
   }
 });
 
-test('the waterfront stays across the river as the camera moves and still occludes lights', async ({
+test('the waterfront stays across the river as the camera moves and still occludes lights @webgl', async ({
   page,
 }) => {
   await page.goto('/');
@@ -273,7 +273,7 @@ async function start(page: Page) {
   await expect(page.locator('.studio-loading')).toHaveCount(0, { timeout: 20_000 });
 }
 
-test('the room starts music on the first drag and turns without leaving the seat', async ({
+test('the room starts music on the first drag and turns without leaving the seat @webgl', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -333,7 +333,7 @@ test('the room starts music on the first drag and turns without leaving the seat
     expect(item.position[0]).toBe(display.x);
 });
 
-test('clicking the workbench switches seats and inspection returns to the active seat', async ({
+test('clicking the workbench switches seats and inspection returns to the active seat @webgl', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -378,7 +378,7 @@ test('clicking the workbench switches seats and inspection returns to the active
   await expect.poll(camera).toEqual(desk);
 });
 
-test('the travel board focuses the wall and its pins without opening the computer', async ({
+test('the travel board focuses the wall and its pins without opening the computer @webgl', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -409,7 +409,9 @@ test('the travel board focuses the wall and its pins without opening the compute
   await expect.poll(camera).toEqual(before);
 });
 
-test('live weather keeps the previous sky until a city response settles', async ({ page }) => {
+test('live weather keeps the previous sky until a city response settles @webgl', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.addInitScript(() =>
     localStorage.setItem(
@@ -449,7 +451,9 @@ test('live weather keeps the previous sky until a city response settles', async 
   await expect.poll(weather).toBe('雨');
 });
 
-test('physical monitor keeps its aspect ratio and owns input while in use', async ({ page }) => {
+test('physical monitor keeps its aspect ratio and owns input while in use @webgl', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await start(page);
   await page.keyboard.press('e');
@@ -515,7 +519,9 @@ test('physical monitor keeps its aspect ratio and owns input while in use', asyn
   await expect(profileHeading).toBeVisible();
 });
 
-test('look limits, remote state, and drawer ownership survive transitions', async ({ page }) => {
+test('look limits, remote state, and drawer ownership survive transitions @webgl', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.addInitScript(() =>
     localStorage.setItem(
@@ -569,7 +575,9 @@ test('look limits, remote state, and drawer ownership survive transitions', asyn
     .toBeCloseTo(shut, 4);
 });
 
-test('case inspection changes the camera while the case stays anchored', async ({ page }) => {
+test('case inspection changes the camera while the case stays anchored @webgl', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.addInitScript(() =>
     localStorage.setItem(
@@ -818,7 +826,7 @@ test('the music collection shares playback state and the computer keeps portrait
   await expect(page.getByRole('button', { name: '暂停', exact: true })).toBeVisible();
 });
 
-test('the waterfront continues to move in 3D while the view is still', async ({ page }) => {
+test('the waterfront continues to move in 3D while the view is still @webgl', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.addInitScript(() =>
     localStorage.setItem('felix-studio-v1', JSON.stringify({ quality: 'low' })),

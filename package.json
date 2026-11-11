@@ -41,6 +41,7 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "test": "playwright test",
+    "test:ci": "playwright test --grep-invert @webgl",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "format:staged": "lint-staged",
