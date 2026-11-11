@@ -1,0 +1,35 @@
+Studio media credits
+
+ROG Scabbard II XXL Edition 20 mouse mat — ASUSTeK Computer Inc., product gallery top view.
+https://rog.asus.com/mice-mouse-pads/mouse-pads/rog-scabbard-ii-xxl-edition-20/gallery/
+
+New York panorama — Midtown Manhattan from Weehawken September 2021 HDR panorama
+King of Hearts, CC BY-SA 4.0
+Source: https://commons.wikimedia.org/wiki/File:Midtown_Manhattan_from_Weehawken_September_2021_HDR_panorama_(cropped).jpg
+License: https://creativecommons.org/licenses/by-sa/4.0/
+Adaptation: resized for window projection. A daylight variant was created by relighting the original with image generation and matching the horizon.
+Both New York variants are available under CC BY-SA 4.0 at /media/panoramas/new-york-night.webp and /media/panoramas/new-york-day.webp.
+
+Shanghai panorama — Pudong Skyline from The Bund 20260417
+DvTor8303, CC0
+Source: https://commons.wikimedia.org/wiki/File:Pudong_Skyline_from_The_Bund_20260417.jpg
+Adaptation: resized for window projection. The nighttime variant was created by relighting the original with image generation.
+
+Camera playback — Xinghai Bay Bridge, Dalian, at sunset
+昆 阿, Pexels License. Cropped for the camera LCD.
+Source: https://www.pexels.com/photo/bridge-on-sea-coast-at-sunset-17557991/
+License: https://www.pexels.com/license/
+
+Galactic Rap, Space Jazz, and Equatorial Complex — Kevin MacLeod (incompetech.com), CC BY 4.0
+https://incompetech.com/music/royalty-free/music.html
+https://creativecommons.org/licenses/by/4.0/
+
+Rain on Window Loop — CC0
+https://opengameart.org/content/rain-on-window-loop
+
+World atlas — Natural Earth 5.1.2, country and maritime geometries for the China point of view, public domain.
+Paper scan from World on Mercator's projection, 1847, David Rumsey Map Collection.
+https://commons.wikimedia.org/wiki/File:World_on_Mercator%27s_projection,_1847.jpg
+
+React Bits components — David Haz. MIT + Commons Clause.
+https://github.com/DavidHDev/react-bits/blob/main/LICENSE.md

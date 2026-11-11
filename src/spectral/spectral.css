@@ -1,0 +1,839 @@
+.spectral {
+  --spectral-ink: #eef4f7;
+  --spectral-muted: #9eb3c3;
+  --spectral-ice: #c5eaf3;
+  --spectral-bg: #060b0f;
+  color: var(--spectral-ink);
+  background-color: var(--spectral-bg);
+  font-family: 'Space Grotesk', 'Studio Han', sans-serif;
+  color-scheme: dark;
+}
+.spectral-shader,
+.spectral-background {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.spectral-background {
+  z-index: -1;
+}
+.spectral h1 {
+  font-weight: 500;
+}
+.phosphor-loader {
+  --phosphor: #8ed463;
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  overflow: hidden;
+  isolation: isolate;
+  background: #000;
+  color: var(--phosphor);
+}
+.phosphor-loader h1,
+.phosphor-loader > p {
+  position: absolute;
+  inset-inline: 0;
+  text-align: center;
+}
+.phosphor-loader h1 {
+  top: 30%;
+  font:
+    600 min(9vw, 16vh)/1 'Space Grotesk',
+    sans-serif;
+  letter-spacing: 0.1em;
+  text-shadow: 0 0 0.12em #8ed46340;
+}
+.phosphor-loader .spectral-shader {
+  z-index: 1;
+}
+.phosphor-loader .spectral-shader:not([data-ready]) {
+  visibility: hidden;
+}
+.phosphor-loader > p {
+  top: 50.44%;
+  z-index: 2;
+  color: #9bc87f;
+  font:
+    500 clamp(10px, 1.125vw, 20px)/1.3 'IBM Plex Sans',
+    'Studio Han',
+    sans-serif;
+  letter-spacing: 0.1em;
+}
+.phosphor-progress {
+  position: absolute;
+  top: 60.89%;
+  left: 50%;
+  z-index: 2;
+  width: 44%;
+  display: flex;
+  align-items: center;
+  gap: clamp(10px, 1.5vw, 24px);
+  transform: translateX(-50%);
+}
+.phosphor-track {
+  --progress: 0%;
+  --segment: calc(100% / 24);
+  --segment-gap: min(4px, 0.26vw);
+  position: relative;
+  flex: 1;
+  height: clamp(3px, 0.375vw, 7px);
+  background: repeating-linear-gradient(
+    90deg,
+    #182415 0 calc(var(--segment) - var(--segment-gap)),
+    transparent 0 var(--segment)
+  );
+}
+.phosphor-fill {
+  position: absolute;
+  inset: 0;
+  clip-path: inset(0 calc(100% - var(--progress)) 0 0);
+  background: repeating-linear-gradient(
+    90deg,
+    var(--phosphor) 0 calc(var(--segment) - var(--segment-gap)),
+    transparent 0 var(--segment)
+  );
+  filter: drop-shadow(0 0 3px #8ed46348);
+}
+.phosphor-cursor {
+  position: absolute;
+  inset: 0;
+  transform: translateX(var(--progress));
+}
+.phosphor-cursor span {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: clamp(6px, 0.75vw, 13px);
+  aspect-ratio: 1;
+  background: var(--phosphor);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 8px #8ed46342;
+}
+.phosphor-loader[data-reduced-motion='false'] .phosphor-cursor span {
+  animation: phosphor-blink 1.15s steps(2, jump-none) infinite;
+}
+.phosphor-percent {
+  flex: none;
+  width: 4ch;
+  text-align: right;
+  font:
+    500 clamp(12px, 1vw, 18px)/1.5 'IBM Plex Mono',
+    ui-monospace,
+    monospace;
+  font-variant-numeric: tabular-nums;
+}
+@keyframes phosphor-blink {
+  to {
+    opacity: 0.35;
+  }
+}
+
+.os-window-about,
+.os-window-music {
+  background: #060b0f;
+}
+.os-window-about .title-bar,
+.os-window-music .title-bar {
+  background: linear-gradient(180deg, #3b3c41, #313237);
+  border-color: #ffffff24;
+  color: #f0f0f3;
+  box-shadow: inset 0 1px #ffffff0a;
+}
+.spectral-profile,
+.spectral-player {
+  position: relative;
+  isolation: isolate;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(13px, 2.4cqh, 31px) clamp(22px, 4cqw, 68px) clamp(15px, 3.15cqh, 38px);
+  font-size: clamp(12px, 1.42cqw, 17px);
+}
+.spectral-profile {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100%;
+  background-image: radial-gradient(ellipse at 81% 45%, #152733, transparent 59%);
+}
+.spectral-profile .spectral-heading,
+.spectral-career {
+  grid-column: 1 / -1;
+}
+.spectral-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 14px;
+  position: relative;
+  z-index: 1;
+  color: #c1d1dd;
+  font-size: 0.95em;
+}
+.spectral-wordmark {
+  color: #eef4f7;
+  font-size: 1.44em;
+  font-weight: 600;
+  letter-spacing: -0.06em;
+}
+.spectral-heading nav {
+  display: flex;
+  gap: clamp(12px, 2.2cqw, 32px);
+}
+.spectral-heading nav a {
+  display: inline-flex;
+  gap: 0.24em;
+  align-items: center;
+  white-space: nowrap;
+}
+.spectral-heading svg,
+.spectral-follow svg {
+  width: 1em;
+  height: 1em;
+}
+.spectral-heading a:hover {
+  color: var(--spectral-ice);
+}
+.spectral-introduction {
+  position: relative;
+  align-self: center;
+  padding-block: clamp(12px, 2.7cqh, 36px);
+  z-index: 1;
+}
+.spectral-introduction h1 {
+  font-size: clamp(32px, min(6.4cqw, 11.5cqh), 104px);
+  letter-spacing: -0.072em;
+  line-height: 0.99;
+}
+.spectral-role {
+  color: #c5d3dd;
+  margin-top: clamp(12px, 2.2cqh, 24px);
+}
+.spectral-statement {
+  color: var(--spectral-muted);
+  margin-top: clamp(7px, 1.75cqh, 22px);
+  line-height: 1.5;
+}
+.spectral-follow {
+  display: inline-flex;
+  gap: 1.7em;
+  align-items: center;
+  padding: 0.63em 0.9em;
+  margin-top: clamp(11px, 2.15cqh, 26px);
+  background: var(--spectral-ice);
+  color: #12222c;
+  font-weight: 500;
+}
+.spectral-follow:hover {
+  background: #e3f6f9;
+}
+.spectral-tenure {
+  align-self: end;
+  margin: 0 0 clamp(13px, 3.5cqh, 32px);
+  color: var(--spectral-muted);
+  font-size: 0.77em;
+  text-align: right;
+}
+.spectral-tenure strong {
+  display: block;
+  font-size: clamp(20px, 2.55cqw, 42px);
+  letter-spacing: -0.057em;
+  font-weight: 400;
+  color: #d4e5ef;
+}
+.spectral-career {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(11px, 2.4cqw, 39px);
+  border-top: 1px solid #253b49;
+  padding-top: clamp(10px, 2cqh, 24px);
+  color: #d7e3eb;
+}
+.spectral-career span,
+.spectral-career p {
+  font-size: 0.79em;
+  color: var(--spectral-muted);
+}
+.spectral-career h2 {
+  margin-block: 0.28em 0.18em;
+  font-weight: 500;
+}
+
+.spectral-player {
+  --player-gutter: clamp(22px, 4cqw, 68px);
+  padding-inline: var(--player-gutter);
+  background-image: radial-gradient(ellipse at 29% 47%, #112633, transparent 53%);
+}
+.spectral-music-heading {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+}
+.spectral-music-heading > :last-child {
+  justify-self: end;
+}
+.spectral-heading .spectral-music-tabs {
+  display: flex;
+  align-items: center;
+  gap: clamp(14px, 1.6cqw, 24px);
+}
+.spectral-music-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  padding-block: 0.65em;
+  border-bottom: 1px solid transparent;
+  color: #8ca6b8;
+  font-size: 0.81em;
+}
+.spectral-music-tabs button[aria-pressed='true'] {
+  color: var(--spectral-ice);
+  border-bottom-color: #99c8db;
+}
+.spectral-player-content {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.06fr);
+  align-items: center;
+  gap: clamp(20px, 7cqw, 115px);
+  padding: clamp(12px, 3cqh, 42px) 4%;
+}
+.spectral-record {
+  display: grid;
+  place-items: center;
+}
+.spectral-record img {
+  width: min(100%, 49cqh);
+  height: auto;
+  aspect-ratio: 1;
+  animation: record-spin 18s linear infinite;
+  animation-play-state: paused;
+}
+.spectral-record img[data-spinning='true'] {
+  animation-play-state: running;
+}
+@keyframes record-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+.spectral-transport {
+  min-width: 0;
+}
+.spectral-playing {
+  display: flex;
+  align-items: center;
+  gap: 0.55em;
+  color: #88a9bd;
+  font-size: 0.82em;
+}
+.spectral-playing svg {
+  width: 1em;
+  height: 1em;
+}
+.spectral-transport h1 {
+  margin-top: 0.2em;
+  font-size: clamp(22px, 3.8cqw, 60px);
+  letter-spacing: -0.06em;
+  line-height: 1.07;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.spectral-artist {
+  color: var(--spectral-muted);
+  margin-top: 0.58em;
+}
+.spectral-spectrum {
+  display: block;
+  width: 100%;
+  height: clamp(25px, 6.6cqh, 64px);
+  margin-top: 0.58em;
+}
+.spectral-slider {
+  display: block;
+  width: 100%;
+  height: 23px;
+  appearance: none;
+  cursor: pointer;
+}
+.spectral-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  background: linear-gradient(90deg, var(--spectral-ice) var(--progress), #2a3b47 var(--progress));
+}
+.spectral-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 9px;
+  height: 9px;
+  border: none;
+  border-radius: 50%;
+  background: #e2f2f8;
+  margin-top: -3px;
+}
+.spectral-slider::-moz-range-track {
+  height: 3px;
+  background: linear-gradient(90deg, var(--spectral-ice) var(--progress), #2a3b47 var(--progress));
+}
+.spectral-slider::-moz-range-thumb {
+  width: 9px;
+  height: 9px;
+  border: none;
+  border-radius: 50%;
+  background: #e2f2f8;
+}
+.spectral-time {
+  display: flex;
+  justify-content: space-between;
+  color: #a2b9c9;
+  font-size: 0.84em;
+  font-variant-numeric: tabular-nums;
+}
+.spectral-player-actions,
+.spectral-skip,
+.spectral-volume {
+  display: flex;
+  align-items: center;
+  gap: clamp(4px, 0.8cqw, 13px);
+}
+.spectral-player-actions {
+  margin-top: 0.68em;
+  justify-content: space-between;
+}
+.spectral-volume {
+  width: min(34%, 114px);
+}
+.spectral-player-actions button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: clamp(32px, 3.1cqw, 44px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: #13222ca6;
+  color: #b9d3e2;
+}
+.spectral-player-actions button:hover {
+  background: #2c4555;
+}
+.spectral-player-actions .spectral-play {
+  width: clamp(43px, 4.95cqw, 72px);
+  background: var(--spectral-ice);
+  color: #142832;
+}
+.spectral-player-actions .spectral-play:hover {
+  background: #e2f6f9;
+}
+.spectral-player-actions svg {
+  width: 42%;
+  height: 42%;
+}
+.spectral-error {
+  color: #f1c794;
+  margin-top: 0.6em;
+}
+.spectral-player-footer {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6em;
+  color: var(--spectral-muted);
+  font-size: 0.76em;
+}
+.spectral-player.spectral-collection-open {
+  height: 100%;
+  min-height: 0;
+  padding-bottom: 0;
+}
+.spectral-collection {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: minmax(125px, 23%) minmax(0, 1fr);
+  gap: clamp(16px, 4cqw, 70px);
+  padding: clamp(16px, 3.8cqh, 58px) 0 16px;
+}
+.spectral-collection-detail {
+  min-width: 0;
+  padding-inline-start: min(1cqw, 16px);
+}
+.spectral-collection-detail .spectral-record {
+  place-items: start;
+  margin-bottom: clamp(10px, 2cqh, 28px);
+}
+.spectral-collection-detail .spectral-record img {
+  width: min(100%, 29cqh, 320px);
+}
+.spectral-collection-detail h2 {
+  font-size: clamp(17px, 2.02cqw, 32px);
+  font-weight: 500;
+  letter-spacing: -0.045em;
+}
+.spectral-collection-detail p,
+.spectral-collection-detail small,
+.spectral-queue-title p,
+.spectral-no-tracks {
+  color: #9bb1c1;
+}
+.spectral-collection-detail p {
+  margin-block: 0.5em;
+  font-size: 0.86em;
+}
+.spectral-collection-detail small {
+  font-size: 0.78em;
+}
+.spectral-collection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55em;
+  margin-top: 0.82em;
+}
+.spectral-collection-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55em;
+  min-height: 2.5em;
+  padding: 0 0.75em;
+  border-radius: 999px;
+  font-size: 0.87em;
+  background: #142632;
+  color: #b6d1de;
+}
+.spectral-collection-actions button:first-child {
+  white-space: nowrap;
+  padding-inline: 0.9em;
+  background: var(--spectral-ice);
+  color: #122632;
+}
+.spectral-collection-actions button:hover {
+  filter: brightness(1.14);
+}
+.spectral-collection-actions svg,
+.spectral-queue-title svg,
+.spectral-track-row svg {
+  width: 1em;
+  height: 1em;
+  flex: none;
+}
+.spectral-queue-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 0.95em;
+}
+.spectral-queue-title h1 {
+  font-size: clamp(23px, 3.2cqw, 52px);
+  line-height: 1.07;
+  letter-spacing: -0.055em;
+}
+.spectral-queue-title p {
+  margin-top: 0.53em;
+  font-size: 0.86em;
+}
+.spectral-queue-title label {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.6em 0.7em;
+  color: #9bb7c9;
+  width: min(32%, 268px);
+  min-width: 112px;
+  border: 1px solid #233743;
+  border-radius: 7px;
+  background: #101e27;
+}
+.spectral-queue-title input {
+  width: 100%;
+  min-width: 0;
+  background: none;
+  color: #d5e7f1;
+  font-size: 0.82em;
+}
+.spectral-track-row {
+  display: grid;
+  grid-template-columns: minmax(18px, 0.48fr) minmax(0, 7fr) minmax(50px, 1.8fr) minmax(33px, 0.8fr);
+  column-gap: clamp(6px, 0.9cqw, 12px);
+  align-items: center;
+  width: 100%;
+  padding: 0.6em clamp(8px, 1cqw, 14px);
+  text-align: left;
+  border-bottom: 1px solid #1b303c;
+  font-variant-numeric: tabular-nums;
+}
+.spectral-track-heading {
+  color: #8eaabc;
+  font-size: 0.73em;
+}
+button.spectral-track-row {
+  min-height: 2.9em;
+  color: #c8d9e5;
+  font-size: 0.92em;
+}
+.spectral-track-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.spectral-track-row span {
+  color: #9ab4c5;
+}
+.spectral-track-row > :first-child {
+  display: flex;
+  align-items: center;
+}
+.spectral-track-row > :last-child {
+  justify-self: end;
+  color: #9ab4c5;
+}
+.spectral-track-row[aria-current],
+button.spectral-track-row:hover {
+  background: #132a36;
+  color: #caeaf4;
+  border-radius: 4px;
+}
+.spectral-no-tracks {
+  padding-block: 0.7em;
+  font-size: 0.86em;
+}
+.spectral-mini {
+  display: grid;
+  grid-template-columns: minmax(95px, 1fr) minmax(150px, 1.9fr) minmax(90px, 1fr);
+  gap: clamp(8px, 2cqw, 27px);
+  align-items: center;
+  flex: none;
+  margin-inline: calc(-1 * var(--player-gutter));
+  padding: 0.64em var(--player-gutter) 0.42em;
+  background: #0b1922;
+  border-top: 1px solid #1b303c;
+}
+.spectral-mini-identity,
+.spectral-mini-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  min-width: 0;
+}
+.spectral-mini-identity img {
+  width: clamp(24px, 3.5cqw, 56px);
+  height: auto;
+  flex: none;
+}
+.spectral-mini-identity div {
+  min-width: 0;
+}
+.spectral-mini-identity strong,
+.spectral-mini-identity small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.spectral-mini-identity strong {
+  font-size: 0.85em;
+  font-weight: 500;
+  color: #d8e7ef;
+}
+.spectral-mini-identity small {
+  font-size: 0.72em;
+  color: #92aebe;
+}
+.spectral-mini .spectral-skip {
+  justify-content: center;
+}
+.spectral-mini-seek {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  font-size: 0.73em;
+  color: #9bb1c1;
+}
+.spectral-mini-seek time {
+  min-width: 2em;
+  font-variant-numeric: tabular-nums;
+}
+.spectral-mini-seek .spectral-slider {
+  min-width: 0;
+  height: 15px;
+}
+.spectral-mini-tools {
+  justify-content: flex-end;
+}
+.spectral-mini .spectral-volume {
+  flex: 1;
+  min-width: 0;
+  max-width: 128px;
+}
+.spectral-mini button {
+  display: grid;
+  place-items: center;
+  width: clamp(20px, 2.45cqw, 40px);
+  aspect-ratio: 1;
+  flex: none;
+  color: #9fbdcc;
+  border-radius: 50%;
+}
+.spectral-mini button:hover,
+.spectral-mini button[aria-pressed='true'] {
+  color: var(--spectral-ice);
+  background: #173240;
+}
+.spectral-mini button.spectral-play {
+  width: clamp(29px, 3.2cqw, 48px);
+  background: var(--spectral-ice);
+  color: #142832;
+}
+.spectral-mini button svg {
+  width: 45%;
+  height: 45%;
+}
+
+@media (max-width: 700px), (max-height: 420px) {
+  .spectral-profile,
+  .spectral-player {
+    padding: 18px;
+    font-size: 13px;
+  }
+  .spectral-profile {
+    display: flex;
+    height: auto;
+  }
+  .spectral-profile .spectral-background {
+    inset: 8% 0 21%;
+    height: 71%;
+  }
+  .spectral-introduction {
+    padding-block: 50px 21px;
+  }
+  .spectral-introduction h1 {
+    font-size: clamp(34px, 10.6vw, 54px);
+  }
+  .spectral-tenure {
+    margin-bottom: 15px;
+  }
+  .spectral-career {
+    gap: 10px;
+  }
+  .spectral-player-content {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 10px 0 15px;
+  }
+  .spectral-record img {
+    width: min(57vw, 28vh, 250px);
+  }
+  .spectral-player-actions button {
+    width: 40px;
+  }
+}
+
+.mobile-home {
+  min-height: 100svh;
+  background: #060b0f;
+}
+.mobile-home :focus {
+  outline: none;
+}
+.spectral-profile.spectral-profile-mobile {
+  display: flex;
+  align-items: stretch;
+  min-height: 100svh;
+  height: auto;
+  padding: max(28px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right))
+    max(54px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+  font-size: 16px;
+}
+.spectral-profile-mobile .spectral-background {
+  inset: 0;
+  height: min(100%, 920px);
+}
+.spectral-profile-mobile .spectral-heading {
+  align-items: center;
+  min-height: 48px;
+}
+.spectral-profile-mobile .spectral-wordmark {
+  font-size: 22px;
+}
+.spectral-profile-mobile .spectral-heading nav {
+  gap: 8px;
+  font-size: 14px;
+}
+.spectral-profile-mobile .spectral-heading nav a {
+  min-height: 44px;
+  padding-inline: 5px;
+}
+.spectral-profile-mobile .spectral-introduction {
+  align-self: stretch;
+  margin-top: 52px;
+  padding: 0;
+}
+.spectral-profile-mobile .spectral-introduction h1 {
+  font-size: clamp(40px, 14.35vw, 64px);
+  line-height: 1.015;
+}
+.spectral-profile-mobile .spectral-role {
+  margin-top: 22px;
+  line-height: 23px;
+}
+.spectral-profile-mobile .spectral-statement {
+  margin-top: 22px;
+  line-height: 25px;
+}
+.spectral-profile-mobile .spectral-follow {
+  justify-content: space-between;
+  width: 172px;
+  min-height: 52px;
+  margin-top: 22px;
+}
+.spectral-profile-mobile .spectral-tenure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  align-self: stretch;
+  min-height: 40px;
+  margin: 53px 0 0;
+  font-size: 14px;
+}
+.spectral-profile-mobile .spectral-tenure strong {
+  font-size: 28px;
+}
+.spectral-profile-mobile .spectral-tenure span {
+  max-width: 140px;
+  line-height: 20px;
+}
+.spectral-profile-mobile .spectral-career {
+  grid-template-columns: 1fr;
+  gap: 16px;
+  padding-top: 20px;
+  margin-top: 32px;
+}
+.spectral-profile-mobile .spectral-career li {
+  display: grid;
+  grid-template-columns: minmax(68px, 80px) minmax(0, 1fr);
+  align-content: start;
+  column-gap: 16px;
+  row-gap: 5px;
+  min-height: 60px;
+}
+.spectral-profile-mobile .spectral-career h2 {
+  font-size: 18px;
+  line-height: 22px;
+  margin: 0;
+}
+.spectral-profile-mobile .spectral-career span {
+  font-size: 13px;
+  line-height: 18px;
+  padding-top: 3px;
+}
+.spectral-profile-mobile .spectral-career p {
+  font-size: 14px;
+  line-height: 19px;
+  grid-column: 2;
+}
