@@ -1,6 +1,6 @@
 # Felix Studio
 
-[English](README.md)
+[English](README.md) · **简体中文**
 
 [![felixpy.com](https://img.shields.io/badge/felixpy.com-244b62)](https://felixpy.com/)
 [![CI](https://github.com/felixpy/felixpy.com/actions/workflows/ci.yml/badge.svg?event=push)](https://github.com/felixpy/felixpy.com/actions/workflows/ci.yml)
