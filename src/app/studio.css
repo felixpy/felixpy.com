@@ -169,6 +169,21 @@ button:disabled {
   pointer-events: none;
   white-space: nowrap;
 }
+.studio-about-link {
+  position: absolute;
+  z-index: 25;
+  top: calc(max(8px, env(safe-area-inset-top)) + 30px);
+  left: max(9px, env(safe-area-inset-left));
+  padding: 5px 8px;
+  border: 1px solid #d5e4de3d;
+  border-radius: 4px;
+  color: #f1f7f1;
+  background: #10191de8;
+  font-size: 13px;
+}
+.studio-about-link:hover {
+  background: #21323d;
+}
 .studio-minimap {
   position: absolute;
   z-index: 20;

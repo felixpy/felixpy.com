@@ -8,7 +8,7 @@ import '@fontsource/space-grotesk/latin-400.css';
 import '@fontsource/space-grotesk/latin-500.css';
 import '@fontsource/space-grotesk/latin-600.css';
 import '@fontsource/caveat/latin-500.css';
-import { Analytics } from '@vercel/analytics/react';
+import './app/analytics';
 import App from './app/App';
 import { printGreeting, travelPrints } from './content/travel';
 
@@ -24,9 +24,4 @@ const fontsReady = Promise.race([
   Promise.allSettled(fonts),
   new Promise((resolve) => window.setTimeout(resolve, 1250)),
 ]);
-root.render(
-  <>
-    <App fontsReady={fontsReady} />
-    {window.location.hostname === 'felixpy.com' && <Analytics />}
-  </>,
-);
+root.render(<App fontsReady={fontsReady} />);

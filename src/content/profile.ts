@@ -1,8 +1,15 @@
 export const profile = { name: 'Felix Yang', role: '软件工程师' } as const;
 export const publicProfiles = {
+  githubProfile: 'https://github.com/felixpy',
   x: 'https://x.com/gofelixpy',
   github: 'https://github.com/felixpy/felixpy.com',
 } as const;
+
+export function getWorkYears(today = new Date()) {
+  const { year, month } = biography.first.started;
+  const months = (today.getFullYear() - year) * 12 + today.getMonth() + 1 - month;
+  return Math.max(0, Math.floor(months / 12));
+}
 
 export const biography = {
   hometown: '贵州铜仁',
