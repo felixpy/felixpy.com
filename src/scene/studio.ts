@@ -3,7 +3,7 @@ import type { Environment } from '../app/environment';
 import { biography, books, publicProfiles } from '../content/profile';
 import { remoteKeys } from '../app/environment';
 import type { Locale } from '../app/locale';
-import { travelCaption, travelPrints } from '../content/travel';
+import { travelPrints } from '../content/travel';
 import { personalArchive } from './archive';
 import { batchMeshes } from './batching';
 import { chairPosition, taskChair } from './chair';
@@ -472,7 +472,6 @@ export function buildStudio(manager: T.LoadingManager) {
       size: Math.max(0.152, width),
       label: travelPrints[index].zh,
       english: travelPrints[index].en,
-      caption: { en: travelCaption(index, 'en'), zh: travelCaption(index, 'zh') },
     })),
     ...drawers.map<Target>((object, index) => ({
       id: 'drawer-' + index,
