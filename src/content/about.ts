@@ -7,7 +7,7 @@ export const aboutPage = {
   path: '/about',
   title: 'Felix Yang | Senior Software Engineer',
   description:
-    'Felix Yang (felixpy, gofelixpy) is a senior software engineer in short-form video and the creator of Felix Studio, an interactive 3D portfolio.',
+    'Felix Yang is a senior software engineer with over a decade in tech. He explores how AI can help build apps, create videos, and design games.',
   heading: 'Felix Yang.',
   subtitle: 'Full-stack engineer & AI maker',
   introduction: [

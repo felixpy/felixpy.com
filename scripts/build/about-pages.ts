@@ -37,7 +37,7 @@ export function renderAboutPages(): Plugin {
           '@id': `${siteOrigin}/about#felix-yang`,
           name: profile.name,
           alternateName: ['felixpy', 'gofelixpy'],
-          description: page.introduction.join(' '),
+          description: page.description,
           url: `${siteOrigin}/about`,
           sameAs: [publicProfiles.githubProfile, publicProfiles.x],
         },
