@@ -11,6 +11,20 @@
       content="Explore Felix Yang’s interactive studio through personal objects, photographs, open-source projects and a pixel space game."
     />
     <title>Felix Yang — Studio</title>
+    <script>
+      if (window.location.hostname === 'felixpy.com') {
+        window.dataLayer = window.dataLayer || [];
+        function gtag() {
+          window.dataLayer.push(arguments);
+        }
+        gtag('js', new Date());
+
+        const container = document.createElement('script');
+        container.async = true;
+        container.src = 'https://www.googletagmanager.com/gtm.js?id=GTM-KFP4MGQN';
+        document.head.append(container);
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
