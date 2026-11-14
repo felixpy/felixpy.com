@@ -35,7 +35,8 @@ export function panoramaGeometry() {
 
 const cities = {
   上海: {
-    day: 'shanghai-day',
+    clear: 'shanghai-clear',
+    overcast: 'shanghai-day',
     night: 'shanghai-night',
     depth: 'shanghai',
     near: 130,
@@ -47,7 +48,8 @@ const cities = {
     calibration: [0.502, 0.282, 0.49, 1.31],
   },
   纽约: {
-    day: 'new-york-day',
+    clear: 'new-york-day',
+    overcast: 'new-york-overcast',
     night: 'new-york-night',
     depth: 'new-york',
     near: 150,
@@ -77,19 +79,22 @@ function waterfront(
     return color;
   }
   function loadCity(city: Environment['city']) {
-    const { day, night, depth: asset, near, far, waterline, upright } = cities[city];
+    const { clear, overcast, night, depth: asset, near, far, waterline, upright } = cities[city];
     const depth = loader.load('/media/panoramas/' + asset + '-depth.png');
     depth.generateMipmaps = false;
     depth.minFilter = T.LinearFilter;
     const range = new T.Vector2(near, far);
-    return {
-      day: loadPlate(day),
+    const shared = {
       night: loadPlate(night),
       depth,
       range,
       waterline,
       upright,
       calibration: calibrations[city],
+    };
+    return {
+      clear: { ...shared, day: loadPlate(clear) },
+      overcast: { ...shared, day: loadPlate(overcast) },
     };
   }
   const plates = { 上海: loadCity('上海'), 纽约: loadCity('纽约') };
@@ -100,11 +105,12 @@ function waterfront(
   plate.name = panoramaMeshName;
   plate.castShadow = plate.receiveShadow = false;
   const grading = new T.Color();
-  let shown = plates.上海,
+  let shown = plates.上海.clear,
     target = shown,
     blend = 1;
   return (env: Environment, delta: number, night: number) => {
-    const desired = plates[env.city];
+    const overcast = env.weather !== '晴';
+    const desired = plates[env.city][overcast ? 'overcast' : 'clear'];
     if (desired.day.image && desired.night.image && desired !== target) {
       if (desired === shown && blend < 1) {
         shown = target;
@@ -134,7 +140,6 @@ function waterfront(
     uniforms.sameDepth.value = shown.depth === target.depth;
     uniforms.blend.value = shown === target ? 0 : T.MathUtils.smoothstep(blend, 0, 1);
     uniforms.night.value = night;
-    const overcast = env.weather !== '晴';
     const ease = env.reducedMotion ? 1 : 1 - Math.exp(-delta * 3);
     uniforms.mist.value = T.MathUtils.lerp(uniforms.mist.value, overcast ? 0.23 : 0, ease);
     grading.set(

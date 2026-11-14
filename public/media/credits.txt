@@ -7,13 +7,13 @@ New York panorama — Midtown Manhattan from Weehawken September 2021 HDR panora
 King of Hearts, CC BY-SA 4.0
 Source: https://commons.wikimedia.org/wiki/File:Midtown_Manhattan_from_Weehawken_September_2021_HDR_panorama_(cropped).jpg
 License: https://creativecommons.org/licenses/by-sa/4.0/
-Adaptation: resized for window projection. A daylight variant was created by relighting the original with image generation and matching the horizon.
-Both New York variants are available under CC BY-SA 4.0 at /media/panoramas/new-york-night.webp and /media/panoramas/new-york-day.webp.
+Adaptation: resized for window projection. Image generation was used for both daylight variants and the replacement sky in the night variant.
+The New York variants are available under CC BY-SA 4.0 at /media/panoramas/new-york-night.webp, /media/panoramas/new-york-day.webp, and /media/panoramas/new-york-overcast.webp.
 
 Shanghai panorama — Pudong Skyline from The Bund 20260417
 DvTor8303, CC0
 Source: https://commons.wikimedia.org/wiki/File:Pudong_Skyline_from_The_Bund_20260417.jpg
-Adaptation: resized for window projection. The nighttime variant was created by relighting the original with image generation.
+Adaptation: resized for window projection. The clear daylight and nighttime variants were created by relighting the original with image generation.
 
 Camera playback — Xinghai Bay Bridge, Dalian, at sunset
 昆 阿, Pexels License. Cropped for the camera LCD.
