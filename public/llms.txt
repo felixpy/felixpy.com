@@ -1,0 +1,19 @@
+# Felix Studio
+
+> Felix Studio is the open-source interactive 3D portfolio of Felix Yang, a senior software engineer working on short-form video. He previously led engineering in streaming video.
+
+Felix Yang uses the handle felixpy on GitHub and gofelixpy on X. He built Felix Studio with React and Three.js. Visitors can explore the room, change the view and weather, listen to music, and play Orbital Patrol. Phones open the personal profile directly.
+
+## About
+
+- [About Felix Yang](https://felixpy.com/about): Biography, engineering experience, and links to public profiles.
+
+## Studio
+
+- [Felix Studio](https://felixpy.com/): The interactive 3D workspace.
+- [Felix Studio source](https://github.com/felixpy/felixpy.com): Source code and project documentation.
+
+## Public profiles
+
+- [GitHub](https://github.com/felixpy): Felix Yang’s personal GitHub profile.
+- [X](https://x.com/gofelixpy): Felix Yang’s X profile.

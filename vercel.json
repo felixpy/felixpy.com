@@ -1,0 +1,12 @@
+{
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "www.felixpy.com" }],
+      "destination": "https://felixpy.com/:path*",
+      "permanent": true
+    }
+  ]
+}

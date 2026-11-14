@@ -177,7 +177,7 @@ export function MusicPlayer({
         <Shader fragment={musicRoom} />
       </div>
       <header className="spectral-heading spectral-music-heading">
-        <span>{t('Listening room', '听音室')}</span>
+        <span className="spectral-music-title">{t('Listening room', '听音室')}</span>
         <nav className="spectral-music-tabs" aria-label={t('Music views', '播放器视图')}>
           <button type="button" aria-pressed={!playlistOpen} onClick={() => setPlaylistOpen(false)}>
             <Disc3 />
@@ -187,7 +187,7 @@ export function MusicPlayer({
             {t('Playlist', '播放列表')}
           </button>
         </nav>
-        <span>FELIX.PY</span>
+        <span className="spectral-music-signature">FELIX.PY</span>
       </header>
       {!playlistOpen ? (
         <>

@@ -207,6 +207,9 @@ export default function App({ fontsReady }: { fontsReady: Promise<unknown> }) {
 
   const simple = (
     <main className="compact-studio">
+      <a className="studio-about-link" href="/about">
+        {t('About Felix', '关于 Felix')}
+      </a>
       <Desktop
         compact
         request={request}
@@ -248,6 +251,11 @@ export default function App({ fontsReady }: { fontsReady: Promise<unknown> }) {
           />
         )}
         {ready && <FpsMeter />}
+        {ready && (mode === 'room' || mode === 'bench') && (
+          <a className="studio-about-link" href="/about">
+            {t('About Felix', '关于 Felix')}
+          </a>
+        )}
         <Suspense fallback={null}>
           {fontsLoaded && (
             <StudioView

@@ -1,5 +1,5 @@
 import { ArrowUpRight } from 'lucide-react';
-import { biography, publicProfiles } from '../../content/profile';
+import { biography, getWorkYears, publicProfiles } from '../../content/profile';
 import { local, type Locale } from '../../app/locale';
 import Shader from '../../spectral/Shader';
 import spectralHome from '../../spectral/shaders/profile.glsl?raw';
@@ -15,13 +15,7 @@ export default function Profile({
   mobile?: boolean;
 }) {
   const t = (en: string, zh: string) => local(locale, en, zh);
-  const today = new Date();
-  const workMonths =
-    (today.getFullYear() - biography.first.started.year) * 12 +
-    today.getMonth() +
-    1 -
-    biography.first.started.month;
-  const workYears = Math.max(0, Math.floor(workMonths / 12));
+  const workYears = getWorkYears();
   const careers = [
     { years: biography.school.years, name: t('Beihang University', biography.school.name) },
     {
@@ -50,6 +44,7 @@ export default function Profile({
       <header className="spectral-heading">
         <span className="spectral-wordmark">FELIX.PY</span>
         <nav aria-label={t('Social profiles', '社交主页')}>
+          {mobile && <a href="/about">{t('About', '关于')}</a>}
           <a href={publicProfiles.github} target="_blank" rel="noopener noreferrer">
             GitHub <ArrowUpRight />
           </a>

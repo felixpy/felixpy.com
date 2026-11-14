@@ -8,26 +8,68 @@
     <meta name="theme-color" content="#101519" />
     <meta
       name="description"
-      content="Explore Felix Yang’s interactive studio through personal objects, photographs, open-source projects and a pixel space game."
+      content="Felix Studio is Felix Yang’s open-source interactive 3D portfolio. Explore a virtual workspace built with React and Three.js, listen to music, and play Orbital Patrol."
     />
-    <title>Felix Yang — Studio</title>
-    <script>
-      if (window.location.hostname === 'felixpy.com') {
-        window.dataLayer = window.dataLayer || [];
-        function gtag() {
-          window.dataLayer.push(arguments);
-        }
-        gtag('js', new Date());
-
-        const container = document.createElement('script');
-        container.async = true;
-        container.src = 'https://www.googletagmanager.com/gtm.js?id=GTM-KFP4MGQN';
-        document.head.append(container);
+    <title>Felix Studio | Felix Yang’s Interactive 3D Portfolio</title>
+    <link rel="canonical" href="https://felixpy.com/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Felix Studio" />
+    <meta property="og:title" content="Felix Studio | Felix Yang’s Interactive 3D Portfolio" />
+    <meta
+      property="og:description"
+      content="Explore Felix Yang’s interactive 3D workspace, built with React and Three.js."
+    />
+    <meta property="og:url" content="https://felixpy.com/" />
+    <meta
+      property="og:image"
+      content="https://felixpy.com/media/graphics/felix-studio-preview.jpg"
+    />
+    <meta property="og:image:alt" content="The desk, window, and computer in Felix Studio" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:creator" content="@gofelixpy" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "Felix Studio",
+        "alternateName": "FELIX.PY",
+        "url": "https://felixpy.com/",
+        "description": "Felix Yang’s open-source interactive 3D portfolio.",
+        "publisher": { "@id": "https://felixpy.com/about#felix-yang" }
       }
     </script>
+    <style>
+      #studio-intro {
+        box-sizing: border-box;
+        min-height: 100svh;
+        padding: clamp(24px, 7vw, 96px);
+        background: #060b0f;
+        color: #eef4f7;
+        font-family: system-ui, sans-serif;
+      }
+      body:has(#studio-intro) {
+        margin: 0;
+      }
+      #studio-intro a {
+        color: #c5eaf3;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <main id="studio-intro">
+        <h1>Felix Studio</h1>
+        <p>Felix Yang’s open-source interactive 3D portfolio, built with React and Three.js.</p>
+        <p>
+          Explore the 3D studio, change the skyline and weather, listen to music, and play Orbital
+          Patrol.
+        </p>
+        <p>
+          <a href="/about">About Felix Yang</a> ·
+          <a href="https://github.com/felixpy/felixpy.com">View source</a>
+        </p>
+      </main>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
