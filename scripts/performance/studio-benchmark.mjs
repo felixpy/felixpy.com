@@ -8,6 +8,7 @@ import { gzipSync } from 'node:zlib';
 import { chromium } from '@playwright/test';
 import { preview } from 'vite';
 import { startCpuTelemetry } from './studio-cpu-telemetry.mjs';
+import { sampleRafControl } from './studio-raf-control.mjs';
 import { startWddmTelemetry } from './studio-wddm.mjs';
 
 const profiles = {
@@ -110,6 +111,7 @@ Use --draw-calls to record WebGL indexed and multi-draw calls during the final s
 Use --draw-inventory to attribute main-color draws to objects in up to three steady route frames.
 Use --wddm-luid=<high,low> to sample the specified Windows adapter during the steady route.
 Use --cpu-telemetry to sample Windows logical processors from browser launch through measurement.
+Use --raf-control to sample an unloaded animation clock in the same browser after the scene run.
 Use --repeat-desk to prime the shaders and geometry with one matched desk turn before sampling.
 Use --seconds=<duration> to set the measured steady desk route duration (default 12).
 Use --route=<${Object.keys(roomRoutes).join('|')}> and --weather=<${Object.keys(weatherCodes).join('|')}> to replay room views.
@@ -152,6 +154,7 @@ function options(args) {
   const drawCalls = captured.delete('--draw-calls');
   const drawInventory = captured.delete('--draw-inventory');
   const cpuTelemetry = captured.delete('--cpu-telemetry');
+  const rafControl = captured.delete('--raf-control');
   const wddmArgument = [...captured].find((arg) => arg.startsWith('--wddm-luid='));
   captured.delete(wddmArgument);
   const wddmLuid = wddmArgument?.slice('--wddm-luid='.length);
@@ -250,6 +253,7 @@ function options(args) {
     drawCalls,
     drawInventory,
     cpuTelemetry,
+    rafControl,
     wddmLuid,
     loaderTrace,
     startup,
@@ -1396,6 +1400,7 @@ async function measure({ base, directory, head, name, run, settings }) {
     drawCalls,
     drawInventory,
     cpuTelemetry,
+    rafControl,
     wddmLuid,
     loaderTrace,
     startup,
@@ -1670,6 +1675,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         drawCalls && 'draw-calls',
         drawInventory && 'draw-inventory',
         cpuTelemetry && 'cpu-telemetry',
+        rafControl && 'raf-control',
         wddmLuid && 'wddm',
         loaderTrace && 'loader-trace',
         startup && 'startup',
@@ -1696,6 +1702,26 @@ async function measure({ base, directory, head, name, run, settings }) {
     if (process.platform === 'win32' && resolve(stem + '.trace.json.gz').length >= 260) {
       const fingerprint = createHash('sha256').update(stem).digest('hex').slice(0, 12);
       stem = join(directory, `${name}-${route}-${fingerprint}-${run}`);
+    }
+    if (rafControl) {
+      if (screenshot) await page.screenshot({ path: stem + '.png', timeout: 60000 });
+      await page.close();
+      let controlPage;
+      try {
+        controlPage = await browser.newPage({
+          viewport: { width: profile.width, height: profile.height },
+        });
+        raw.rafControl = await sampleRafControl(controlPage);
+        summary.rafControl = {
+          ...raw.rafControl.summary,
+          completed: raw.rafControl.completed,
+          visibilityChanged: raw.rafControl.visibilityChanged,
+        };
+      } catch (error) {
+        summary.rafControl = { error: error.message };
+      } finally {
+        await controlPage?.close();
+      }
     }
     const frontMs = raw.marks['studio-room-material-prep-end'];
     const rearMs = raw.marks['studio-room-rear-ready'];
@@ -1824,7 +1850,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         writeFileSync(stem + '.trace.json.gz', gzipSync(compositorTrace));
       }
       writeFileSync(stem + '.json', JSON.stringify({ summary, raw }, null, 2));
-      if (screenshot) await page.screenshot({ path: stem + '.png', timeout: 60000 });
+      if (screenshot && !rafControl) await page.screenshot({ path: stem + '.png', timeout: 60000 });
     }
     console.log(stem, JSON.stringify(summary));
     if (issues.length) throw new Error('Browser issues were recorded in the measurement output.');
