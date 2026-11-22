@@ -426,8 +426,9 @@ function installProbe({
     let shaded = false;
     let rear = false;
     function activePhase() {
-      if (phase?.stage === 'postReady' && sample.firstDrag.changedSubmit != null) {
-        phase.end = sample.firstDrag.changedSubmit;
+      const move = sample.firstDrag?.move;
+      if (phase?.stage === 'postReady' && move != null && performance.now() >= move + 10000) {
+        phase.end = move + 10000;
         phase = undefined;
       }
       return phase;
@@ -443,8 +444,7 @@ function installProbe({
       if (stage || (shaded && rear)) {
         phase.end = entry.startTime;
         if (!shaded || !rear) phase = begin(stage, entry.startTime);
-        else if (sample.firstDrag && sample.firstDrag.changedSubmit == null)
-          phase = begin('postReady', entry.startTime);
+        else if (sample.firstDrag) phase = begin('postReady', entry.startTime);
         else phase = undefined;
       }
       return entry;
