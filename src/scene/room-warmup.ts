@@ -43,9 +43,11 @@ export function roomWarmup(
   camera: Camera,
   passes: WarmupPass[] = [],
   mode?: WarmupMode,
+  subtrees?: readonly Object3D[],
 ) {
   const catchUp = mode === 'catch-up';
   const pacePrograms = mode === 'paced' || mode === 'adaptive';
+  const batchLimit = subtrees ? 6 : 20;
   let seen = new WeakMap<Renderable, string>();
   const materials = new WeakMap<Material, Texture[]>();
   const maps = new Set<Texture>();
@@ -74,6 +76,7 @@ export function roomWarmup(
   let lastSubmission: number | undefined;
   let steadyFor = 0;
   let disposed = false;
+  let warmingSubtrees = false;
 
   function budgetAfterDraw() {
     const now = performance.now();
@@ -191,10 +194,26 @@ export function roomWarmup(
       if (!object.layers.test(camera.layers)) return;
       if (object instanceof Light) {
         lightsInView.push(lightVersion(object));
-      } else if (renderable(object) && (!object.frustumCulled || view.intersectsObject(object))) {
+      } else if (
+        !subtrees &&
+        renderable(object) &&
+        (!object.frustumCulled || view.intersectsObject(object))
+      ) {
         candidates.push(object);
       }
     });
+    if (subtrees) {
+      const outside: Renderable[] = [];
+      for (const root of subtrees) {
+        if (!shownInScene(root)) continue;
+        root.traverseVisible((object) => {
+          if (!renderable(object) || !object.layers.test(camera.layers)) return;
+          const inView = !object.frustumCulled || view.intersectsObject(object);
+          (inView ? candidates : outside).push(object);
+        });
+      }
+      candidates.push(...outside);
+    }
     updateContext(target, lightsInView);
     visible = candidates.filter((object) => seen.get(object) !== visibleVersion(object));
     visibleOffset = 0;
@@ -202,10 +221,16 @@ export function roomWarmup(
     detailRevision = revision;
   }
 
-  function trackPrograms() {
+  function shownInScene(root: Object3D) {
+    for (let parent: Object3D | null = root; parent?.visible; parent = parent.parent)
+      if (parent === scene) return true;
+    return false;
+  }
+
+  function trackPrograms(previous?: ReadonlySet<LinkedProgram>) {
     let added = 0;
     for (const program of gl.info.programs ?? []) {
-      if (knownPrograms.has(program)) continue;
+      if (knownPrograms.has(program) || previous?.has(program)) continue;
       knownPrograms.add(program);
       programs.add(program);
       added++;
@@ -247,10 +272,13 @@ export function roomWarmup(
 
   function compileObjects(target: WebGLRenderTarget | null, batch: Renderable[]) {
     const previous = gl.getRenderTarget();
+    const face = subtrees ? gl.getActiveCubeFace() : undefined;
+    const mip = subtrees ? gl.getActiveMipmapLevel() : undefined;
+    const previousPrograms = subtrees ? new Set<LinkedProgram>(gl.info.programs ?? []) : undefined;
     try {
       gl.setRenderTarget(target);
       group.children.push(...batch);
-      if (catchUp)
+      if (catchUp || subtrees)
         group.traverse((object) => {
           if (renderable(object)) visibleVersion(object);
         });
@@ -259,10 +287,10 @@ export function roomWarmup(
         const tracked = trackedMaterials.get(material);
         if (tracked) tracked.version = material.version;
       }
-      return trackPrograms();
+      return trackPrograms(previousPrograms);
     } finally {
       group.children.length = 0;
-      gl.setRenderTarget(previous);
+      gl.setRenderTarget(previous, face, mip);
     }
   }
 
@@ -270,12 +298,13 @@ export function roomWarmup(
     compileObjects(target, batch);
     for (const object of batch) {
       seen.set(object, visibleVersion(object));
-      collectMaps(object, frontMaps);
+      if (!subtrees) collectMaps(object, frontMaps);
     }
   }
 
   function compileVisible(target: WebGLRenderTarget | null) {
-    const end = Math.min(visibleOffset + 32, visible.length);
+    const count = subtrees ? batchLimit - programs.size : 32;
+    const end = Math.min(visibleOffset + count, visible.length);
     compileVisibleBatch(target, visible.slice(visibleOffset, end));
     visibleOffset = end;
   }
@@ -352,6 +381,11 @@ export function roomWarmup(
       !frontMaps.size &&
       nextPass === passes.length
     ) {
+      if (subtrees) {
+        if (warmingSubtrees) performance.mark('studio-workbench-warm-end');
+        warmingSubtrees = false;
+        return true;
+      }
       scene.traverseVisible((object) => {
         if (!renderable(object) || seen.get(object) !== visibleVersion(object)) return;
         const list = Array.isArray(object.material) ? object.material : [object.material];
@@ -378,8 +412,12 @@ export function roomWarmup(
       return false;
     }
 
+    if (subtrees && !warmingSubtrees) {
+      warmingSubtrees = true;
+      performance.mark('studio-workbench-warm-start');
+    }
     if (nextPass < passes.length) compilePasses();
-    else if (programs.size < 20 && visibleOffset < visible.length) compileVisible(target);
+    else if (programs.size < batchLimit && visibleOffset < visible.length) compileVisible(target);
     const until = performance.now() + 3;
     reflectPrograms(until);
     if (frontMaps.size && performance.now() < until) upload(frontMaps, until - performance.now());

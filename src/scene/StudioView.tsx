@@ -1525,6 +1525,7 @@ function StudioRoom({
         roomVisible={props.roomVisible}
         firstPicture={props.firstPicture}
         detailRevision={props.detailRevision}
+        workbench={assembly.model.workbench}
         setLowScale={setLowScale}
         nativeLow={nativeLow}
         simpleLow={startup.simpleLow}

@@ -1,6 +1,6 @@
 import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, type RefObject } from 'react';
-import { DepthTexture, HalfFloatType, WebGLRenderTarget } from 'three';
+import { DepthTexture, HalfFloatType, WebGLRenderTarget, type Object3D } from 'three';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import type { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import type { RoomLook } from '../app/environment';
@@ -28,6 +28,7 @@ export function Finish({
   screen,
   firstPicture,
   detailRevision,
+  workbench,
   setLowScale,
   nativeLow,
   simpleLow,
@@ -42,6 +43,7 @@ export function Finish({
   screen: RefObject<HTMLDivElement | null>;
   firstPicture: RefObject<FirstPicture>;
   detailRevision: RefObject<number>;
+  workbench: { roots: readonly Object3D[]; ready: Promise<void> };
   setLowScale: (scale: number) => void;
   nativeLow: boolean;
   simpleLow: boolean;
@@ -60,6 +62,7 @@ export function Finish({
     [nativeLow],
   );
   const warmup = useMemo(() => new URLSearchParams(location.search).get('studio-warmup'), []);
+  const warmWorkbench = warmup === 'workbench';
   const pacing = warmup === 'paced' || warmup === 'adaptive' ? warmup : undefined;
   const catchUp = warmup === 'catch-up';
   useEffect(() => () => firstFrame.dispose(), [firstFrame]);
@@ -74,8 +77,23 @@ export function Finish({
   const lastRoomFrame = useRef(0);
   const shaders = useRef<'cold' | 'pending' | 'ready'>('cold');
   const preparation = useRef<ReturnType<typeof roomWarmup> | null>(null);
+  const workbenchPreparation = useRef<ReturnType<typeof roomWarmup> | null>(null);
   const scannedRevision = useRef(-1);
   const sample = useRef({ frames: 0, slowFrames: 0, elapsed: 0, headroom: 0 });
+
+  useEffect(() => {
+    if (!warmWorkbench || !gl.extensions.has('KHR_parallel_shader_compile')) return;
+    const pending = roomWarmup(gl, scene, camera, [], undefined, workbench.roots);
+    let disposed = false;
+    void workbench.ready.then(() => {
+      if (!disposed) workbenchPreparation.current = pending;
+    });
+    return () => {
+      disposed = true;
+      workbenchPreparation.current = null;
+      pending.dispose();
+    };
+  }, [camera, enabled, gl, scene, warmWorkbench, workbench]);
 
   useEffect(() => {
     if (!catchUp) return;
@@ -198,6 +216,11 @@ export function Finish({
     }
     if (firstPicture.current === 'preparing') {
       const parallel = gl.extensions.has('KHR_parallel_shader_compile');
+      const workbenchReady =
+        workbenchPreparation.current?.prepareVisible(
+          active?.beauty ?? null,
+          detailRevision.current,
+        ) ?? true;
       if ((warmup === 'incremental' || pacing) && parallel) {
         if (!preparation.current) {
           preparation.current = roomWarmup(
@@ -256,6 +279,10 @@ export function Finish({
           }
           performance.mark('studio-room-shader-warm-end');
         }
+      }
+      if (!workbenchReady) {
+        firstFrame.draw(gl, scene, camera, night, look);
+        return;
       }
       shaders.current = 'ready';
     }

@@ -946,6 +946,10 @@ export function* buildStudioSteps(
     },
     setBlinds: window.setBlinds,
     prepareWaterMotion: window.prepareWaterMotion,
+    workbench: {
+      roots: [bench.boardLight.unit, bench.tray, samplePrint, printer.unit, rocket],
+      ready: rear.ready,
+    },
     rearReady: rear.ready,
     prepareRear: rear.prepare,
     targets,

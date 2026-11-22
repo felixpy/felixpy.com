@@ -27,6 +27,7 @@ const roomRoutes = {
     caption: 'Look closer at the PC case',
   },
   window: { target: 'Window glass', mode: 'window', turn: -430 },
+  workbench: { target: 'Workbench top', mode: 'bench', turn: 309, pitch: 17 },
   cabinet: {
     target: 'NIKKOR Z 135mm f/1.8 S Plena · cabinet mount',
     mode: 'case',
@@ -63,6 +64,7 @@ const experiments = {
   '--incremental-warmup': ['studio-warmup', 'incremental'],
   '--paced-warmup': ['studio-warmup', 'paced'],
   '--catch-up-warmup': ['studio-warmup', 'catch-up'],
+  '--warm-workbench': ['studio-warmup', 'workbench'],
   '--adaptive-warmup': ['studio-warmup', 'adaptive'],
   '--culled-lights': ['studio-lighting', 'culled'],
   '--lean-lighting': ['studio-light-kernel', 'lean'],
@@ -82,12 +84,14 @@ Example: node scripts/performance/studio-benchmark.mjs 4k,uhd-adaptive 1,2,3
 Use --loader-profile to profile startup CPU work through loader removal.
 Use --steady-profile to profile CPU work during the warmed desk turn.
 Use --gpu-timing to sample main-color GPU work during the final steady route, including any depth prefill.
+Use --draw-calls to record WebGL indexed and multi-draw calls during the final steady route.
 Use --repeat-desk to prime the shaders and geometry with one matched desk turn before sampling.
 Use --seconds=<duration> to set the measured steady desk route duration (default 12).
 Use --route=<${Object.keys(roomRoutes).join('|')}> and --weather=<${Object.keys(weatherCodes).join('|')}> to replay room views.
 Use --day to start in daylight. Combine with --weather=overcast for the Shanghai 5120-pixel panorama.
 Use --loader-trace to capture compositor events and screenshots during loading.
-Use --startup to exercise the first desk drag as soon as the loader disappears.
+Use --startup to exercise the first drag as soon as the loader disappears.
+Add --route=workbench to turn toward the workbench on that first drag.
 Combine --loader-profile and --startup to profile through the first ten seconds after the drag.
 Add --full-room to wait for rear asset readiness on builds that report it.
 Set --input-delay-ms=<milliseconds> to wait before the first drag.
@@ -108,6 +112,7 @@ function options(args) {
   const captureProfile = captured.delete('--loader-profile');
   const steadyProfile = captured.delete('--steady-profile');
   const gpuTiming = captured.delete('--gpu-timing');
+  const drawCalls = captured.delete('--draw-calls');
   const loaderTrace = captured.delete('--loader-trace');
   const startup = captured.delete('--startup');
   const fullRoom = captured.delete('--full-room');
@@ -142,10 +147,12 @@ function options(args) {
     inputDelayMs < 0 ||
     (captureProfile && screenshot) ||
     (gpuTiming && (captureProfile || steadyProfile || startup || loaderTrace || slowDraws)) ||
+    (drawCalls && (captureProfile || steadyProfile || startup || loaderTrace)) ||
     (loaderTrace && (captureProfile || startup || screenshot || slowDraws)) ||
     (steadyProfile && (captureProfile || loaderTrace || startup || slowDraws)) ||
     ((repeatDesk || secondsArgument) && (captureProfile || loaderTrace || startup)) ||
-    (route !== 'desk' && (captureProfile || loaderTrace || startup)) ||
+    (route !== 'desk' && (loaderTrace || (captureProfile && !startup))) ||
+    (startup && route !== 'desk' && route !== 'workbench') ||
     !Object.hasOwn(roomRoutes, route) ||
     !Object.hasOwn(weatherCodes, weather) ||
     !Number.isSafeInteger(seconds) ||
@@ -163,6 +170,7 @@ function options(args) {
     captureProfile,
     steadyProfile,
     gpuTiming,
+    drawCalls,
     loaderTrace,
     startup,
     fullRoom,
@@ -204,6 +212,7 @@ function browserArgs(adapter) {
 function installProbe({
   quality,
   forceNative,
+  drawCalls,
   startup,
   slowDraws,
   textureUploads,
@@ -421,6 +430,28 @@ function installProbe({
       };
     }
     const gpu = gpuTiming ? attachGpuTiming(renderer) : undefined;
+    let drawSample = null;
+    if (drawCalls) {
+      const gl = renderer.getContext();
+      const multi = gl.getExtension('WEBGL_multi_draw');
+      sample.multiDrawAvailable = Boolean(multi);
+      sample.drawCalls = [];
+      const drawElements = gl.drawElements;
+      gl.drawElements = function (...args) {
+        if (drawSample) drawSample.indexed++;
+        return drawElements.apply(this, args);
+      };
+      if (multi) {
+        const multiDraw = multi.multiDrawElementsWEBGL;
+        multi.multiDrawElementsWEBGL = function (...args) {
+          if (drawSample) {
+            drawSample.multi++;
+            drawSample.multiSubdraws += args[6];
+          }
+          return multiDraw.apply(this, args);
+        };
+      }
+    }
     let world, roomCamera;
     let depthQuery;
     sample.project = (name) => {
@@ -455,11 +486,16 @@ function installProbe({
       let query;
       if (primary) query = depthQuery ?? gpu?.begin();
       else if (depthPrefill) query = gpu?.begin();
+      if (primary && drawCalls) drawSample = { indexed: 0, multi: 0, multiSubdraws: 0 };
       let result;
       try {
         result = render.call(this, scene, camera);
         if (depthPrefill) depthQuery = query;
       } finally {
+        if (primary && drawSample) {
+          sample.drawCalls.push(drawSample);
+          drawSample = null;
+        }
         if (query && (!depthPrefill || depthQuery !== query)) {
           gpu.end(query);
           depthQuery = undefined;
@@ -561,7 +597,7 @@ function waitForShading(page) {
   );
 }
 
-async function sampleStartup(page, profile, inputDelayMs) {
+async function sampleStartup(page, profile, inputDelayMs, route) {
   await page.waitForFunction(
     (delay) => {
       const end = window.studioBench?.loaderEnd;
@@ -576,7 +612,7 @@ async function sampleStartup(page, profile, inputDelayMs) {
   const positioned = performance.now();
   await page.mouse.down();
   const pressed = performance.now();
-  await page.mouse.move(x + 96, y);
+  await page.mouse.move(x + (route?.turn ?? 96), y + (route?.pitch ?? 0));
   const moved = performance.now();
   await page.mouse.up();
   const released = performance.now();
@@ -585,11 +621,24 @@ async function sampleStartup(page, profile, inputDelayMs) {
     null,
     { timeout: 20000 },
   );
+  const arrival = route
+    ? await page.evaluate((target) => window.studioBench.project(target), route.target)
+    : undefined;
+  if (
+    route &&
+    (!arrival ||
+      arrival.x < 0 ||
+      arrival.x > profile.width ||
+      arrival.y < 0 ||
+      arrival.y > profile.height)
+  )
+    throw new Error('The first drag did not bring the workbench into the viewport.');
   return {
     position: rounded(positioned - start),
     press: rounded(pressed - positioned),
     move: rounded(moved - pressed),
     release: rounded(released - moved),
+    ...(arrival && { arrival }),
   };
 }
 
@@ -635,7 +684,7 @@ async function enterRoute(page, profile, routeName) {
     const origin = deskOrigin(profile);
     await page.mouse.move(origin.x, origin.y);
     await page.mouse.down();
-    await page.mouse.move(origin.x + route.turn, origin.y);
+    await page.mouse.move(origin.x + route.turn, origin.y + (route.pitch ?? 0));
     await page.mouse.up();
     await page.waitForTimeout(400);
   }
@@ -676,6 +725,7 @@ async function sampleDesk(
       sample.rotations = [];
       sample.resolutions = {};
       if (sample.depthPrefillFrames !== undefined) sample.depthPrefillFrames = 0;
+      if (sample.drawCalls) sample.drawCalls.length = 0;
       return { roomFrames, submissions };
     });
     await page.waitForTimeout(1000);
@@ -710,9 +760,7 @@ function checkSamples(raw, profile, { captureProfile, loaderTrace, startup }) {
     throw new Error('The production room chunk or loader samples are missing.');
   if (startup) {
     if (!raw.firstDrag?.changedSubmit || raw.firstDrag.frames.length < 2)
-      throw new Error(
-        'The first desk drag produced no measurable change in submitted room frames.',
-      );
+      throw new Error('The first drag produced no measurable change in submitted room frames.');
     const [width, height] = raw.drawingBuffer;
     if (
       (profile.quality === 'high' || profile.forceNative) &&
@@ -823,6 +871,7 @@ async function measure({ base, directory, head, name, run, settings }) {
     captureProfile,
     steadyProfile,
     gpuTiming,
+    drawCalls,
     loaderTrace,
     startup,
     fullRoom,
@@ -916,6 +965,7 @@ async function measure({ base, directory, head, name, run, settings }) {
       slowDraws,
       textureUploads,
       gpuTiming,
+      drawCalls,
       day,
       weather: weatherLabels[weather],
     });
@@ -936,7 +986,8 @@ async function measure({ base, directory, head, name, run, settings }) {
     if (warm) await page.reload({ waitUntil: 'domcontentloaded' });
     else await page.goto(url.href, { waitUntil: 'domcontentloaded' });
     let cpuProfile, compositorTrace, navigationStart, automationCommandMs, firstTurn;
-    if (startup) automationCommandMs = await sampleStartup(page, profile, inputDelayMs);
+    if (startup)
+      automationCommandMs = await sampleStartup(page, profile, inputDelayMs, roomRoutes[route]);
     if (stopTrace) {
       await page.waitForFunction(() => window.studioBench?.loaderEnd > 0, null, {
         timeout: 120000,
@@ -1008,6 +1059,13 @@ async function measure({ base, directory, head, name, run, settings }) {
       experiments: Object.fromEntries(url.searchParams),
       ...(slowDraws && { slowDraws: raw.slowDraws.length }),
       ...(raw.slowTextureUploads && { slowTextureUploads: raw.slowTextureUploads.length }),
+      ...(drawCalls && {
+        multiDrawAvailable: raw.multiDrawAvailable,
+        indexedDrawP50: stats(raw.drawCalls.map(({ indexed }) => indexed)).p50,
+        multiDrawFrames: raw.drawCalls.filter(({ multi }) => multi > 0).length,
+        multiDrawMax: Math.max(0, ...raw.drawCalls.map(({ multi }) => multi)),
+        multiSubdrawsMax: Math.max(0, ...raw.drawCalls.map(({ multiSubdraws }) => multiSubdraws)),
+      }),
     };
     const stem = join(
       directory,
@@ -1015,6 +1073,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         captureProfile && 'loader-profile',
         steadyProfile && 'steady-profile',
         gpuTiming && 'gpu-timing',
+        drawCalls && 'draw-calls',
         loaderTrace && 'loader-trace',
         startup && 'startup',
         inputDelayMs > 0 && `input-delay-${inputDelayMs}ms`,
