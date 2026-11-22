@@ -110,28 +110,38 @@ export function tower(
   installMotherboard(unit, manager, registerLight, details);
   const power = pcPowerHarness(unit, p);
   const showTemperature = ryuoIV(unit, p, aura, power.braid, registerLight, details);
-  const staticTelemetry =
-    typeof location !== 'undefined' &&
-    new URLSearchParams(location.search).get('studio-pc-telemetry') === 'static';
+  const telemetryMode =
+    typeof location === 'undefined'
+      ? null
+      : new URLSearchParams(location.search).get('studio-pc-telemetry');
   let staticTelemetryMarked = false;
+  let typedTelemetryMarked = false;
+  let typedActive = false;
   let lastSecond = -1;
   let celsius: number;
   let watts: number;
   function updateTelemetry(time: number, nativeLow = false) {
-    if (staticTelemetry && nativeLow) {
+    if (telemetryMode === 'static' && nativeLow) {
       if (!staticTelemetryMarked) {
         staticTelemetryMarked = true;
         performance.mark('studio-pc-telemetry-static');
       }
       return;
     }
+    const typed = nativeLow && telemetryMode !== 'canvas';
+    const switched = typed !== typedActive;
     const second = Math.floor(time);
-    if (second === lastSecond) return;
+    if (second === lastSecond && !switched) return;
     lastSecond = second;
     const reading = pcReadings(second);
-    if (reading.celsius !== celsius) showTemperature(reading.celsius);
-    if (reading.watts !== watts) showPower(reading.watts);
+    if (switched || reading.celsius !== celsius) showTemperature(reading.celsius, typed);
+    if (switched || reading.watts !== watts) showPower(reading.watts, typed);
     ({ celsius, watts } = reading);
+    typedActive = typed;
+    if (typed && !typedTelemetryMarked) {
+      typedTelemetryMarked = true;
+      performance.mark('studio-pc-telemetry-typed');
+    }
   }
   updateTelemetry(0);
   const scattering = canvasTexture(96, 32, (ctx) => {

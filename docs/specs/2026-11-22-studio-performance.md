@@ -457,6 +457,33 @@ Runs 227–229 used the same native 1080p UHD 770 build, StudioView SHA-256 pref
 
 Run 229 requested idle pre-linking for the reflection probe's equirectangular conversion. It recorded no pre-link activity marks, so its frame timings cannot establish an effect. The trial was removed. Resolve the early activation window before comparing an equivalent preparation path again.
 
+### Front texture transfers and GPU backlog
+
+The 372 ms initialization in run 227 was a 371.7 ms `texSubImage2D` for the 768 × 1024 Fanjingshan photo. It began one millisecond into its task, before the next preview render, consistent with the front material warmup's upload path. In runs 228 and 229 the same photo took 30.7 and 36.2 ms. The longest transfers shifted to a 448 × 1472 ImageBitmap used by a case light guide and a 414 × 558 ferry photo. The timing points to variable transfer or queue cost across textures.
+
+Runs 238–240 used StudioView SHA-256 prefix `ea5945cf` for an immediate native UHD desk turn. The isolated trial ran a single nonresident front texture initialization between preview callbacks. The fenced trial used the same slots and checked a fence after the preceding preview with a zero timeout. If that preview had outstanding work, it waited for one more slot at most.
+
+| Run and upload schedule | Whole room ready | Loader end to first changed submit | First-input P95 / max | Intervals over 50 ms |
+| ----------------------- | ---------------: | ---------------------------------: | --------------------: | -------------------: |
+| 238, control            |          12.29 s |                             587 ms |          243 / 792 ms |            40 of 167 |
+| 239, isolated           |          12.03 s |                             578 ms |          208 / 493 ms |            53 of 173 |
+| 240, fenced             |          12.25 s |                             574 ms |          167 / 396 ms |            54 of 179 |
+
+The fenced trial recorded 3 ready polls, 62 deferred polls and 61 forced uploads after another timeout. It found the GPU still working after most previews. The isolated trials shortened the largest observed intervals in this set and increased the frequency of intervals over 50 ms. Both were removed. The results support testing the transfer itself and reducing preview work before imposing longer fence-based holds.
+
+### Preview reflection conversion link
+
+`--prelink-preview-reflections` submits Three.js's equirectangular conversion link through the native-low renderer's creation callback. It requires parallel compilation and a supported radiance target. It uses the generator that later performs the ordinary preview conversion, restores the render target and shadow settings, and does not issue the cubemap draws in advance. Runs 238 and 241–243 used build `ea5945cf` in control, prelink, prelink, control order. The `--slow-draws` probe records the first conversion and the submitted program identity.
+
+| Run and link schedule | Initial conversion draw | Whole room ready | Loader end to first changed submit | First-input P95 / max |
+| --------------------- | ----------------------: | ---------------: | ---------------------------------: | --------------------: |
+| 238, control          |                233.4 ms |          12.29 s |                             587 ms |          243 / 792 ms |
+| 241, prelink          |                  0.2 ms |          12.48 s |                             565 ms |          188 / 361 ms |
+| 242, prelink          |                  0.3 ms |          12.43 s |                             557 ms |          146 / 396 ms |
+| 243, control          |                238.4 ms |          12.27 s |                             583 ms |        250 / 1,764 ms |
+
+Both trials submitted the matching program about 1.16 seconds before its first draw, with 1.4–1.5 ms from preparation start to submission. The first conversion no longer occupies hundreds of milliseconds. The full probe still includes GGX convolution, and other preview or transfer work still causes stalls. Whole-room readiness was 167–193 ms later in these pairs. Keep the prelink optional while evaluating the complete startup schedule.
+
 ## Idle-aware catch-up
 
 `--idle-catch-up` keeps isolated preparation and permits up to three preparation frames before a quiet preview. It prioritizes the preview when 50 ms has elapsed since the preceding preview and restores alternating preparation and preview on input or visible movement. A single blocking render or warmup call can exceed that interval. Runs 140–143 used one native 4K RTX 4090 workbench build, StudioView SHA-256 prefix `ef5db8ab`. Each comparison used in-view uploads, gesture priority and detail on inspection.
@@ -524,6 +551,10 @@ On the 143.999 Hz test output, run 223's completed blank-page control reported 1
 
 Runs 223–224 used the same native 4K 4× MSAA build `f0f6becd` for ten seconds of desk motion and GLSL checks. The trial skipped depth and normal work in neutral Poisson denoise neighborhoods. Downstream GPU P95 changed from 1.64 to 1.56 ms, while same-frame main-plus-downstream P95 moved from 7.66 to 7.72 ms across 83 and 82 pairs. In the far-right band its P95 moved from 7.57 to 7.81 ms. Warm submissions were 140.90 and 139.10 FPS. Both browser interval P99 values were 13.9 ms. Both blank-page controls retained 7.1 ms P99. The denoise trial was removed given the unchanged whole-frame result.
 
+Run 233 repeated the desk route for 60 seconds after a prime turn, using production revision `f99d348` (StudioView SHA-256 prefix `71f63e04`). All 8,289 recorded main renders used 3840 × 2160 and a 4× MSAA main target. The room submitted 138.13 FPS, or 136.8–139.8 FPS in each ten-second segment. Submission interval P95/P99 was 7.1/13.9 ms. Of 8,288 intervals, 351 exceeded 10 ms and one exceeded 17 ms. CPU submission P95 was 7.7 ms. Main-color and downstream GPU P95 values were 6.56 and 1.71 ms in 488 pairs. The blank-page control submitted 144.00 animation callbacks per second with a 7.1 ms P99. The 58 aligned WDDM samples placed Chrome utilization at a 93.1% median with other processes peaking at 2.9% on the observed 3D engine. This replay cleared the tolerated average submission cadence and did not capture the earlier slow regime. Physical presentation and the remaining release routes still need measurement.
+
+The same run recorded 348 of its 351 intervals over 10 ms between the desk center and right or near the center, at camera yaw below 0.21 radians. Paired GPU P95 reached 8.12–8.58 ms in those four bands and 6.81–7.10 ms in the two leftmost bands. This localizes the steady fast regime's remaining missed intervals while leaving the intermittent slowdown open.
+
 ## UHD 770 desk GPU attribution
 
 Runs 106–107 used native 1920 × 1080 with matte and lean lighting, scissor, window-only water and depth prefill. `--gpu-panorama` alternates whole main-color queries with queries around the panorama draw on separate frames. On the stock opaque order, GPU P95 was 39.64 ms inclusive and 0.98 ms for the panorama alone, with 14 samples each. The panorama query covers that single draw and its result is a sampled cost ceiling for savings on the photographed exterior, with other scene work still in the inclusive measurement. Near-first opaque sorting moved inclusive P95 to 40.74 ms and did not close the 30 FPS frame budget gap. It remains a benchmark diagnostic.
@@ -590,7 +621,20 @@ Runs 230–232 repeated the native 1080p desk turn for 20 seconds each on the sa
 | 231, frozen          |        28.63 FPS |       42.0 / 76.4 ms |                        0 |               11 of 572 |
 | 232, control         |        28.40 FPS |      62.3 / 111.1 ms |                       14 |               24 of 565 |
 
-The intervention isolated a contributor to the longest intervals and left opaque GPU P50 at 31.26–31.65 ms across the visits. The synchronous texture probe recorded no canvas transfer of at least 10 ms. It does not measure asynchronous driver work or mipmap generation. Keep the freeze as a diagnostic. A production change should retain the existing readings, cadence, color space and minification while comparing typed or separately prepared texture transfers.
+The intervention isolated a contributor to the longest intervals and left opaque GPU P50 at 31.26–31.65 ms across the visits. The synchronous texture probe recorded no canvas transfer of at least 10 ms. It does not measure asynchronous driver work or mipmap generation. Keep the freeze as a diagnostic.
+
+Runs 234–237 compared the original CanvasTexture transfer and a typed RGBA8 transfer on the same StudioView build `46d6744a`. The typed path reads the existing two canvases only when their power or temperature reading changes. It reuses the typed backing buffer and keeps the same sRGB interpretation, alpha, filtering and generated mipmaps. The updates follow the same integer-second clock.
+
+| Run and display mode | Warm submissions | Submission P95 / P99 | Intervals at least 90 ms | Intervals over 66.67 ms |
+| -------------------- | ---------------: | -------------------: | -----------------------: | ----------------------: |
+| 234, canvas, 20 s    |        28.39 FPS |      62.5 / 111.1 ms |                       13 |               26 of 567 |
+| 235, typed, 20 s     |        28.61 FPS |       42.1 / 69.6 ms |                        0 |               12 of 571 |
+| 236, typed, 60 s     |        28.58 FPS |       42.2 / 76.4 ms |                        1 |             34 of 1,714 |
+| 237, canvas, 20 s    |        28.47 FPS |      42.9 / 111.1 ms |                       15 |               23 of 568 |
+
+All visits used native 1080p on UHD 770 with the same desk turn, lighting and depth options. The typed visits retained live readings, removed the observed clustering at one-second intervals and completed shader checks without errors. Run 236 submitted at 28.5–28.7 FPS in each ten-second segment. Its remaining 1.98% of intervals over twice the nominal frame budget still exceed the proposed steady-state limit. Use `--canvas-pc-telemetry` to replay the original upload path against the native-low default.
+
+Run 244 exercised the case inspection in the final build `ca18316f` with typed uploads enabled by the native-low default. It entered case mode with no browser or shader errors and rendered at native 1920 × 1080. The 15-second route submitted 23.06 FPS, with a 48.9/49.2 ms P95/P99 and no intervals over 50 ms. This route remains below the mean target. The WebGL pixel fixture covers the two source dimensions, full and minified samples, orientation, alpha and an updated reading on the same typed texture.
 
 ### Opaque shader experiments
 

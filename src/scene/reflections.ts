@@ -28,13 +28,68 @@ function previewTexture(time: Time) {
   return texture;
 }
 
-export function studioReflections(renderer: T.WebGLRenderer, scene: T.Scene) {
+function supportsRadiance(renderer: T.WebGLRenderer) {
+  return (
+    renderer.extensions.has('EXT_color_buffer_float') ||
+    renderer.extensions.has('EXT_color_buffer_half_float')
+  );
+}
+
+export function prelinkPreviewReflection(renderer: T.WebGLRenderer) {
+  if (
+    !supportsRadiance(renderer) ||
+    !renderer.extensions.has('KHR_parallel_shader_compile') ||
+    renderer.getContext().isContextLost() ||
+    renderer.xr.isPresenting
+  )
+    return;
+
   const generator = new T.PMREMGenerator(renderer);
+  const target = renderer.getRenderTarget();
+  const face = renderer.getActiveCubeFace();
+  const mip = renderer.getActiveMipmapLevel();
+  const shadowType = renderer.shadowMap.type;
+  const programs = new Set(renderer.info.programs ?? []);
+  const scratch = new T.WebGLCubeRenderTarget(1, {
+    type: T.HalfFloatType,
+    colorSpace: T.LinearSRGBColorSpace,
+    depthBuffer: false,
+  });
+  performance.mark('studio-pmrem-prelink-start');
+  try {
+    renderer.shadowMap.type = T.PCFShadowMap;
+    renderer.setRenderTarget(scratch);
+    generator.compileEquirectangularShader();
+  } catch {
+    generator.dispose();
+    return;
+  } finally {
+    renderer.shadowMap.type = shadowType;
+    renderer.setRenderTarget(target, face, mip);
+    scratch.dispose();
+  }
+
+  const program = renderer.info.programs?.find(
+    (candidate) => candidate.name === 'PMREMEquirectangularToCubemap' && !programs.has(candidate),
+  );
+  if (!program) {
+    generator.dispose();
+    return;
+  }
+  performance.mark('studio-pmrem-prelink-submitted', {
+    detail: { id: program.id, name: program.name },
+  });
+  return generator;
+}
+
+export function studioReflections(
+  renderer: T.WebGLRenderer,
+  scene: T.Scene,
+  generator = new T.PMREMGenerator(renderer),
+) {
   const loader = new HDRLoader();
   const probes: Record<Time, Probe> = { day: {}, night: {} };
-  const supportsRadiance =
-    renderer.extensions.has('EXT_color_buffer_float') ||
-    renderer.extensions.has('EXT_color_buffer_half_float');
+  const canPrefilter = supportsRadiance(renderer);
   let active: Time = 'night';
   let detailed = false;
   let disposed = false;
@@ -47,7 +102,7 @@ export function studioReflections(renderer: T.WebGLRenderer, scene: T.Scene) {
   }
   return {
     select(night: boolean, quality: Environment['quality']) {
-      if (!supportsRadiance) return;
+      if (!canPrefilter) return;
       active = night ? 'night' : 'day';
       detailed = quality === 'high';
       const time = active;

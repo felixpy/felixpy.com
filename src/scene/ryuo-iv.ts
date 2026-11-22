@@ -1,5 +1,6 @@
 import * as T from 'three';
 import { telemetryFont } from './pc-telemetry';
+import { pcTelemetryTexture } from './pc-telemetry-texture';
 import type { ProductDetail } from './product-detail';
 import { box, canvasTexture, group, mesh, surface, tube } from './geometry';
 import { shortCoolingLines } from './case-interior-parts';
@@ -63,14 +64,15 @@ function amoled() {
   });
   const ctx = map.image.getContext('2d')!;
   const background = ctx.getImageData(430, 100, 155, 68);
+  const updateTexture = pcTelemetryTexture(map, ctx);
   return {
     material,
-    showTemperature(celsius: number) {
+    showTemperature(celsius: number, useTyped = false) {
       ctx.putImageData(background, 430, 100);
       ctx.fillStyle = '#eff3ff';
       ctx.font = telemetryFont(67);
       ctx.fillText(celsius + '°', 433, 158);
-      map.needsUpdate = true;
+      material.map = material.emissiveMap = updateTexture(useTyped);
     },
   };
 }

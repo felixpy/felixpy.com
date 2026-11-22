@@ -1,5 +1,6 @@
 import * as T from 'three';
 import { telemetryFont } from './pc-telemetry';
+import { pcTelemetryTexture } from './pc-telemetry-texture';
 import { box, canvasTexture, group, mesh, surface, tube } from './geometry';
 import { loadDisplayModel } from './display-model';
 import type { Palette } from './materials';
@@ -261,10 +262,16 @@ function powerCompartment(parent: T.Object3D, p: Palette, steel: T.Material) {
       'Thor 1600W Titanium III • ' + finish;
   const readout = canvasTexture(320, 80, () => {});
   const ctx = readout.image.getContext('2d')!;
+  const updateTexture = pcTelemetryTexture(readout, ctx);
+  const readoutMaterial = new T.MeshBasicMaterial({
+    map: readout,
+    transparent: true,
+    depthWrite: false,
+  });
   const numbers = mesh(
     psu,
     new T.PlaneGeometry(0.033, 0.0088),
-    new T.MeshBasicMaterial({ map: readout, transparent: true, depthWrite: false }),
+    readoutMaterial,
     [-0.07494, -0.00187, -0.01786],
   );
   numbers.name = 'Thor OLED power draw';
@@ -272,7 +279,7 @@ function powerCompartment(parent: T.Object3D, p: Palette, steel: T.Material) {
   numbers.castShadow = false;
   return {
     powerLight,
-    showPower(watts: number) {
+    showPower(watts: number, useTyped = false) {
       ctx.clearRect(0, 0, 320, 80);
       ctx.fillStyle = '#eff3ff';
       const digits = String(watts);
@@ -284,7 +291,7 @@ function powerCompartment(parent: T.Object3D, p: Palette, steel: T.Material) {
       ctx.fillText('W', start + digitsWidth + gap, 68);
       ctx.font = telemetryFont(78);
       ctx.fillText(digits, start, 68);
-      readout.needsUpdate = true;
+      readoutMaterial.map = updateTexture(useTyped);
     },
   };
 }

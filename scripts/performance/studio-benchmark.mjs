@@ -63,6 +63,7 @@ const experiments = {
   '--legacy-output': ['studio-output', 'legacy'],
   '--stable-effects': ['studio-effects', 'stable'],
   '--warm-waterfront': ['studio-waterfront', 'warm'],
+  '--prelink-preview-reflections': ['studio-pmrem-stage', 'on-created'],
   '--cold-waterfront': ['studio-waterfront', 'cold'],
   '--sky-clear': ['studio-sky', 'clear'],
   '--window-scissor': ['studio-window-clip', 'scissor'],
@@ -79,6 +80,8 @@ const experiments = {
   '--live-front-warmup': ['studio-warmup-live', 'front'],
   '--legacy-tea-warmup': ['studio-tea-warmup', 'legacy'],
   '--static-pc-telemetry': ['studio-pc-telemetry', 'static'],
+  '--typed-pc-telemetry': ['studio-pc-telemetry', 'typed'],
+  '--canvas-pc-telemetry': ['studio-pc-telemetry', 'canvas'],
   '--warm-workbench': ['studio-warmup', 'workbench'],
   '--adaptive-warmup': ['studio-warmup', 'adaptive'],
   '--culled-lights': ['studio-lighting', 'culled'],
@@ -743,6 +746,13 @@ function installProbe({
           group,
         );
         const duration = performance.now() - start;
+        if (!sample.previewReflectionDraw && material.name === 'PMREMEquirectangularToCubemap') {
+          sample.previewReflectionDraw = {
+            start,
+            duration,
+            programId: renderer.properties.get(material).currentProgram?.id,
+          };
+        }
         if (duration > 50) {
           const target = renderer.getRenderTarget();
           const gl = renderer.getContext();
@@ -1077,6 +1087,10 @@ function readSamples() {
     shaderProgramCount: renderer.info.programs?.length ?? 0,
     ...(raw.slowDraws && {
       shaderPrograms: renderer.info.programs?.map(({ id, cacheKey }) => ({ id, cacheKey })),
+      previewReflectionPrelink: performance.getEntriesByName(
+        'studio-pmrem-prelink-submitted',
+        'mark',
+      )[0]?.detail,
     }),
     mode: document.querySelector('.studio')?.dataset.mode,
     weather,

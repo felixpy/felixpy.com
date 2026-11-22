@@ -22,7 +22,7 @@ import { roomFirstFrame } from './room-first-frame';
 import { warmRoomEffect } from './room-effect-material';
 import { warmRiverFerry } from './river-ferry';
 import { Minimap } from './Minimap';
-import { studioReflections } from './reflections';
+import { prelinkPreviewReflection, studioReflections } from './reflections';
 import { roomVisibility } from './room-visibility';
 import { roomDetail } from './room-detail';
 import { roomPicking } from './room-picking';
@@ -97,10 +97,16 @@ type Inspection = {
 };
 const lookKeys = new Set(['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight']);
 
+type PreparedReflection = {
+  renderer: T.WebGLRenderer;
+  generator: T.PMREMGenerator;
+};
+
 type RigProps = Props & {
   mapMarker: RefObject<SVGGElement | null>;
   firstPicture: RefObject<FirstPicture>;
   detailRevision: RefObject<number>;
+  preparedReflection: RefObject<PreparedReflection | null>;
   phonePanel: RefObject<HTMLDivElement | null>;
   setPhoneHeld: (held: boolean) => void;
   nativeLow: boolean;
@@ -314,7 +320,14 @@ function CameraRig(
   useEffect(() => {
     const element = gl.domElement;
     const renderer = gl as T.WebGLRenderer;
-    const reflectionMap = studioReflections(renderer, scene);
+    const prepared = live.current.preparedReflection.current;
+    live.current.preparedReflection.current = null;
+    if (prepared && prepared.renderer !== renderer) prepared.generator.dispose();
+    const reflectionMap = studioReflections(
+      renderer,
+      scene,
+      prepared?.renderer === renderer ? prepared.generator : undefined,
+    );
     const visibility = roomVisibility(model.pickRoots, live.current.environment, model.slats);
     const surfaceAbort = new AbortController();
     roomMeshes.current = roomDetail(model.interior, surfaceAbort.signal);
@@ -1565,6 +1578,7 @@ function StudioRoom({
 export default function StudioView(props: Props) {
   const mapMarker = useRef<SVGGElement>(null);
   const phonePanel = useRef<HTMLDivElement>(null);
+  const preparedReflection = useRef<PreparedReflection | null>(null);
   const [phoneHeld, setPhoneHeld] = useState(false);
   const firstPicture = useRef<FirstPicture>('loading');
   const [firstFrame] = useState(() => {
@@ -1588,6 +1602,13 @@ export default function StudioView(props: Props) {
   useLayoutEffect(() => {
     if (props.roomVisible) performance.mark('studio-input-ready');
   }, [props.roomVisible]);
+  useEffect(
+    () => () => {
+      preparedReflection.current?.generator.dispose();
+      preparedReflection.current = null;
+    },
+    [],
+  );
   return (
     <>
       <Canvas
@@ -1615,6 +1636,15 @@ export default function StudioView(props: Props) {
           gl.debug.checkShaderErrors = import.meta.env.DEV;
           gl.toneMapping = T.ACESFilmicToneMapping;
           gl.toneMappingExposure = 1.04;
+          if (
+            nativeLow &&
+            props.environment.quality === 'low' &&
+            new URLSearchParams(location.search).get('studio-pmrem-stage') === 'on-created'
+          ) {
+            preparedReflection.current?.generator.dispose();
+            const generator = prelinkPreviewReflection(gl);
+            preparedReflection.current = generator ? { renderer: gl, generator } : null;
+          }
         }}
       >
         <StudioRoom
@@ -1623,6 +1653,7 @@ export default function StudioView(props: Props) {
           mapMarker={mapMarker}
           firstPicture={firstPicture}
           detailRevision={detailRevision}
+          preparedReflection={preparedReflection}
           phonePanel={phonePanel}
           setPhoneHeld={setPhoneHeld}
           setLowScale={setLowScale}
