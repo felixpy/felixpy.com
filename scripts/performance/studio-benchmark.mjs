@@ -34,7 +34,8 @@ const roomRoutes = {
     turn: -865,
   },
 };
-const weatherCodes = { clear: 0, rain: 61, snow: 71 };
+const weatherCodes = { clear: 0, overcast: 3, rain: 61, snow: 71 };
+const weatherLabels = { clear: '晴', overcast: '阴', rain: '雨', snow: '雪' };
 const experiments = {
   '--deferred-books': ['studio-startup', 'deferred-books'],
   '--warm-preview': ['studio-preview', 'warm'],
@@ -82,6 +83,7 @@ Use --gpu-timing to sample main-color GPU work during the final steady route.
 Use --repeat-desk to prime the shaders and geometry with one matched desk turn before sampling.
 Use --seconds=<duration> to set the measured steady desk route duration (default 12).
 Use --route=<${Object.keys(roomRoutes).join('|')}> and --weather=<${Object.keys(weatherCodes).join('|')}> to replay room views.
+Use --day to start in daylight. Combine with --weather=overcast for the Shanghai 5120-pixel panorama.
 Use --loader-trace to capture compositor events and screenshots during loading.
 Use --startup to exercise the first desk drag as soon as the loader disappears.
 Combine --loader-profile and --startup to profile through the first ten seconds after the drag.
@@ -89,6 +91,7 @@ Add --full-room to wait for rear asset readiness on builds that report it.
 Set --input-delay-ms=<milliseconds> to wait before the first drag.
 Use --screenshot to save a full-viewport image after sampling.
 Use --slow-draws to attribute individual draw calls taking longer than 50 ms.
+Use --texture-uploads to record uploads of at least 10 ms without timing every draw.
 Use --warm to prime the origin in the same browser context before measuring a reload.
 Use --dist=<directory> to serve an alternate production build.
 Experiment switches: ${Object.keys(experiments).join(', ')}.
@@ -111,8 +114,10 @@ function options(args) {
   const inputDelayMs = delayArgument ? Number(delayArgument.slice('--input-delay-ms='.length)) : 0;
   const screenshot = captured.delete('--screenshot');
   const slowDraws = captured.delete('--slow-draws');
+  const textureUploads = captured.delete('--texture-uploads');
   const warm = captured.delete('--warm');
   const repeatDesk = captured.delete('--repeat-desk');
+  const day = captured.delete('--day');
   const routeArgument = [...captured].find((arg) => arg.startsWith('--route='));
   const weatherArgument = [...captured].find((arg) => arg.startsWith('--weather='));
   captured.delete(routeArgument);
@@ -162,8 +167,10 @@ function options(args) {
     inputDelayMs,
     screenshot,
     slowDraws,
+    textureUploads,
     warm,
     repeatDesk,
+    day,
     seconds,
     route,
     weather,
@@ -192,14 +199,24 @@ function browserArgs(adapter) {
   return args;
 }
 
-function installProbe({ quality, forceNative, startup, slowDraws, gpuTiming }) {
+function installProbe({
+  quality,
+  forceNative,
+  startup,
+  slowDraws,
+  textureUploads,
+  gpuTiming,
+  day,
+  weather,
+}) {
   performance.setResourceTimingBufferSize(1000);
   localStorage.setItem(
     'felix-studio-v1',
     JSON.stringify({
       quality,
       automaticQuality: false,
-      weather: '晴',
+      night: !day,
+      weather,
       reducedMotion: false,
       rainAudio: false,
     }),
@@ -213,7 +230,8 @@ function installProbe({ quality, forceNative, startup, slowDraws, gpuTiming }) {
     resolutions: {},
     longTasks: [],
     ...(startup && { firstDrag: { frames: [] } }),
-    ...(slowDraws && { slowDraws: [], slowTextureUploads: [] }),
+    ...(slowDraws && { slowDraws: [] }),
+    ...((slowDraws || textureUploads) && { slowTextureUploads: [] }),
     recording: false,
     visible: document.visibilityState,
     visibilityChanged: false,
@@ -325,7 +343,7 @@ function installProbe({ quality, forceNative, startup, slowDraws, gpuTiming }) {
       renderer.setPixelRatio = () => setRatio(1);
       setRatio(1);
     }
-    if (slowDraws) {
+    if (slowDraws || textureUploads) {
       const gl = renderer.getContext();
       for (const name of ['texImage2D', 'texSubImage2D', 'texImage3D', 'texSubImage3D']) {
         const upload = gl[name];
@@ -351,6 +369,8 @@ function installProbe({ quality, forceNative, startup, slowDraws, gpuTiming }) {
           return result;
         };
       }
+    }
+    if (slowDraws) {
       const renderBufferDirect = renderer.renderBufferDirect;
       renderer.renderBufferDirect = function (camera, scene, geometry, material, object, group) {
         const start = performance.now();
@@ -796,10 +816,12 @@ async function measure({ base, directory, head, name, run, settings }) {
     inputDelayMs,
     screenshot,
     slowDraws,
+    textureUploads,
     selected,
     dist,
     warm,
     repeatDesk,
+    day,
     seconds,
     route,
     weather,
@@ -846,7 +868,9 @@ async function measure({ base, directory, head, name, run, settings }) {
     cdp.on('Network.responseReceivedExtraInfo', ({ requestId, statusCode }) => {
       if (statusCode === 304) revalidatedRequests.add(requestId);
     });
-    const weatherFixture = { current: { weather_code: weatherCodes[weather], is_day: 0 } };
+    const weatherFixture = {
+      current: { weather_code: weatherCodes[weather], is_day: Number(day) },
+    };
     if (warm) {
       cdp.on('Fetch.requestPaused', ({ requestId, request }) => {
         const meteorology = new URL(request.url).hostname === 'api.open-meteo.com';
@@ -873,7 +897,15 @@ async function measure({ base, directory, head, name, run, settings }) {
         return route.abort();
       });
     }
-    await page.addInitScript(installProbe, { ...profile, startup, slowDraws, gpuTiming });
+    await page.addInitScript(installProbe, {
+      ...profile,
+      startup,
+      slowDraws,
+      textureUploads,
+      gpuTiming,
+      day,
+      weather: weatherLabels[weather],
+    });
     if (warm) {
       await page.goto(url.href, { waitUntil: 'domcontentloaded' });
       await waitForShading(page);
@@ -961,10 +993,8 @@ async function measure({ base, directory, head, name, run, settings }) {
       night: raw.night,
       mode: raw.mode,
       experiments: Object.fromEntries(url.searchParams),
-      ...(slowDraws && {
-        slowDraws: raw.slowDraws.length,
-        slowTextureUploads: raw.slowTextureUploads.length,
-      }),
+      ...(slowDraws && { slowDraws: raw.slowDraws.length }),
+      ...(raw.slowTextureUploads && { slowTextureUploads: raw.slowTextureUploads.length }),
     };
     const stem = join(
       directory,
@@ -976,10 +1006,12 @@ async function measure({ base, directory, head, name, run, settings }) {
         startup && 'startup',
         inputDelayMs > 0 && `input-delay-${inputDelayMs}ms`,
         slowDraws && 'slow-draws',
+        textureUploads && 'texture-uploads',
         warm && 'warm',
         repeatDesk && 'repeat-desk',
         seconds !== 12 && `${seconds}s`,
         route !== 'desk' && route,
+        day && 'day',
         weather !== 'clear' && weather,
         name,
         ...selected.map((flag) => flag.slice(2)),

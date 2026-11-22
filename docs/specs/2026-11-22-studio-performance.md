@@ -190,3 +190,18 @@ Run 63 tried a 512 × 512 lossless downsample of the existing oak color source w
 The external image audit covers 135 WebP, PNG and JPEG assets, including seven at or above 2 million pixels. The default Shanghai-night run requested two of the seven, the desk oak and the 2880 × 1620 atlas. The atlas first uploaded during the turn at 57.5 ms. Shanghai day is 5120 × 2278, New York night is 3200 × 1014 and rain beads are 1792 × 1472. Those scene variants were absent in that visit. The other two are the 1536 × 1536 pine floor color and normal maps, also absent from the trace. A fresh GLB metadata scan found 152 embedded images in 48 model containers, including the two 2048 × 1280 teak maps and the 2124 × 1200 SELPHY postcard reverse. The desk mat artwork is 1974 × 875. An asset or model request alone does not establish its upload cost. External audit rows and request timings are in .review/performance-research/external-textures-cold-62.json.
 
 The optional main-color GPU query reported P95 of 7.30 ms for high-quality stock lighting and 6.31 ms with zero-contribution culling in the matched warmed 4K run 61 (61 samples each). Frame submissions were 129.11 and 129.00 FPS. Initial shading increased from 16.18 to 24.86 s. Keep both the high cull and the separate lean low-quality light kernel optional. The latter passed arithmetic equivalence checks and still needs native throughput and visual tests. The display-cadence witness also needs a headed calibration before physical results can be used for acceptance.
+
+## Shanghai overcast panorama
+
+Runs 64 and 65 used the same RTX 4090 build at native 3840 × 2160 high quality with the Shanghai window route and cold browser cache. The second build directory replaced only the overcast photograph with a same-aspect 2560 × 1139 WebP. The photos measured 733,118 and 224,050 bytes, with estimated base RGBA8 storage of 44.49 and 11.12 MiB before mipmaps. The depth map and render resolution were the same in both visits.
+
+| Metric                                           | 5120 × 2278 | 2560 × 1139 |
+| ------------------------------------------------ | ----------: | ----------: |
+| First photograph `texSubImage2D` call            |    214.8 ms |    185.1 ms |
+| Warm main-color GPU P95, 68 samples per visit    |     4.13 ms |     4.08 ms |
+| Warm frame submission rate                       |  144.00 FPS |  144.00 FPS |
+| Front and rear assets with initial shading ready |     16.89 s |     16.98 s |
+
+Both upload calls started just after loader exit. Their CPU spans can include conversion, transfer and driver wait. Every sampled primary pass used a 3840 × 2160 default buffer and a 3840 × 2160 main color target. This pair shows lower asset bytes and estimated texture storage, a modest reduction in the observed upload call and comparable warm main-color work. Measure the integrated GPU separately before inferring a low-quality throughput benefit. The pixel-size window crop shows softer building facade detail on the smaller photo. A tiered color source can use the smaller photo for desk views and prepare the original asynchronously for close examination. Switch the color source within the same exposure after readiness, keeping normalized UVs, depth and projection calibration.
+
+Replay with `--day --weather=overcast --route=window --seconds=8 --gpu-timing --texture-uploads --screenshot`. Run JSON and final stills are in `.review/performance/73b8337/`. The half-resolution WebP is in `.review/performance-research/shanghai-day-2560.webp` and was served from `.review/performance/phase6-half-panorama/`.
