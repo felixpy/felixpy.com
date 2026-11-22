@@ -54,6 +54,8 @@ const experiments = {
   '--priority-rear': ['studio-rear', 'priority'],
   '--vitrine-timing': ['studio-vitrine-timing', 'on'],
   '--early-rear': ['studio-rear', 'early'],
+  '--idle-rear': ['studio-rear', 'idle'],
+  '--late-rear': ['studio-rear', 'late'],
   '--native-low': ['studio-low', 'native'],
   '--sliced-build': ['studio-build', 'sliced'],
   '--photo-fasteners': ['studio-photo-fasteners', 'instanced'],
@@ -77,6 +79,7 @@ const experiments = {
   '--catch-up-warmup': ['studio-warmup', 'catch-up'],
   '--isolated-catch-up': ['studio-warmup', 'isolated-catch-up'],
   '--resident-warmup-maps': ['studio-warmup-maps', 'resident'],
+  '--small-warmup-maps': ['studio-warmup-small-maps', 'on'],
   '--live-front-warmup': ['studio-warmup-live', 'front'],
   '--legacy-tea-warmup': ['studio-tea-warmup', 'legacy'],
   '--static-pc-telemetry': ['studio-pc-telemetry', 'static'],
@@ -122,7 +125,7 @@ Use --route=<${Object.keys(roomRoutes).join('|')}> and --weather=<${Object.keys(
 Use --day to start in daylight. Combine with --weather=overcast for the Shanghai 5120-pixel panorama.
 Use --loader-trace to capture compositor events and screenshots during loading.
 Use --startup to exercise the first drag as soon as the loader disappears.
-Add --startup-spans to record long renderer calls during loading and the first ten seconds of input.
+Add --startup-spans to record long renderer calls and post-loader animation callbacks during startup.
 Use --warmup-work to count program readiness queries and texture uploads during room preparation.
 Add --in-view-preview-uploads to prioritize visible textures with an existing preview staging mode.
 Add --route=workbench to turn toward the workbench on that first drag.
@@ -346,7 +349,7 @@ function installProbe({
     resolutions: {},
     longTasks: [],
     ...(startup && { firstDrag: { frames: [] } }),
-    ...(startupSpans && { startupSpans: [] }),
+    ...(startupSpans && { startupSpans: [], startupAnimationFrames: [] }),
     ...(slowDraws && { slowDraws: [] }),
     ...(drawInventory && { drawInventory: [] }),
     ...((slowDraws || textureUploads) && { slowTextureUploads: [] }),
@@ -377,6 +380,15 @@ function installProbe({
     } else if (sample.loaderStart != null && !attached) {
       sample.loaderEnd = performance.now();
       observer.disconnect();
+      if (startupSpans) {
+        function recordStartupAnimationFrame(timestamp) {
+          const now = performance.now();
+          sample.startupAnimationFrames.push([timestamp, now]);
+          if (now < (sample.firstDrag.move ?? Infinity) + 10000)
+            requestAnimationFrame(recordStartupAnimationFrame);
+        }
+        requestAnimationFrame(recordStartupAnimationFrame);
+      }
     }
   });
   observer.observe(document, { subtree: true, childList: true, attributeFilter: ['value'] });

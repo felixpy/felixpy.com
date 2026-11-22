@@ -12,9 +12,11 @@ import {
   OrthographicCamera,
   PlaneGeometry,
   Points,
+  RGBAFormat,
   Scene,
   ShaderMaterial,
   Texture,
+  UnsignedByteType,
 } from 'three';
 import type { Material, Object3D, WebGLRenderTarget, WebGLRenderer } from 'three';
 
@@ -40,6 +42,9 @@ const fallbackInterval = 16.7;
 const steadyWindow = 750;
 const liveFrontBatchLimit = 4;
 const liveFrontScanInterval = 100;
+const smallMapBatchBudget = 3;
+const smallMapBatchLimit = 3;
+const smallMapBatchBytes = 512 * 1024;
 
 function renderable(object: Object3D): object is Renderable {
   return object instanceof Mesh || object instanceof Line || object instanceof Points;
@@ -47,6 +52,35 @@ function renderable(object: Object3D): object is Renderable {
 
 function materialVersion(material: Material) {
   return material.id + '/' + material.version;
+}
+
+function smallMapBytes(texture: Texture) {
+  if (
+    (texture.constructor !== Texture && texture.constructor !== CanvasTexture) ||
+    !texture.source.dataReady ||
+    texture.format !== RGBAFormat ||
+    texture.type !== UnsignedByteType ||
+    texture.internalFormat !== null ||
+    texture.mipmaps.length
+  )
+    return Infinity;
+  const image = texture.image as
+    | { width?: number; height?: number; naturalWidth?: number; naturalHeight?: number }
+    | undefined;
+  let width = image?.naturalWidth ?? image?.width;
+  let height = image?.naturalHeight ?? image?.height;
+  if (!width || !height || !Number.isSafeInteger(width) || !Number.isSafeInteger(height))
+    return Infinity;
+  if (width < 1 || height < 1) return Infinity;
+  let bytes = width * height * 4;
+  if (texture.generateMipmaps && bytes <= smallMapBatchBytes) {
+    while (width > 1 || height > 1) {
+      width = Math.max(1, Math.floor(width / 2));
+      height = Math.max(1, Math.floor(height / 2));
+      bytes += width * height * 4;
+    }
+  }
+  return bytes;
 }
 
 export function roomWarmup(
@@ -59,10 +93,10 @@ export function roomWarmup(
   keepPreviewPrograms = false,
 ) {
   const isolated = mode === 'isolated-catch-up';
-  const pruneResidentMaps =
-    isolated &&
-    typeof location !== 'undefined' &&
-    new URLSearchParams(location.search).get('studio-warmup-maps') === 'resident';
+  const options =
+    isolated && typeof location !== 'undefined' ? new URLSearchParams(location.search) : undefined;
+  const pruneResidentMaps = options?.get('studio-warmup-maps') === 'resident';
+  const batchSmallMaps = options?.get('studio-warmup-small-maps') === 'on';
   const catchUp = mode === 'catch-up' || isolated;
   const pacePrograms = mode === 'paced' || mode === 'adaptive';
   const batchLimit = subtrees ? 6 : 20;
@@ -96,6 +130,7 @@ export function roomWarmup(
   let disposed = false;
   let warmingSubtrees = false;
   let liveFront: LiveFront | undefined;
+  let smallMapBatches = 0;
 
   function hasPreviewProgram(object: Renderable, target: WebGLRenderTarget | null) {
     const { material } = object;
@@ -332,6 +367,30 @@ export function roomWarmup(
       if (performance.now() >= until) break;
     }
     return textures.size === 0;
+  }
+
+  function uploadSmallFrontMaps() {
+    const start = performance.now();
+    const until = start + smallMapBatchBudget;
+    let count = 0;
+    let bytes = 0;
+    for (const texture of frontMaps) {
+      if (!texture.version || residentMap(texture)) {
+        frontMaps.delete(texture);
+        continue;
+      }
+      const nextBytes = smallMapBytes(texture);
+      if (count && (bytes + nextBytes > smallMapBatchBytes || performance.now() >= until)) break;
+      frontMaps.delete(texture);
+      gl.initTexture(texture);
+      bytes += nextBytes;
+      if (++count >= smallMapBatchLimit || bytes > smallMapBatchBytes) break;
+    }
+    if (count > 1)
+      performance.measure(`studio-room-small-map-batch-${++smallMapBatches}-${count}-${bytes}`, {
+        start,
+        end: performance.now(),
+      });
   }
 
   function updateContext(target: WebGLRenderTarget | null, visibleLights: string[]) {
@@ -584,6 +643,7 @@ export function roomWarmup(
       if (nextPass < passes.length) compilePasses();
       else if (programs.size < batchLimit && visibleOffset < visible.length) compileVisible(target);
       else if (programs.size) reflectPrograms(performance.now() + 3);
+      else if (batchSmallMaps && frontMaps.size) uploadSmallFrontMaps();
       else if (frontMaps.size) upload(frontMaps, 0);
       return false;
     }

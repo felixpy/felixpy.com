@@ -1450,7 +1450,7 @@ function StudioRoom({
     const waterfront = query.get('studio-waterfront');
     return {
       environment: props.environment,
-      earlyRear: rearMode === 'early',
+      earlyRear: rearMode === 'early' || rearMode === 'idle',
       sliced: query.get('studio-build') === 'sliced',
       simpleLow: query.get('studio-low-shading') === 'simple',
       options: {

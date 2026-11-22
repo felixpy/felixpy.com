@@ -377,6 +377,40 @@ Runs 177–178 and 180–181 used one native 4K RTX 4090 build (StudioView SHA-2
 
 The counts cover the catch-up phase. The candidate eliminated 227 already-resident initialization calls in both orders and preserved 160 other calls. Whole-room readiness improved by 2.67–2.88 seconds. The first ten seconds had longer worst intervals in both comparisons. In run 180, the 493 ms interval contained a 17.5 ms room render and had no overlapping recorded long task. Keep the candidate opt-in while checking texture and preview scheduling under input.
 
+Runs 247–248 repeated the cold native 4K workbench turn on build `ca18316f` with isolated catch-up, resident-map skipping, input-priority textures, in-view order and atlas detail on inspection. Immediate and 4.5-second delayed input reached whole-room readiness at 16.02 and 17.79 seconds, and submitted the changed view 62 and 167 ms after the pointer move. The respective first-input interval P95/max values were 83/444 and 76/1,111 ms. The catch-up phase took 13.46 and 15.49 seconds, with 159 and 171 nonresident initialization calls occupying 427 and 365 ms of combined CPU wall time. Initial full draws took 118 and 108 ms. The 1,111 ms interval contained a 20 ms preview render and no overlapping browser long task. Capture the independent animation callbacks to separate renderer scheduling from a delayed browser callback.
+
+### Small texture groups during isolated preparation
+
+`--small-warmup-maps` allows up to three small RGBA8 textures in one isolated preparation callback, with a 512 KiB estimate including mip levels and a 3 ms soft budget. Other transfers are submitted by themselves. The preview still alternates with preparation. Runs 251–254 used build `444c16a2` with the same settings above and measured the actual saved preparation slots from the batch marks.
+
+| Run and input timing    | Whole room ready | Move to changed submit | First-input P95 / max | Prep slots saved |
+| ----------------------- | ---------------: | ---------------------: | --------------------: | ---------------: |
+| 251, immediate, control |          16.27 s |                  70 ms |           84 / 236 ms |                0 |
+| 252, immediate, grouped |          16.42 s |                  59 ms |           83 / 201 ms |               14 |
+| 253, delayed, grouped   |          16.81 s |                  56 ms |         49 / 1,173 ms |               21 |
+| 254, delayed, control   |          17.65 s |                  35 ms |         69 / 1,153 ms |                0 |
+
+The delayed grouped run shortened readiness by 846 ms and took 21 ms longer to submit the first changed frame. The immediate pair had similar pacing at a slightly later readiness. Leave the grouped option experimental while attributing the much larger interruption around rear assembly.
+
+### Rear content timing during the workbench turn
+
+`--startup-spans` records browser animation callback arrival times on a separate recorder after loader removal. In delayed runs 253–254, the longest scene intervals began 33–41 ms after rear readiness, with a single 18 ms recorded preview render and no overlapping browser long task in each interval. The independent callback gaps measured 1.15 and 1.13 seconds. The older delayed run 248 also had its 1.11-second scene gap begin 31 ms after rear readiness. This ties the blank section of the trace to missing browser callbacks around rear assembly, rather than to a renderer callback that chose to withhold a draw.
+
+Runs 255–256 used the same `444c16a2` build with early rear loading and its existing changes to queue priority. The 4.5-second delayed run brought rear readiness from 7.42 to 3.64 seconds versus run 254, and the post-input maximum fell from 1,153 to 174 ms. Whole-room readiness improved from 17.65 to 16.93 seconds. On immediate input, with the camera already turned toward the workbench when rear content arrived, the maximum rose from 236 to 2,069 ms, and it again started 41 ms after rear readiness with no overlapping browser long task. This motivated an independent comparison of the early trigger with the existing queue priority.
+
+Runs 257–259 compared the early idle trigger with original queue priority in build `290d818f`. In the delayed pair the trigger brought rear readiness from 7.40 to 2.56 seconds and whole-room readiness from 17.81 to 17.05 seconds. It changed the post-input P95/max from 49/2,069 to 42/153 ms, with move-to-submit changing from 65 to 93 ms. The immediate early-trigger run reached 16.19 seconds whole-room readiness and 76/229 ms post-input P95/max, close to the prior immediate control at 16.27 seconds and 84/236 ms. Neither early-trigger visit used the queue priority switch.
+
+Runs 260–263 repeated the comparison on build `df199b52` with the usual high-quality startup schedule, without isolated preparation, staged textures or atlas changes. This version temporarily made the idle trigger the high-quality default. The explicit `--late-rear` comparison restored the ordinary later trigger.
+
+| Run and input timing  | Rear ready | Whole room ready | Move to changed submit | First full draw | Newly linked programs in first full draw |
+| --------------------- | ---------: | ---------------: | ---------------------: | --------------: | ---------------------------------------: |
+| 260, delayed, late    |    11.15 s |          25.82 s |                  87 ms |         10.45 s |                                       21 |
+| 261, delayed, early   |     3.75 s |          25.77 s |               5,558 ms |         10.37 s |                                       21 |
+| 262, immediate, early |     3.44 s |          25.03 s |                   9 ms |         11.49 s |                                       22 |
+| 263, immediate, late  |     3.45 s |          25.44 s |                  11 ms |         11.57 s |                                       22 |
+
+In run 261, the move waited 5.21 seconds for event dispatch and 344 ms more for the changed submission after acceptance. The four visits' first full draws repeatedly linked 21–22 programs at the actual workbench view. Preserve the ordinary default and keep `--idle-rear` available for use alongside isolated preparation. Its favorable timing is conditional on the rest of the preparation schedule. The usual startup needs earlier preparation for the actual view before adopting the trigger.
+
 Runs 179 and 182 measured the default warmup in an immediate native 1080p UHD 770 desk turn on the same build. The shader phase took 9.25 and 8.50 seconds. The 14,890 and 12,999 completion queries occupied 25.8 and 115.3 ms of CPU wall time. In run 179 the last program link started 6.14 seconds into the phase and the last readiness observation was at 9.25 seconds. The query time alone offers little scope for a seconds-scale improvement.
 
 The first full draw in run 182 took 1.58 seconds. Two newly linked programs explain most of the long render: the Astro Mondrian workbench lamp's graphite aluminium took 679 ms, and the SELPHY postcard image took 859 ms. The run logged three newly linked programs during that full draw. The lamp's bounding sphere is outside the initial warmup scan at the eased yaw reached when preparation begins. The 96-pixel input brings it into the frustum before the full draw.
@@ -555,6 +589,15 @@ Run 233 repeated the desk route for 60 seconds after a prime turn, using product
 
 The same run recorded 348 of its 351 intervals over 10 ms between the desk center and right or near the center, at camera yaw below 0.21 radians. Paired GPU P95 reached 8.12–8.58 ms in those four bands and 6.81–7.10 ms in the two leftmost bands. This localizes the steady fast regime's remaining missed intervals while leaving the intermittent slowdown open.
 
+Runs 249–250 compared the stock and zero-radiance directional shadow branch on build `1ba17e52` in 12-second warmed native 4K desk turns. The trial bypassed window-aperture evaluation, directional PCF and direct shading when the shadowed directional light's color was zero. The compiled material kept the same vertex code, resources and nonzero-light calculation. The visits completed without browser or shader errors.
+
+| Run and mode | Warm submissions | Intervals over 10 ms | Main GPU P95 | Paired main + downstream GPU P95 | Paired P95, yaw below 0.21 rad |
+| ------------ | ---------------: | -------------------: | -----------: | -------------------------------: | -----------------------------: |
+| 249, stock   |       138.75 FPS |          62 of 1,664 |      6.46 ms |                          7.91 ms |                        7.99 ms |
+| 250, branch  |       134.91 FPS |         104 of 1,617 |      7.12 ms |                          8.54 ms |                        8.49 ms |
+
+The branch had 96 valid same-frame GPU pairs and the control had 98. Both had 67 pairs in the center and right bands. The trial was removed after its slower timings in this comparison.
+
 ## UHD 770 desk GPU attribution
 
 Runs 106–107 used native 1920 × 1080 with matte and lean lighting, scissor, window-only water and depth prefill. `--gpu-panorama` alternates whole main-color queries with queries around the panorama draw on separate frames. On the stock opaque order, GPU P95 was 39.64 ms inclusive and 0.98 ms for the panorama alone, with 14 samples each. The panorama query covers that single draw and its result is a sampled cost ceiling for savings on the photographed exterior, with other scene work still in the inclusive measurement. Near-first opaque sorting moved inclusive P95 to 40.74 ms and did not close the 30 FPS frame budget gap. It remains a benchmark diagnostic.
@@ -635,6 +678,8 @@ Runs 234–237 compared the original CanvasTexture transfer and a typed RGBA8 tr
 All visits used native 1080p on UHD 770 with the same desk turn, lighting and depth options. The typed visits retained live readings, removed the observed clustering at one-second intervals and completed shader checks without errors. Run 236 submitted at 28.5–28.7 FPS in each ten-second segment. Its remaining 1.98% of intervals over twice the nominal frame budget still exceed the proposed steady-state limit. Use `--canvas-pc-telemetry` to replay the original upload path against the native-low default.
 
 Run 244 exercised the case inspection in the final build `ca18316f` with typed uploads enabled by the native-low default. It entered case mode with no browser or shader errors and rendered at native 1920 × 1080. The 15-second route submitted 23.06 FPS, with a 48.9/49.2 ms P95/P99 and no intervals over 50 ms. This route remains below the mean target. The WebGL pixel fixture covers the two source dimensions, full and minified samples, orientation, alpha and an updated reading on the same typed texture.
+
+The same build's 12-second case attribution in run 245 measured main-color GPU P50 of 42.47 ms and split opaque/translucent GPU P50 of 38.30/3.47 ms. Run 246 submitted 22.86 FPS with 7.6 ms CPU submission P95. Native-low work is paused at this checkpoint. Current development prioritizes whole-room startup, first input and native 4K frame pacing.
 
 ### Opaque shader experiments
 
