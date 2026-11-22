@@ -31,7 +31,7 @@ For interaction changes, use the scene interaction types and the same action for
 - Update English and Simplified Chinese site copy together. Keep the README in both languages and write other repository documentation in English.
 - Record the source and usage terms for new third-party assets in the [media documentation](docs/media.md) and [runtime credits](public/media/credits.txt).
 - Run `npm run build` and the relevant Playwright tests. Install Chrome for Playwright with `npx playwright install chrome`, then run `npm test`. For a focused run, pass a test name pattern with `npm test -- --grep "pattern"`.
-- For visible changes, include before-and-after screenshots or a recording in the pull request. Note the browser and viewport if the result depends on them. Keep local review files in `.review/`.
+- For visible changes, include before-and-after screenshots or a recording in the pull request. Note the browser and viewport if the result depends on them. Keep temporary review files in local, untracked storage.
 
 ## Open a pull request
 

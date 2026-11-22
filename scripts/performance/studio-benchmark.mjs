@@ -111,7 +111,7 @@ Use --warm to prime the origin in the same browser context before measuring a re
 Use --dist=<directory> to serve an alternate production build.
 Experiment switches: ${Object.keys(experiments).join(', ')}.
 Build first with npm run build. Use installed Chrome on Windows, with ANGLE D3D11.
-Results go to .review/performance/<short commit>/. Matching run IDs are replaced.`;
+Local results are grouped by commit in the output directory. Matching run IDs are replaced.`;
 
 function options(args) {
   const captured = new Set(args.filter((arg) => arg.startsWith('--')));
