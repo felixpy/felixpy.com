@@ -418,17 +418,27 @@ function installProbe({
     let phase = begin('beforePreview', performance.now());
     let shaded = false;
     let rear = false;
+    function activePhase() {
+      if (phase?.stage === 'postReady' && sample.firstDrag.changedSubmit != null) {
+        phase.end = sample.firstDrag.changedSubmit;
+        phase = undefined;
+      }
+      return phase;
+    }
     const mark = performance.mark;
     performance.mark = function (...args) {
       const entry = mark.apply(this, args);
-      if (!phase) return entry;
+      if (!activePhase() || phase.stage === 'postReady') return entry;
       const [name] = args;
       if (name === 'studio-room-shaded') shaded = true;
       if (name === 'studio-room-rear-ready') rear = true;
       const stage = stages[name];
       if (stage || (shaded && rear)) {
         phase.end = entry.startTime;
-        phase = shaded && rear ? undefined : begin(stage, entry.startTime);
+        if (!shaded || !rear) phase = begin(stage, entry.startTime);
+        else if (sample.firstDrag && sample.firstDrag.changedSubmit == null)
+          phase = begin('postReady', entry.startTime);
+        else phase = undefined;
       }
       return entry;
     };
@@ -441,7 +451,7 @@ function installProbe({
     function measureCall(owner, method, category, after) {
       const original = owner[method];
       owner[method] = function (...args) {
-        const active = phase;
+        const active = activePhase();
         const name = active && category(args);
         if (!name) return original.apply(this, args);
         const start = performance.now();
@@ -463,7 +473,7 @@ function installProbe({
     }
     const renderBuffer = renderer.renderBufferDirect;
     renderer.renderBufferDirect = function (camera, scene, geometry, material, object, group) {
-      const active = phase;
+      const active = activePhase();
       if (!active) return renderBuffer.call(this, camera, scene, geometry, material, object, group);
 
       const parentObject = drawingObject;
@@ -472,7 +482,7 @@ function installProbe({
       drawingMaterial = material;
       try {
         const result = renderBuffer.call(this, camera, scene, geometry, material, object, group);
-        if (active.stage === 'firstFullDraw') {
+        if (active.stage === 'firstFullDraw' || active.stage === 'postReady') {
           const { currentProgram } = renderer.properties.get(material);
           const entry = active.programs[ids.get(currentProgram?.program)];
           if (entry && !entry.firstDraw) entry.firstDraw = drawOwner(object, material);
