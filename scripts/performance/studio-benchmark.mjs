@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { chromium } from '@playwright/test';
 import { preview } from 'vite';
+import { startWddmTelemetry } from './studio-wddm.mjs';
 
 const profiles = {
   '4k': { width: 3840, height: 2160, quality: 'high', adapter: '4090' },
@@ -102,6 +103,8 @@ Add --gpu-depth-prepass to alternate inclusive and split depth/color samples on 
 Add --gpu-color-passes to alternate inclusive and opaque/translucent draw samples on the low-quality path.
 Use --opaque-near-first to measure a front-to-back opaque draw order in the replay.
 Use --draw-calls to record WebGL indexed and multi-draw calls during the final steady route.
+Use --draw-inventory to attribute main-color draws to objects in up to three steady route frames.
+Use --wddm-luid=<high,low> to sample the specified Windows adapter during the steady route.
 Use --repeat-desk to prime the shaders and geometry with one matched desk turn before sampling.
 Use --seconds=<duration> to set the measured steady desk route duration (default 12).
 Use --route=<${Object.keys(roomRoutes).join('|')}> and --weather=<${Object.keys(weatherCodes).join('|')}> to replay room views.
@@ -140,6 +143,10 @@ function options(args) {
   const gpuColorPasses = captured.delete('--gpu-color-passes');
   const opaqueNearFirst = captured.delete('--opaque-near-first');
   const drawCalls = captured.delete('--draw-calls');
+  const drawInventory = captured.delete('--draw-inventory');
+  const wddmArgument = [...captured].find((arg) => arg.startsWith('--wddm-luid='));
+  captured.delete(wddmArgument);
+  const wddmLuid = wddmArgument?.slice('--wddm-luid='.length);
   const loaderTrace = captured.delete('--loader-trace');
   const startup = captured.delete('--startup');
   const startupSpans = captured.delete('--startup-spans');
@@ -187,6 +194,20 @@ function options(args) {
         gpuDepthPrepass ||
         names.some((name) => profiles[name]?.quality !== 'low'))) ||
     (drawCalls && (captureProfile || steadyProfile || startup || loaderTrace)) ||
+    (drawInventory &&
+      (captureProfile ||
+        steadyProfile ||
+        startup ||
+        loaderTrace ||
+        gpuTiming ||
+        drawCalls ||
+        slowDraws)) ||
+    (wddmArgument &&
+      (process.platform !== 'win32' ||
+        captureProfile ||
+        startup ||
+        loaderTrace ||
+        !/^-?\d+,\d+$/.test(wddmLuid))) ||
     (loaderTrace && (captureProfile || startup || screenshot || slowDraws)) ||
     (steadyProfile && (captureProfile || loaderTrace || startup || slowDraws)) ||
     ((repeatDesk || secondsArgument) && (captureProfile || loaderTrace || startup)) ||
@@ -216,6 +237,8 @@ function options(args) {
     gpuColorPasses,
     opaqueNearFirst,
     drawCalls,
+    drawInventory,
+    wddmLuid,
     loaderTrace,
     startup,
     startupSpans,
@@ -263,6 +286,7 @@ function installProbe({
   quality,
   forceNative,
   drawCalls,
+  drawInventory,
   startup,
   startupSpans,
   slowDraws,
@@ -300,6 +324,7 @@ function installProbe({
     ...(startup && { firstDrag: { frames: [] } }),
     ...(startupSpans && { startupSpans: [] }),
     ...(slowDraws && { slowDraws: [] }),
+    ...(drawInventory && { drawInventory: [] }),
     ...((slowDraws || textureUploads) && { slowTextureUploads: [] }),
     recording: false,
     visible: document.visibilityState,
@@ -614,6 +639,38 @@ function installProbe({
       }
     }
     let world, roomCamera;
+    let inventory;
+    if (drawInventory) {
+      const renderBuffer = renderer.renderBufferDirect;
+      renderer.renderBufferDirect = function (camera, scene, geometry, material, object, group) {
+        if (!inventory || scene !== world || renderer.getRenderTarget() !== inventory.target)
+          return renderBuffer.call(this, camera, scene, geometry, material, object, group);
+
+        const before = renderer.info.render;
+        const { calls: previousCalls, triangles: previousTriangles } = before;
+        const result = renderBuffer.call(this, camera, scene, geometry, material, object, group);
+        const { calls, triangles } = renderer.info.render;
+        if (calls <= previousCalls) return result;
+
+        const path = [];
+        for (let node = object; node && node !== world; node = node.parent) {
+          if (node.name) path.unshift(node.name);
+        }
+        inventory.draws.push({
+          path,
+          object: object.id,
+          type: object.type,
+          geometry: geometry.id,
+          material: material.id,
+          materialName: material.name,
+          materialType: material.type,
+          translucent: Boolean(material.transparent || material.transmission > 0),
+          calls: calls - previousCalls,
+          triangles: triangles - previousTriangles,
+        });
+        return result;
+      };
+    }
     let depthQuery, depthDrawnAt;
     let downstreamQuery, downstreamFrame;
     sample.project = (name) => {
@@ -670,6 +727,18 @@ function installProbe({
         } else query = depthQuery ?? gpu?.begin();
       } else if (depthPrefill) query = gpu?.begin(splitDepth ? 'depth' : 'main');
       if (primary && drawCalls) drawSample = { indexed: 0, multi: 0, multiSubdraws: 0 };
+      if (
+        primary &&
+        drawInventory &&
+        sample.drawInventory.length < 3 &&
+        frame - (sample.drawInventory.at(-1)?.frame ?? -Infinity) >= 1400
+      )
+        inventory = {
+          frame,
+          yaw: camera.quaternion.y,
+          target: renderer.getRenderTarget(),
+          draws: [],
+        };
       if (gpuPanorama) renderPanorama = primary && gpu?.panoramaFrame();
       if (renderPanorama) sample.panoramaFrames = (sample.panoramaFrames ?? 0) + 1;
       if (primary && gpu?.colorPassFrame())
@@ -694,6 +763,11 @@ function installProbe({
         if (primary && drawSample) {
           sample.drawCalls.push(drawSample);
           drawSample = null;
+        }
+        if (primary && inventory) {
+          const { frame, yaw, draws } = inventory;
+          if (complete) sample.drawInventory.push({ frame, yaw, draws });
+          inventory = undefined;
         }
         if (query && (!depthPrefill || depthQuery !== query)) {
           gpu.end(query, !complete);
@@ -765,6 +839,7 @@ function readSamples() {
     }));
   return {
     ...raw,
+    timeOriginUnixMs: performance.timeOrigin,
     gpu: info && gl.getParameter(info.UNMASKED_RENDERER_WEBGL),
     shaderProgramCount: renderer.info.programs?.length ?? 0,
     ...(raw.slowDraws && {
@@ -922,7 +997,7 @@ async function sampleDesk(
   page,
   profile,
   { repeatDesk, seconds, screenshot, route, gpuTiming },
-  startProfile,
+  beforeMeasurement,
 ) {
   await waitForShading(page);
   await page.waitForTimeout(5000);
@@ -940,11 +1015,12 @@ async function sampleDesk(
       if (sample.depthPrefillFrames !== undefined) sample.depthPrefillFrames = 0;
       if (sample.depthPrefillWork) sample.depthPrefillWork.length = 0;
       if (sample.drawCalls) sample.drawCalls.length = 0;
+      if (sample.drawInventory) sample.drawInventory.length = 0;
       return { roomFrames, submissions };
     });
     await page.waitForTimeout(1000);
   }
-  await startProfile?.();
+  await beforeMeasurement?.();
   if (gpuTiming)
     await page.evaluate(() => {
       const begin = window.studioBench.beginGpuTiming;
@@ -1092,6 +1168,8 @@ async function measure({ base, directory, head, name, run, settings }) {
     gpuColorPasses,
     opaqueNearFirst,
     drawCalls,
+    drawInventory,
+    wddmLuid,
     loaderTrace,
     startup,
     startupSpans,
@@ -1115,7 +1193,11 @@ async function measure({ base, directory, head, name, run, settings }) {
   const url = new URL(base);
   for (const flag of selected) url.searchParams.set(...experiments[flag]);
   const args = browserArgs(profile.adapter);
+  const pinnedAdapter = args.find((arg) => arg.startsWith('--use-adapter-luid='));
+  if (wddmLuid && pinnedAdapter && pinnedAdapter !== `--use-adapter-luid=${wddmLuid}`)
+    throw new Error('WDDM telemetry must target the pinned Chrome adapter.');
   const browser = await chromium.launch({ channel: 'chrome', headless: true, args });
+  let wddm;
   try {
     const page = await browser.newPage({
       viewport: { width: profile.width, height: profile.height },
@@ -1196,6 +1278,7 @@ async function measure({ base, directory, head, name, run, settings }) {
       gpuColorPasses,
       opaqueNearFirst,
       drawCalls,
+      drawInventory,
       day,
       weather: weatherLabels[weather],
     });
@@ -1232,8 +1315,18 @@ async function measure({ base, directory, head, name, run, settings }) {
         timeout: 120000,
       });
     if (!captureProfile && !loaderTrace && !startup) {
-      const startProfile = steadyProfile ? () => cdp.send('Profiler.start') : undefined;
-      firstTurn = await sampleDesk(page, profile, settings, startProfile);
+      firstTurn = await sampleDesk(page, profile, settings, async () => {
+        if (wddmLuid) {
+          const browserCdp = await browser.newBrowserCDPSession();
+          const { processInfo } = await browserCdp.send('SystemInfo.getProcessInfo');
+          const gpu = processInfo.filter(({ type }) => type.toLowerCase() === 'gpu');
+          if (gpu.length !== 1 || !Number.isSafeInteger(gpu[0].id) || gpu[0].id <= 0)
+            throw new Error('The private Chrome browser did not report a unique GPU process.');
+          wddm = await startWddmTelemetry({ gpuPid: gpu[0].id, adapterLuid: wddmLuid });
+          await browserCdp.detach();
+        }
+        if (steadyProfile) await cdp.send('Profiler.start');
+      });
     }
     if (captureProfile || steadyProfile) {
       cpuProfile = (await cdp.send('Profiler.stop')).profile;
@@ -1250,6 +1343,10 @@ async function measure({ base, directory, head, name, run, settings }) {
         { polling: 250, timeout: 120000 },
       );
     const raw = await page.evaluate(readSamples);
+    if (wddm) {
+      raw.wddm = await wddm.stop();
+      wddm = undefined;
+    }
     checkSamples(raw, profile, settings);
     const summary = {
       variant: name,
@@ -1291,6 +1388,11 @@ async function measure({ base, directory, head, name, run, settings }) {
       ...(slowDraws && { slowDraws: raw.slowDraws.length }),
       ...(raw.slowTextureUploads && { slowTextureUploads: raw.slowTextureUploads.length }),
       ...(opaqueNearFirst && { opaqueSort: 'near-first' }),
+      ...(drawInventory && { inventoryFrames: raw.drawInventory.length }),
+      ...(raw.wddm && {
+        wddmSamples: raw.wddm.samples.length,
+        ...(raw.wddm.error && { wddmError: raw.wddm.error }),
+      }),
       ...(drawCalls && {
         multiDrawAvailable: raw.multiDrawAvailable,
         indexedDrawP50: stats(raw.drawCalls.map(({ indexed }) => indexed)).p50,
@@ -1311,6 +1413,8 @@ async function measure({ base, directory, head, name, run, settings }) {
         gpuColorPasses && 'gpu-color-passes',
         opaqueNearFirst && 'opaque-near-first',
         drawCalls && 'draw-calls',
+        drawInventory && 'draw-inventory',
+        wddmLuid && 'wddm',
         loaderTrace && 'loader-trace',
         startup && 'startup',
         startupSpans && 'startup-spans',
@@ -1465,7 +1569,11 @@ async function measure({ base, directory, head, name, run, settings }) {
     if (warm && !cachedRequests.size && !revalidatedRequests.size)
       throw new Error('The warm reload observed no HTTP cache hits or revalidations.');
   } finally {
-    await browser.close();
+    try {
+      await wddm?.stop();
+    } finally {
+      await browser.close();
+    }
   }
 }
 
