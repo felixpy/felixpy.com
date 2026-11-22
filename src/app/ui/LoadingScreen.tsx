@@ -16,11 +16,17 @@ export default function LoadingScreen({
   const meter = useRef<HTMLProgressElement>(null);
   const percent = useRef<HTMLSpanElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
+  const start = useRef<number | null>(null);
+  const displayed = useRef(0);
+  const [legacy] = useState(
+    () => new URLSearchParams(location.search).get('studio-loader') === 'legacy',
+  );
   const [phosphorReady, setPhosphorReady] = useState(false);
   useEffect(() => {
+    if (!legacy) return;
     const timer = window.setTimeout(() => setPhosphorReady(true), 2200);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [legacy]);
   const paintTitle = useCallback(
     (context: CanvasRenderingContext2D, viewport: HTMLCanvasElement) => {
       const heading = title.current;
@@ -42,31 +48,29 @@ export default function LoadingScreen({
     },
     [],
   );
-  const status = useRef(progress);
-  status.current = progress;
   useEffect(() => {
-    const start = performance.now();
-    let displayed = 0,
-      frame = 0;
+    const started = (start.current ??= performance.now());
+    let frame = requestAnimationFrame(update);
     function update(now: number) {
-      const elapsed = Math.max(0, now - start);
+      const elapsed = Math.max(0, now - started);
       const waiting = Math.min(1, elapsed / 1900);
-      displayed = Math.max(
-        displayed,
+      const next = Math.max(
+        displayed.current,
         approachProgress * (1 - (1 - waiting) ** 2.4),
-        status.current * 0.95,
+        progress * 0.95,
       );
-      track.current?.style.setProperty('--progress', (displayed * 100).toFixed(2) + '%');
-      if (meter.current) meter.current.value = displayed;
-      if (percent.current) {
-        const label = `${Math.floor(displayed * 100)}%`;
-        if (percent.current.textContent !== label) percent.current.textContent = label;
+      if (next !== displayed.current) {
+        displayed.current = next;
+        track.current?.style.setProperty('--progress', (next * 100).toFixed(2) + '%');
+        if (meter.current) meter.current.value = next;
+        const label = `${Math.floor(next * 100)}%`;
+        if (percent.current && percent.current.textContent !== label)
+          percent.current.textContent = label;
       }
-      frame = requestAnimationFrame(update);
+      if (waiting < 1 && next < approachProgress) frame = requestAnimationFrame(update);
     }
-    frame = requestAnimationFrame(update);
     return () => cancelAnimationFrame(frame);
-  }, []);
+  }, [progress]);
 
   return (
     <section
@@ -74,6 +78,7 @@ export default function LoadingScreen({
       lang="en"
       aria-labelledby="loading-title"
       data-reduced-motion={reducedMotion}
+      data-loader-animation={legacy ? 'legacy' : 'composited'}
     >
       <h1 id="loading-title" ref={title}>
         FELIX.PY

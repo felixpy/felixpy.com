@@ -65,7 +65,12 @@ const windowButtons = [
 export function* buildStudioSteps(
   manager: T.LoadingManager,
   initial = initialEnvironment,
-  { deferBookBacks = false, prioritizeRear = false, preloadInspection = false } = {},
+  {
+    deferBookBacks = false,
+    prioritizeRear = false,
+    preloadInspection = false,
+    mergeFirst = true,
+  } = {},
 ) {
   const root = new T.Group();
   root.name = 'Felix Studio';
@@ -795,7 +800,9 @@ export function* buildStudioSteps(
   ];
   const byObject = new Map(targets.map((target) => [target.object, target]));
   yield;
-  batchMeshes(interior, new Set([...byObject.keys(), bench.top]));
+  performance.mark('studio-batch-start');
+  batchMeshes(interior, new Set([...byObject.keys(), bench.top]), mergeFirst);
+  performance.mark('studio-batch-end');
   yield;
   const hemisphere = new T.HemisphereLight('#dce7f0', '#a89883', 0.18);
   const { wall, z0, z1, y0, y1 } = windowOpening;

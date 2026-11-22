@@ -1,10 +1,64 @@
 import * as T from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-export function batchMeshes(root: T.Object3D, movable: ReadonlySet<T.Object3D>) {
+type BatchMesh = T.Mesh<T.BufferGeometry, T.Material>;
+
+function sequentialIndex(geometry: T.BufferGeometry) {
+  const length = geometry.getAttribute('position').count;
+  const sequential = length > 65535 ? new Uint32Array(length) : new Uint16Array(length);
+  for (let i = 0; i < length; i++) sequential[i] = i;
+  return new T.BufferAttribute(sequential, 1);
+}
+
+function mergeTransformed(batch: BatchMesh[], indexed: boolean) {
+  const copies = batch.map((child) => {
+    child.updateMatrix();
+    const copy = child.geometry.clone();
+    if (indexed && !copy.index) copy.setIndex(sequentialIndex(copy));
+    return copy.applyMatrix4(child.matrix);
+  });
+  const geometry = mergeGeometries(copies);
+  for (const copy of copies) copy.dispose();
+  return geometry;
+}
+
+function transformMerged(batch: BatchMesh[], indexed: boolean) {
+  const sources = batch.map(({ geometry }) => {
+    if (!indexed || geometry.index) return geometry;
+    const source = new T.BufferGeometry();
+    source.attributes = geometry.attributes;
+    source.setIndex(sequentialIndex(geometry));
+    return source;
+  });
+  const geometry = mergeGeometries(sources);
+  if (!geometry) return null;
+  for (const child of batch) child.updateMatrix();
+  const normalMatrix = new T.Matrix3();
+  for (const name of ['position', 'normal', 'tangent']) {
+    const attribute = geometry.getAttribute(name);
+    if (!attribute) continue;
+    let offset = 0;
+    for (const child of batch) {
+      const end = offset + child.geometry.getAttribute(name).array.length;
+      const slice = new T.BufferAttribute(
+        attribute.array.subarray(offset, end),
+        attribute.itemSize,
+        attribute.normalized,
+      );
+      if (name === 'position') slice.applyMatrix4(child.matrix);
+      else if (name === 'normal')
+        slice.applyNormalMatrix(normalMatrix.getNormalMatrix(child.matrix));
+      else slice.transformDirection(child.matrix);
+      offset = end;
+    }
+  }
+  return geometry;
+}
+
+export function batchMeshes(root: T.Object3D, movable: ReadonlySet<T.Object3D>, mergeFirst = true) {
   const layouts = new WeakMap<T.BufferGeometry, string>();
   root.traverse((parent) => {
-    const batches = new Map<string, T.Mesh<T.BufferGeometry, T.Material>[]>();
+    const batches = new Map<string, BatchMesh[]>();
     for (const child of parent.children) {
       if (
         !(child instanceof T.Mesh) ||
@@ -47,19 +101,17 @@ export function batchMeshes(root: T.Object3D, movable: ReadonlySet<T.Object3D>) 
     for (const batch of batches.values()) {
       if (batch.length < 2) continue;
       const indexed = batch.some((child) => child.geometry.index !== null);
-      const parts = batch.map((child) => {
-        child.updateMatrix();
-        const copy = child.geometry.clone();
-        if (indexed && !copy.index) {
-          const length = copy.getAttribute('position').count;
-          const sequential = length > 65535 ? new Uint32Array(length) : new Uint16Array(length);
-          for (let i = 0; i < length; i++) sequential[i] = i;
-          copy.setIndex(new T.BufferAttribute(sequential, 1));
-        }
-        return copy.applyMatrix4(child.matrix);
-      });
-      const geometry = mergeGeometries(parts);
-      for (const part of parts) part.dispose();
+      const compatible =
+        mergeFirst &&
+        batch.every(({ geometry }) =>
+          Object.values(geometry.attributes).every(
+            (attribute) =>
+              attribute instanceof T.BufferAttribute && attribute.array instanceof Float32Array,
+          ),
+        );
+      const geometry = compatible
+        ? transformMerged(batch, indexed)
+        : mergeTransformed(batch, indexed);
       if (!geometry) continue;
       const first = batch[0];
       const mesh = new T.Mesh(geometry, first.material);

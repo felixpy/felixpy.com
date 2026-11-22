@@ -1742,6 +1742,7 @@ test('the loader advances before the room arrives and completes after it is read
   page,
 }) => {
   await page.setViewportSize({ width: 1100, height: 780 });
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.addInitScript(() =>
     localStorage.setItem('felix-studio-v1', JSON.stringify({ locale: 'zh' })),
   );
@@ -1798,6 +1799,15 @@ test('the loader advances before the room arrives and completes after it is read
     ).toBeGreaterThan(0);
     await waitForProgress(0.9, 2500);
     expect(await read()).toBeLessThan(1);
+    const activity = page.locator('.phosphor-cursor span');
+    await expect(activity).toHaveCSS('animation-name', 'phosphor-pulse');
+    await page.waitForFunction(() =>
+      document
+        .querySelector('.phosphor-cursor span')
+        ?.getAnimations()
+        .some((animation) => Number(animation.currentTime) >= 2300),
+    );
+    await expect(page.locator('.studio-loading canvas')).toHaveCount(0);
     releaseRoom();
     await expect(meter).toHaveCount(0);
     await expect(page.locator('.keyboard-entry')).toBeEnabled();

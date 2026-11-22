@@ -34,6 +34,11 @@ const experiments = {
   '--fused-output': ['studio-output', 'fused'],
   '--legacy-output': ['studio-output', 'legacy'],
   '--stable-effects': ['studio-effects', 'stable'],
+  '--incremental-warmup': ['studio-warmup', 'incremental'],
+  '--culled-lights': ['studio-lighting', 'culled'],
+  '--legacy-loader': ['studio-loader', 'legacy'],
+  '--merge-first': ['studio-batching', 'merge-first'],
+  '--transform-first': ['studio-batching', 'transform-first'],
 };
 const usage = `Usage: node scripts/performance/studio-benchmark.mjs [profiles] [run IDs] [options]
 
@@ -41,6 +46,7 @@ Profiles: 4k (default), 1440p, 3060, uhd-adaptive, uhd-native
 List profiles or positive run IDs with commas. Run ID defaults to 1.
 Example: node scripts/performance/studio-benchmark.mjs 4k,uhd-adaptive 1,2,3
 Use --loader-profile to profile startup CPU work through loader removal.
+Use --loader-trace to capture compositor events and screenshots during loading.
 Use --startup to exercise the first desk drag as soon as the loader disappears.
 Combine both to extend CPU profiling through the first ten seconds after the drag.
 Use --screenshot to save a full-viewport image after sampling.
@@ -57,6 +63,7 @@ function options(args) {
   const names = (positional[0] ?? '4k').split(',');
   const ids = (positional[1] ?? '1').split(',');
   const captureProfile = captured.delete('--loader-profile');
+  const loaderTrace = captured.delete('--loader-trace');
   const startup = captured.delete('--startup');
   const screenshot = captured.delete('--screenshot');
   const slowDraws = captured.delete('--slow-draws');
@@ -70,6 +77,7 @@ function options(args) {
     captured.size ||
     !dist ||
     (captureProfile && screenshot) ||
+    (loaderTrace && (captureProfile || startup || screenshot || slowDraws)) ||
     names.some((name) => !Object.hasOwn(profiles, name)) ||
     ids.some((id) => !/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id))) ||
     new Set(names).size !== names.length ||
@@ -81,6 +89,7 @@ function options(args) {
     names,
     runs: ids.map(Number),
     captureProfile,
+    loaderTrace,
     startup,
     screenshot,
     slowDraws,
@@ -366,14 +375,14 @@ async function sampleStartup(page, profile) {
   };
 }
 
-async function sampleDesk(page, profile) {
+async function sampleDesk(page, profile, screenshot) {
   await waitForShading(page);
   await page.waitForTimeout(5000);
   const origin = deskOrigin(profile);
   await page.mouse.move(origin.x, origin.y);
   await page.mouse.down();
   await page.evaluate(
-    ({ x, y }) =>
+    ({ x, y, screenshot }) =>
       new Promise((done) => {
         let start;
         function tick(time) {
@@ -381,7 +390,7 @@ async function sampleDesk(page, profile) {
           const elapsed = time - start;
           const sample = window.studioBench;
           sample.recording = elapsed > 2000 && elapsed < 14000;
-          const phase = elapsed / 1500;
+          const phase = screenshot && elapsed >= 14000 ? 0 : elapsed / 1500;
           sample.renderer.domElement.dispatchEvent(
             new PointerEvent('pointermove', {
               pointerType: 'mouse',
@@ -397,12 +406,13 @@ async function sampleDesk(page, profile) {
         }
         requestAnimationFrame(tick);
       }),
-    origin,
+    { ...origin, screenshot },
   );
   await page.mouse.up();
+  if (screenshot) await page.waitForTimeout(500);
 }
 
-function checkSamples(raw, profile, { captureProfile, startup }) {
+function checkSamples(raw, profile, { captureProfile, loaderTrace, startup }) {
   if (
     !adapterNames[profile.adapter].test(raw.gpu) ||
     raw.visible !== 'visible' ||
@@ -426,7 +436,7 @@ function checkSamples(raw, profile, { captureProfile, startup }) {
       throw new Error('Unexpected native drawing-buffer dimensions: ' + raw.drawingBuffer);
     return;
   }
-  if (captureProfile) return;
+  if (captureProfile || loaderTrace) return;
   if (!raw.motion || raw.roomFrames.length < 2)
     throw new Error(
       'The desk route produced no measurable camera movement or room frame intervals.',
@@ -441,6 +451,30 @@ function checkSamples(raw, profile, { captureProfile, startup }) {
     if (profile.quality === 'high' && (targetWidth !== width || targetHeight !== height))
       throw new Error('High-quality target differs from the drawing buffer: ' + key);
   }
+}
+
+async function traceLoader(cdp) {
+  const completed = new Promise((resolve) => cdp.once('Tracing.tracingComplete', resolve));
+  await cdp.send('Tracing.start', {
+    categories: 'cc,viz,benchmark,devtools.timeline,disabled-by-default-devtools.screenshot',
+    transferMode: 'ReturnAsStream',
+  });
+  return async () => {
+    await cdp.send('Tracing.end');
+    const { stream, dataLossOccurred } = await completed;
+    if (!stream || dataLossOccurred) throw new Error('The compositor trace is incomplete.');
+    const chunks = [];
+    try {
+      let part;
+      do {
+        part = await cdp.send('IO.read', { handle: stream });
+        chunks.push(Buffer.from(part.data, part.base64Encoded ? 'base64' : 'utf8'));
+      } while (!part.eof);
+    } finally {
+      await cdp.send('IO.close', { handle: stream });
+    }
+    return Buffer.concat(chunks);
+  };
 }
 
 const rounded = (value) => Number(value.toFixed(2));
@@ -487,7 +521,8 @@ function startupSummary(raw, automationCommandMs) {
 }
 
 async function measure({ base, directory, head, name, run, settings }) {
-  const { captureProfile, startup, screenshot, slowDraws, selected, dist, warm } = settings;
+  const { captureProfile, loaderTrace, startup, screenshot, slowDraws, selected, dist, warm } =
+    settings;
   const profile = profiles[name];
   const url = new URL(base);
   for (const flag of selected) url.searchParams.set(...experiments[flag]);
@@ -565,16 +600,26 @@ async function measure({ base, directory, head, name, run, settings }) {
       cachedRequests.clear();
       revalidatedRequests.clear();
     }
+    if (captureProfile || loaderTrace) await cdp.send('Performance.enable');
     if (captureProfile) {
-      await cdp.send('Performance.enable');
       await cdp.send('Profiler.enable');
       await cdp.send('Profiler.setSamplingInterval', { interval: 1000 });
       await cdp.send('Profiler.start');
     }
+    const stopTrace = loaderTrace ? await traceLoader(cdp) : undefined;
     if (warm) await page.reload({ waitUntil: 'domcontentloaded' });
     else await page.goto(url.href, { waitUntil: 'domcontentloaded' });
-    let cpuProfile, navigationStart, automationCommandMs;
+    let cpuProfile, compositorTrace, navigationStart, automationCommandMs;
     if (startup) automationCommandMs = await sampleStartup(page, profile);
+    if (stopTrace) {
+      await page.waitForFunction(() => window.studioBench?.loaderEnd > 0, null, {
+        timeout: 120000,
+      });
+      compositorTrace = await stopTrace();
+      const { metrics } = await cdp.send('Performance.getMetrics');
+      navigationStart = metrics.find((metric) => metric.name === 'NavigationStart')?.value;
+      if (!navigationStart) throw new Error('The compositor trace has no navigation clock.');
+    }
     if (captureProfile) {
       if (!startup)
         await page.waitForFunction(() => window.studioBench?.loaderEnd > 0, null, {
@@ -587,7 +632,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         throw new Error('Startup CPU samples or navigation clock unavailable.');
     }
     if (startup) await waitForShading(page);
-    else if (!captureProfile) await sampleDesk(page, profile);
+    else if (!captureProfile && !loaderTrace) await sampleDesk(page, profile, screenshot);
     const raw = await page.evaluate(readSamples);
     checkSamples(raw, profile, settings);
     const summary = {
@@ -625,6 +670,7 @@ async function measure({ base, directory, head, name, run, settings }) {
       directory,
       [
         captureProfile && 'loader-profile',
+        loaderTrace && 'loader-trace',
         startup && 'startup',
         slowDraws && 'slow-draws',
         warm && 'warm',
@@ -664,7 +710,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         measures: raw.measures,
       });
       if (startup) Object.assign(summary, startupSummary(raw, automationCommandMs));
-      else
+      else if (!loaderTrace)
         Object.assign(summary, {
           resolutions: raw.resolutions,
           room: stats(intervals(raw.roomFrames)),
@@ -673,6 +719,23 @@ async function measure({ base, directory, head, name, run, settings }) {
           tris: raw.tris,
           motion: raw.motion,
         });
+      if (compositorTrace) {
+        const captures = JSON.parse(compositorTrace)
+          .traceEvents.filter((event) => event.name === 'Screenshot')
+          .map(({ ts, args }) => ({
+            time: ts / 1000 - navigationStart * 1000,
+            image: args.snapshot,
+          }))
+          .filter(({ time }) => time >= raw.loaderStart && time <= raw.loaderEnd)
+          .sort((a, b) => a.time - b.time);
+        const changed = captures.filter(
+          (capture, index) => capture.image !== captures[index - 1]?.image,
+        );
+        summary.loaderScreenshots = stats(intervals(captures.map(({ time }) => time)));
+        summary.loaderScreenshotChanges = stats(intervals(changed.map(({ time }) => time)));
+        summary.navigationStartMonotonicSeconds = navigationStart;
+        writeFileSync(stem + '.trace.json.gz', gzipSync(compositorTrace));
+      }
       writeFileSync(stem + '.json', JSON.stringify({ summary, raw }, null, 2));
       if (screenshot) await page.screenshot({ path: stem + '.png', timeout: 60000 });
     }

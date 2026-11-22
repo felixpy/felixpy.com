@@ -40,6 +40,10 @@ export function Finish({
 }) {
   const { gl, scene, camera, size, viewport } = useThree();
   const grade = useMemo(roomColorGrade, []);
+  const incrementalWarmup = useMemo(
+    () => new URLSearchParams(location.search).get('studio-warmup') === 'incremental',
+    [],
+  );
   useEffect(() => () => firstFrame.dispose(), [firstFrame]);
   useEffect(() => () => grade.dispose(), [grade]);
   const pipeline = useRef<{
@@ -164,23 +168,45 @@ export function Finish({
       preparation.current.step(active?.beauty ?? null);
     }
     if (firstPicture.current === 'preparing') {
-      const mapsReady = preparation.current?.uploadFront() ?? true;
-      if (shaders.current === 'pending' || !mapsReady) {
-        firstFrame.draw(gl, scene, camera, night, look);
-        return;
-      }
-      if (shaders.current !== 'ready' && gl.extensions.has('KHR_parallel_shader_compile')) {
-        shaders.current = 'pending';
-        const pending = roomWarmup(gl, scene, camera);
-        preparation.current = pending;
-        scannedRevision.current = detailRevision.current;
-        performance.mark('studio-room-shader-warm-start');
-        const finish = () => {
-          shaders.current = 'ready';
-          performance.mark('studio-room-shader-warm-end');
-        };
-        void pending.front(active?.beauty ?? null).then(finish, finish);
-        return;
+      const parallel = gl.extensions.has('KHR_parallel_shader_compile');
+      if (incrementalWarmup && parallel) {
+        if (!preparation.current) {
+          const passes = active
+            ? [
+                {
+                  material: active.occlusion.gtaoMaterial,
+                  target: active.occlusion.gtaoRenderTarget,
+                },
+                { material: active.occlusion.pdMaterial, target: active.occlusion.pdRenderTarget },
+              ]
+            : [];
+          preparation.current = roomWarmup(gl, scene, camera, passes);
+          performance.mark('studio-room-shader-warm-start');
+        }
+        if (!preparation.current.prepareVisible(active?.beauty ?? null, detailRevision.current)) {
+          firstFrame.draw(gl, scene, camera, night, look);
+          return;
+        }
+        performance.mark('studio-room-shader-warm-end');
+      } else {
+        const mapsReady = preparation.current?.uploadFront() ?? true;
+        if (shaders.current === 'pending' || !mapsReady) {
+          firstFrame.draw(gl, scene, camera, night, look);
+          return;
+        }
+        if (shaders.current !== 'ready' && parallel) {
+          shaders.current = 'pending';
+          const pending = roomWarmup(gl, scene, camera);
+          preparation.current = pending;
+          scannedRevision.current = detailRevision.current;
+          performance.mark('studio-room-shader-warm-start');
+          const finish = () => {
+            shaders.current = 'ready';
+            performance.mark('studio-room-shader-warm-end');
+          };
+          void pending.front(active?.beauty ?? null).then(finish, finish);
+          return;
+        }
       }
       shaders.current = 'ready';
     }

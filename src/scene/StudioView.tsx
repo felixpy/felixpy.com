@@ -1380,6 +1380,7 @@ function StudioRoom({
         deferBookBacks: query.get('studio-startup') === 'deferred-books',
         prioritizeRear: query.get('studio-rear') === 'priority',
         preloadInspection: query.get('studio-details') === 'preload',
+        mergeFirst: query.get('studio-batching') !== 'transform-first',
       },
     };
   });
