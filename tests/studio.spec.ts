@@ -1859,6 +1859,14 @@ test('the music collection shares playback state and the computer keeps portrait
   await page.setViewportSize({ width: 1100, height: 780 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.addInitScript(() => {
+    const NativeAudioContext = window.AudioContext;
+    let audioContexts = 0;
+    window.AudioContext = class extends NativeAudioContext {
+      constructor(options?: AudioContextOptions) {
+        super(options);
+        document.documentElement.dataset.audioContexts = String(++audioContexts);
+      }
+    };
     const getContext = HTMLCanvasElement.prototype.getContext;
     Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
       value: function (this: HTMLCanvasElement, type: string, options?: unknown) {
@@ -1879,6 +1887,7 @@ test('the music collection shares playback state and the computer keeps portrait
   ).toBeVisible();
   await expect(page.locator('.desktop [title]')).toHaveCount(0);
   await page.getByRole('button', { name: 'Minimize About' }).click();
+  await expect(page.locator('html')).not.toHaveAttribute('data-audio-contexts');
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await expect(page.locator('.os-window-about')).toHaveCount(0);
   await expect(page.locator('.os-window')).toHaveCount(1);
@@ -1930,6 +1939,7 @@ test('the music collection shares playback state and the computer keeps portrait
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-Hans');
   await expect(page.getByRole('region', { name: '锁屏' })).toHaveCount(0);
   await page.getByRole('button', { name: '音乐', exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-audio-contexts', '1');
   await expect(page.getByRole('heading', { name: 'Moonlit Skyline' })).toBeVisible();
   await expect(page.locator('.spectral-artist')).toHaveText('Nihilore');
   await expect(page.getByRole('button', { name: '暂停', exact: true })).toBeVisible();

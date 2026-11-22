@@ -140,3 +140,9 @@ With automatic rear loading and a 20-second pause, initial shading was ready at 
 Decoding the world atlas with ImageBitmap reduced its first upload from 85.5 to 34.5 ms in the automatic-loading comparison. The two smaller prints still took about 62 and 82 ms to upload. Initial shading remained near 15.5 s and the worst first-turn interval rose to 479 ms. The bitmap path remains experimental.
 
 Use the startup benchmark with `--full-room` to wait for the rear-ready mark and `--input-delay-ms=3000` to reproduce the delayed turn. Runs 33 and 35–38 and their raw upload timings are under `.review/performance/36231a8/`.
+
+## First-pointer audio initialization
+
+The 20-second delayed native 4K press still dispatched late with book backs prepared during construction. Run 39 reproduced a 950 ms dispatch delay and attributed approximately 942 ms of overlapping CPU samples to synchronous construction of the Web Audio context in the global gesture handler. The three seconds before the press were a separate render workload, dominated by Three.js renderer and program setup samples.
+
+Automatic playback continues through the HTML media element. Lighting and spectrum analysis start when the Music app opens or an explicit playback action requests analysis. In the matched delayed, non-profiled visits, pointer-down dispatch fell from 1204 ms to 207 ms (runs 38 and 40). Initial shading was 16.72 and 16.19 s respectively. The immediate turn on the new build entered at 2.01 s and completed initial shading at 17.34 s, with a worst submitted-frame interval of 1.59 s. Shader and render preparation remain the limiting work for the immediate turn.

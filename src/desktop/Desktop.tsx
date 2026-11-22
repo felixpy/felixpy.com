@@ -285,6 +285,7 @@ export default function Desktop({
   const desktopVisible = session !== 'locked';
 
   function open(id: AppID) {
+    if (id === 'music') music.startAnalysis();
     drag.current = null;
     setAppWindow((current) =>
       current?.id === id ? { ...current, minimized: false, closing: false } : newWindow(id),
