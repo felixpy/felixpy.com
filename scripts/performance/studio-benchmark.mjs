@@ -62,6 +62,7 @@ const experiments = {
   '--stable-effects': ['studio-effects', 'stable'],
   '--warm-waterfront': ['studio-waterfront', 'warm'],
   '--cold-waterfront': ['studio-waterfront', 'cold'],
+  '--sky-clear': ['studio-sky', 'clear'],
   '--window-scissor': ['studio-window-clip', 'scissor'],
   '--warm-ferry': ['studio-ferry', 'warm'],
   '--eager-water-motion': ['studio-water-motion', 'eager'],
@@ -97,6 +98,7 @@ Use --steady-profile to profile CPU work during the warmed desk turn.
 Use --gpu-timing to sample main-color GPU work during the final steady route, including any depth prefill.
 Add --gpu-panorama to alternate whole-room queries with queries around the panorama draw.
 Add --gpu-downstream to also time GTAO and final output on the high-quality path.
+Add --gpu-depth-prepass to alternate inclusive and split depth/color samples on the low-quality path.
 Use --opaque-near-first to measure a front-to-back opaque draw order in the replay.
 Use --draw-calls to record WebGL indexed and multi-draw calls during the final steady route.
 Use --repeat-desk to prime the shaders and geometry with one matched desk turn before sampling.
@@ -132,6 +134,7 @@ function options(args) {
   const gpuTiming = captured.delete('--gpu-timing');
   const gpuPanorama = captured.delete('--gpu-panorama');
   const gpuDownstream = captured.delete('--gpu-downstream');
+  const gpuDepthPrepass = captured.delete('--gpu-depth-prepass');
   const opaqueNearFirst = captured.delete('--opaque-near-first');
   const drawCalls = captured.delete('--draw-calls');
   const loaderTrace = captured.delete('--loader-trace');
@@ -172,6 +175,8 @@ function options(args) {
     (gpuPanorama && !gpuTiming) ||
     (gpuDownstream &&
       (!gpuTiming || gpuPanorama || names.some((name) => profiles[name]?.quality !== 'high'))) ||
+    (gpuDepthPrepass &&
+      (!gpuTiming || gpuPanorama || names.some((name) => profiles[name]?.quality !== 'low'))) ||
     (drawCalls && (captureProfile || steadyProfile || startup || loaderTrace)) ||
     (loaderTrace && (captureProfile || startup || screenshot || slowDraws)) ||
     (steadyProfile && (captureProfile || loaderTrace || startup || slowDraws)) ||
@@ -198,6 +203,7 @@ function options(args) {
     gpuTiming,
     gpuPanorama,
     gpuDownstream,
+    gpuDepthPrepass,
     opaqueNearFirst,
     drawCalls,
     loaderTrace,
@@ -253,6 +259,7 @@ function installProbe({
   gpuTiming,
   gpuPanorama,
   gpuDownstream,
+  gpuDepthPrepass,
   opaqueNearFirst,
   day,
   weather,
@@ -317,13 +324,14 @@ function installProbe({
     const timer = gl.getExtension('EXT_disjoint_timer_query_webgl2');
     if (!timer) return;
     const pending = [];
-    const timings = (sample.mainColorGpu = { durations: [], discarded: 0 });
-    const panorama = gpuPanorama
-      ? (sample.panoramaGpu = { durations: [], discarded: 0 })
-      : undefined;
-    const downstream = gpuDownstream
-      ? (sample.downstreamGpu = { durations: [], discarded: 0 })
-      : undefined;
+    const makeTiming = () => ({ durations: [], discarded: 0 });
+    const timings = { main: (sample.mainColorGpu = makeTiming()) };
+    if (gpuPanorama) timings.panorama = sample.panoramaGpu = makeTiming();
+    if (gpuDownstream) timings.downstream = sample.downstreamGpu = makeTiming();
+    if (gpuDepthPrepass) {
+      timings.depth = sample.depthOnlyGpu = makeTiming();
+      timings.color = sample.colorAfterDepthGpu = makeTiming();
+    }
     let active = false;
     let openQuery;
 
@@ -352,7 +360,9 @@ function installProbe({
       if (openQuery) end(openQuery, true);
       return poll();
     };
-    const panoramaFrame = () => active && Boolean(panorama) && sample.roomFrames.length % 34 === 17;
+    const splitFrame = () => active && sample.roomFrames.length % 34 === 17;
+    const panoramaFrame = () => Boolean(timings.panorama) && splitFrame();
+    const splitDepthFrame = () => Boolean(timings.depth) && splitFrame();
     function end(query, discard = false) {
       if (openQuery !== query) return;
       gl.endQuery(timer.TIME_ELAPSED_EXT);
@@ -364,17 +374,14 @@ function installProbe({
     }
     return {
       panoramaFrame,
+      splitDepthFrame,
       begin(stage = 'main') {
-        const result =
-          stage === 'downstream' ? downstream : stage === 'panorama' ? panorama : timings;
-        if (
-          !active ||
-          !result ||
-          openQuery ||
-          (stage !== 'downstream' &&
-            (sample.roomFrames.length % 17 || panoramaFrame() !== (stage === 'panorama')))
-        )
-          return null;
+        const result = timings[stage];
+        const selected =
+          stage === 'downstream' ||
+          (sample.roomFrames.length % 17 === 0 &&
+            (stage === 'main' ? !panoramaFrame() && !splitDepthFrame() : splitFrame()));
+        if (!active || !result || openQuery || !selected) return null;
         poll();
         const query = gl.createQuery();
         if (!query) return null;
@@ -563,7 +570,7 @@ function installProbe({
       }
     }
     let world, roomCamera;
-    let depthQuery;
+    let depthQuery, depthDrawnAt;
     let downstreamQuery, downstreamFrame;
     sample.project = (name) => {
       const object = world?.getObjectByName(name);
@@ -586,6 +593,10 @@ function installProbe({
       )
         world = scene;
       const frame = document.timeline.currentTime;
+      if (depthQuery && depthDrawnAt !== frame) {
+        gpu.end(depthQuery, true);
+        depthQuery = undefined;
+      }
       if (downstreamQuery && downstreamFrame !== frame) {
         gpu.end(downstreamQuery, true);
         downstreamQuery = undefined;
@@ -606,8 +617,12 @@ function installProbe({
       const start = primary || startupSpans ? performance.now() : 0;
       const startupTarget = startupSpans ? renderer.getRenderTarget() : null;
       let query;
-      if (primary) query = depthQuery ?? gpu?.begin();
-      else if (depthPrefill) query = gpu?.begin();
+      const splitDepth = gpu?.splitDepthFrame();
+      if (primary) {
+        if (splitDepth) {
+          if (depthDrawnAt === frame) query = gpu.begin('color');
+        } else query = depthQuery ?? gpu?.begin();
+      } else if (depthPrefill) query = gpu?.begin(splitDepth ? 'depth' : 'main');
       if (primary && drawCalls) drawSample = { indexed: 0, multi: 0, multiSubdraws: 0 };
       if (gpuPanorama) renderPanorama = primary && gpu?.panoramaFrame();
       if (renderPanorama) sample.panoramaFrames = (sample.panoramaFrames ?? 0) + 1;
@@ -617,7 +632,8 @@ function installProbe({
         result = render.call(this, scene, camera);
         complete = true;
         if (depthPrefill) {
-          depthQuery = query;
+          depthDrawnAt = frame;
+          if (!splitDepth) depthQuery = query;
           if (gpuTiming) {
             const { calls, triangles } = renderer.info.render;
             (sample.depthPrefillWork ??= []).push([calls, triangles]);
@@ -1018,6 +1034,7 @@ async function measure({ base, directory, head, name, run, settings }) {
     gpuTiming,
     gpuPanorama,
     gpuDownstream,
+    gpuDepthPrepass,
     opaqueNearFirst,
     drawCalls,
     loaderTrace,
@@ -1118,6 +1135,7 @@ async function measure({ base, directory, head, name, run, settings }) {
       gpuTiming,
       gpuPanorama,
       gpuDownstream,
+      gpuDepthPrepass,
       opaqueNearFirst,
       drawCalls,
       day,
@@ -1231,6 +1249,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         gpuTiming && 'gpu-timing',
         gpuPanorama && 'gpu-panorama',
         gpuDownstream && 'gpu-downstream',
+        gpuDepthPrepass && 'gpu-depth-prepass',
         opaqueNearFirst && 'opaque-near-first',
         drawCalls && 'draw-calls',
         loaderTrace && 'loader-trace',
@@ -1292,6 +1311,17 @@ async function measure({ base, directory, head, name, run, settings }) {
         throw new Error('Insufficient valid downstream GPU timing queries.');
       const { samples, p50, p95, p99, max } = stats(durations);
       summary.downstreamGpuMs = { samples, p50, p95, p99, max, discarded };
+    }
+    if (gpuDepthPrepass) {
+      for (const [key, rawTiming] of [
+        ['depthOnlyGpuMs', raw.depthOnlyGpu],
+        ['colorAfterDepthGpuMs', raw.colorAfterDepthGpu],
+      ]) {
+        if (rawTiming.durations.length < 5)
+          throw new Error('Insufficient valid split depth queries.');
+        const { samples, p50, p95, p99, max } = stats(rawTiming.durations);
+        summary[key] = { samples, p50, p95, p99, max, discarded: rawTiming.discarded };
+      }
     }
     if (raw.depthPrefillWork?.length) {
       summary.depthPrefillWork = {

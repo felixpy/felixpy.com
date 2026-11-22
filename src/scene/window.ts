@@ -9,6 +9,7 @@ import { sillBotanicals } from './sill-botanicals';
 import { buildRainGlass } from './rain-glass';
 import { batchMeshes } from './batching';
 import { blenderMesh } from './blender-mesh';
+import { roomSkyName } from './room-sky-clear';
 const extrusion = 'window-extrusions';
 const epdm = 'window-epdm';
 const casting = 'amsterdam-casting';
@@ -260,6 +261,7 @@ export function buildWindow(
     depthWrite: false,
   });
   const skyDome = mesh(root, new T.SphereGeometry(60, 32, 20), sky);
+  skyDome.name = roomSkyName;
   skyDome.castShadow = false;
   skyDome.renderOrder = -10;
   const exterior = buildExterior(

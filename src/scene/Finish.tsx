@@ -9,6 +9,7 @@ import { roomWarmup } from './room-warmup';
 import { roomOcclusion } from './room-occlusion';
 import { roomFirstFrame } from './room-first-frame';
 import { roomDepthPrefill } from './room-depth-prefill';
+import { roomSkyClear } from './room-sky-clear';
 
 export type FirstPicture = 'loading' | 'interactive' | 'preparing' | 'drawn';
 
@@ -71,6 +72,7 @@ export function Finish({
     beauty: WebGLRenderTarget;
     composite?: WebGLRenderTarget;
     occlusion: GTAOPass;
+    drawBeauty?: ReturnType<typeof roomSkyClear>;
     output: OutputPass;
   } | null>(null);
   const lastRoomFrame = useRef(0);
@@ -123,7 +125,8 @@ export function Finish({
 
   useEffect(() => {
     if (!enabled || !gl.extensions.has('EXT_color_buffer_float')) return;
-    const fusedOutput = new URLSearchParams(location.search).get('studio-output') !== 'legacy';
+    const options = new URLSearchParams(location.search);
+    const fusedOutput = options.get('studio-output') !== 'legacy';
     const depth = new DepthTexture(1, 1);
     const beauty = new WebGLRenderTarget(1, 1, {
       type: HalfFloatType,
@@ -138,7 +141,8 @@ export function Finish({
     const output = grade.outputPass(
       fusedOutput ? { map: occlusion.gtaoMap, intensity: occlusion.blendIntensity } : undefined,
     );
-    pipeline.current = { beauty, composite, occlusion, output };
+    const drawBeauty = options.get('studio-sky') === 'clear' ? roomSkyClear(scene) : undefined;
+    pipeline.current = { beauty, composite, occlusion, output, drawBeauty };
     return () => {
       pipeline.current = null;
       occlusion.dispose();
@@ -322,11 +326,12 @@ export function Finish({
       else gl.render(scene, camera);
       grade.gradeScreen(gl);
     } else {
-      const { beauty, composite, occlusion, output } = active;
+      const { beauty, composite, occlusion, output, drawBeauty } = active;
       const color = composite ?? beauty;
       if (!held) {
         gl.setRenderTarget(beauty);
-        gl.render(scene, camera);
+        if (drawBeauty) drawBeauty(gl, camera);
+        else gl.render(scene, camera);
         occlusion.render(gl, color, beauty, delta, false);
       }
       output.render(gl, beauty, color, delta, false);
