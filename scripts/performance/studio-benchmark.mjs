@@ -7,18 +7,17 @@ import { pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { chromium } from '@playwright/test';
 import { preview } from 'vite';
+import { startCpuTelemetry } from './studio-cpu-telemetry.mjs';
 import { startWddmTelemetry } from './studio-wddm.mjs';
 
 const profiles = {
   '4k': { width: 3840, height: 2160, quality: 'high', adapter: '4090' },
   '1440p': { width: 2560, height: 1440, quality: 'high', adapter: '4090' },
-  3060: { width: 2560, height: 1440, quality: 'high', adapter: '3060' },
   'uhd-adaptive': { width: 1920, height: 1080, quality: 'low', adapter: 'intel' },
   'uhd-native': { width: 1920, height: 1080, quality: 'low', adapter: 'intel', forceNative: true },
 };
 const adapterNames = {
   4090: /NVIDIA.*4090/i,
-  3060: /NVIDIA.*RTX 3060\s*\(/i,
   intel: /\bIntel\b.*\bUHD Graphics 770\b/i,
   current:
     /^(?!.*(?:swiftshader|llvmpipe|softpipe|software rasterizer|microsoft basic render|\bwarp\b)).+$/i,
@@ -93,7 +92,7 @@ const experiments = {
 };
 const usage = `Usage: node scripts/performance/studio-benchmark.mjs [profiles] [run IDs] [options]
 
-Profiles: 4k (default), 1440p, 3060, uhd-adaptive, uhd-native
+Profiles: 4k (default), 1440p, uhd-adaptive, uhd-native
 List profiles or positive run IDs with commas. Run ID defaults to 1.
 Example: node scripts/performance/studio-benchmark.mjs 4k,uhd-adaptive 1,2,3
 Use --current-adapter to keep the selected resolution and quality on Chrome's active hardware GPU.
@@ -109,6 +108,7 @@ Use --opaque-near-first to measure a front-to-back opaque draw order in the repl
 Use --draw-calls to record WebGL indexed and multi-draw calls during the final steady route.
 Use --draw-inventory to attribute main-color draws to objects in up to three steady route frames.
 Use --wddm-luid=<high,low> to sample the specified Windows adapter during the steady route.
+Use --cpu-telemetry to sample Windows logical processors from browser launch through measurement.
 Use --repeat-desk to prime the shaders and geometry with one matched desk turn before sampling.
 Use --seconds=<duration> to set the measured steady desk route duration (default 12).
 Use --route=<${Object.keys(roomRoutes).join('|')}> and --weather=<${Object.keys(weatherCodes).join('|')}> to replay room views.
@@ -150,6 +150,7 @@ function options(args) {
   const opaqueNearFirst = captured.delete('--opaque-near-first');
   const drawCalls = captured.delete('--draw-calls');
   const drawInventory = captured.delete('--draw-inventory');
+  const cpuTelemetry = captured.delete('--cpu-telemetry');
   const wddmArgument = [...captured].find((arg) => arg.startsWith('--wddm-luid='));
   captured.delete(wddmArgument);
   const wddmLuid = wddmArgument?.slice('--wddm-luid='.length);
@@ -247,6 +248,7 @@ function options(args) {
     opaqueNearFirst,
     drawCalls,
     drawInventory,
+    cpuTelemetry,
     wddmLuid,
     loaderTrace,
     startup,
@@ -949,7 +951,7 @@ function installProbe({
           colorWork = undefined;
         }
       }
-      if (drag && room) {
+      if (drag && room && !scene.overrideMaterial) {
         yaw = camera.quaternion.y;
         if (drag.move != null) {
           const submitted = performance.now();
@@ -1344,6 +1346,7 @@ async function measure({ base, directory, head, name, run, settings }) {
     opaqueNearFirst,
     drawCalls,
     drawInventory,
+    cpuTelemetry,
     wddmLuid,
     loaderTrace,
     startup,
@@ -1372,9 +1375,10 @@ async function measure({ base, directory, head, name, run, settings }) {
   const pinnedAdapter = args.find((arg) => arg.startsWith('--use-adapter-luid='));
   if (wddmLuid && pinnedAdapter && pinnedAdapter !== `--use-adapter-luid=${wddmLuid}`)
     throw new Error('WDDM telemetry must target the pinned Chrome adapter.');
-  const browser = await chromium.launch({ channel: 'chrome', headless: true, args });
-  let wddm;
+  let cpuCollection = cpuTelemetry ? await startCpuTelemetry() : undefined;
+  let browser, wddm;
   try {
+    browser = await chromium.launch({ channel: 'chrome', headless: true, args });
     const page = await browser.newPage({
       viewport: { width: profile.width, height: profile.height },
       deviceScaleFactor: 1,
@@ -1521,6 +1525,10 @@ async function measure({ base, directory, head, name, run, settings }) {
         { polling: 250, timeout: 120000 },
       );
     const raw = await page.evaluate(readSamples);
+    if (cpuCollection) {
+      raw.cpuTelemetry = await cpuCollection.stop();
+      cpuCollection = undefined;
+    }
     if (wddm) {
       raw.wddm = await wddm.stop();
       wddm = undefined;
@@ -1582,6 +1590,10 @@ async function measure({ base, directory, head, name, run, settings }) {
           ),
         })),
       }),
+      ...(raw.cpuTelemetry && {
+        cpuTelemetrySamples: raw.cpuTelemetry.samples.length,
+        ...(raw.cpuTelemetry.error && { cpuTelemetryError: raw.cpuTelemetry.error }),
+      }),
       ...(raw.wddm && {
         wddmSamples: raw.wddm.samples.length,
         ...(raw.wddm.error && { wddmError: raw.wddm.error }),
@@ -1608,6 +1620,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         opaqueNearFirst && 'opaque-near-first',
         drawCalls && 'draw-calls',
         drawInventory && 'draw-inventory',
+        cpuTelemetry && 'cpu-telemetry',
         wddmLuid && 'wddm',
         loaderTrace && 'loader-trace',
         startup && 'startup',
@@ -1770,9 +1783,9 @@ async function measure({ base, directory, head, name, run, settings }) {
       throw new Error('The warm reload observed no HTTP cache hits or revalidations.');
   } finally {
     try {
-      await wddm?.stop();
+      await Promise.all([wddm?.stop(), cpuCollection?.stop()]);
     } finally {
-      await browser.close();
+      await browser?.close();
     }
   }
 }

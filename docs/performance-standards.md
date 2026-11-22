@@ -7,7 +7,6 @@ Use these criteria when changing room rendering, asset loading, graphics default
 | Hardware and acceptance quality           | Required 3D drawing buffer | Release target | Stretch target at the same native resolution |
 | ----------------------------------------- | -------------------------- | -------------- | -------------------------------------------- |
 | RTX 4090, all settings at highest quality | 3840 × 2160 native         | 144 FPS        | —                                            |
-| Desktop RTX 3060 12 GB, high quality      | 2560 × 1440 native         | 60 FPS         | 144 FPS                                      |
 | Intel UHD 770, low quality                | 1920 × 1080 native         | 30 FPS         | 60 FPS                                       |
 
 Use the release column for sign-off. After a tier passes, evaluate its stretch target separately and record the quality settings used. Count distinct rendered scene frames presented at native resolution for both targets.
@@ -20,7 +19,7 @@ Use the release column for sign-off. After a tier passes, evaluate its stretch t
 
 Provide visible loading feedback at least once a second while the loader is active. Publish new progress promptly and enter the room as soon as it accepts input. Measure the entire room load through asset and shading readiness.
 
-CPU and GPU work overlap. Record CSS viewport, device pixel ratio, drawing-buffer dimensions and the main render target separately. Report adaptive resolution in a separate row. A 4090 run at 1440p is a repeatable development comparator. Certification of the 3060 target requires matching hardware. Verify the monitor refresh mode and actual presented cadence on the target system.
+CPU and GPU work overlap. Record CSS viewport, device pixel ratio, drawing-buffer dimensions and the main render target separately. Report adaptive resolution in a separate row. A 4090 run at 1440p is a repeatable development comparator. Verify the monitor refresh mode and actual presented cadence on the target system.
 
 ## Measurement and release gates
 

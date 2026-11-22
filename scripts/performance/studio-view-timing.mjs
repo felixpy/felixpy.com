@@ -132,6 +132,7 @@ function readRun(path) {
     platform: summary.platform,
     browserArgs: summary.args,
     opaqueSort: summary.opaqueSort,
+    cpuTelemetryIntervalMs: raw.cpuTelemetry?.intervalMs,
     wddmLuid: raw.wddm?.adapterLuid,
   };
   return {
