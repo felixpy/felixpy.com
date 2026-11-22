@@ -300,8 +300,25 @@ Run 104's 777.8 ms frame gap occurred during catch-up shading. The 777 ms main-t
 
 Runs 108–109 used the same native 4K workbench startup with catch-up and input-priority textures. `--atlas-detail-on-inspect` keeps the existing 960 × 540 room-scale map on the wall and requests the 2880 × 1620 atlas upon explicit inspection. In the ordinary route the option skipped the 880,194-byte atlas request and retained the 53,330-byte room asset. The control logged a 427 ms full-atlas upload and the candidate logged a 67 ms room-map upload. First-response time was 185 and 176 ms, room readiness 15.85 and 15.73 s, and the first-input maximum 639 and 472 ms. Interval P95 rose from 243 to 299 ms, so keep the mode optional. A native Chrome smoke verified zero ordinary-view requests, a single detail request, and cached detail application upon reopening. Samples are under `.review/performance/69e3f8c/`.
 
+The reversed pair 110–111 again skipped the full atlas request on the ordinary route. Its largest atlas upload calls were 11 ms for the room asset and 190 ms for the full asset respectively. The overall maximum interval was 507 ms with inspection-only detail and 410 ms with regular promotion. This pair leaves the maximum-frame-time improvement unconfirmed across visits. Stills and traces are under `.review/performance/6ba0a04/`.
+
+## Startup spans and worker recheck
+
+`--startup-spans` records long calls to renderer compile, texture initialization and render during loading and the first ten seconds after input. Times are CPU wall spans, including any blocking inside WebGL and driver calls. Run 112 used the existing atlas, first-input and catch-up options. The 590 ms workbench input gap overlapped a 401 ms preview-room render, a 126 ms compile on the native-size target and a 42 ms texture initialization. The texture call included a 512 × 640 ImageBitmap transfer of 41 ms. Image priority removed one recurring source of work. Render and shader preparation remain substantial in the same route.
+
+The same-build runs 112–114 compared no worker flag, the BPK worker and the Meshopt worker independently. The worker marks confirm each selected path ran. First changed submit was 177, 179 and 176 ms, room readiness was 15.68, 16.67 and 16.43 s and post-input interval P95 was 278, 313 and 299 ms. BPK fetch-to-install was 55 ms in the control and 79 ms with its worker. Preserve both worker switches for dedicated inspection tests. This cold workbench comparison showed little first-response change with more time to full shading. Raw samples are under `.review/performance/6ba0a04/`.
+
 ## UHD 770 desk GPU attribution
 
 Runs 106–107 used native 1920 × 1080 with matte and lean lighting, scissor, window-only water and depth prefill. `--gpu-panorama` alternates whole main-color queries with queries around the panorama draw on separate frames. On the stock opaque order, GPU P95 was 39.64 ms inclusive and 0.98 ms for the panorama alone, with 14 samples each. The panorama query covers that single draw and its result is a sampled cost ceiling for savings on the photographed exterior, with other scene work still in the inclusive measurement. Near-first opaque sorting moved inclusive P95 to 40.74 ms and did not close the 30 FPS frame budget gap. It remains a benchmark diagnostic. Native samples are under `.review/performance/69e3f8c/`.
+
+An architectural lighting trial approximated diffuse light from small or distant rectangular emitters on plaster and floor surfaces. It blended near or significant contributions back to the existing matte calculation. Run 116 used a malformed shader directive and rendered the plaster black. Exclude its timings from evaluation. After correcting the directive, runs 119–120 compared the trial and matte under native 1080p on UHD 770 with lean lighting, window scissor, window-only water and depth prefill. The ending view used 1,139 draws and 1,544,136 triangles in each run. The trial restored plaster lighting in the native screenshot and passed a WebGL fixture comparing pixels under a distant rectangular light.
+
+| Room lighting | Warm submission rate | Submission P95 / P99 | Main-color GPU P95 | Room readiness |
+| ------------- | -------------------: | -------------------: | -----------------: | -------------: |
+| Matte         |            26.05 FPS |        48.6 / 125 ms |           40.29 ms |        13.45 s |
+| Architecture  |            26.13 FPS |        42 / 124.9 ms |           39.69 ms |        13.48 s |
+
+The GPU difference was 0.60 ms with 16 timer samples per run. Near-identical submission rates and P99 intervals leave the 30 FPS goal open. The trial was removed from the scene code. Its patch is saved in `.review/performance-research/uhd770-architecture-lighting.patch`, and native captures are under `.review/performance/6ba0a04/`.
 
 `scripts/performance/studio-witness.mjs` validates a completed `studio-dxgi-roi-v1` file offline. It checks QPC order and marker CRC and distinguishes repeated serials, skipped serials and missed acquisitions. Synthetic covered-window tests passed. A joint PresentMon and desktop witness capture is still required for physical calibration.

@@ -97,6 +97,7 @@ Use --route=<${Object.keys(roomRoutes).join('|')}> and --weather=<${Object.keys(
 Use --day to start in daylight. Combine with --weather=overcast for the Shanghai 5120-pixel panorama.
 Use --loader-trace to capture compositor events and screenshots during loading.
 Use --startup to exercise the first drag as soon as the loader disappears.
+Add --startup-spans to record long renderer calls during loading and the first ten seconds of input.
 Add --route=workbench to turn toward the workbench on that first drag.
 Combine --loader-profile and --startup to profile through the first ten seconds after the drag.
 Add --full-room to wait for rear asset readiness on builds that report it.
@@ -123,6 +124,7 @@ function options(args) {
   const drawCalls = captured.delete('--draw-calls');
   const loaderTrace = captured.delete('--loader-trace');
   const startup = captured.delete('--startup');
+  const startupSpans = captured.delete('--startup-spans');
   const fullRoom = captured.delete('--full-room');
   const delayArgument = [...captured].find((arg) => arg.startsWith('--input-delay-ms='));
   captured.delete(delayArgument);
@@ -150,7 +152,7 @@ function options(args) {
     positional.length > 2 ||
     captured.size ||
     !dist ||
-    ((fullRoom || delayArgument) && !startup) ||
+    ((fullRoom || delayArgument || startupSpans) && !startup) ||
     !Number.isSafeInteger(inputDelayMs) ||
     inputDelayMs < 0 ||
     (captureProfile && screenshot) ||
@@ -184,6 +186,7 @@ function options(args) {
     drawCalls,
     loaderTrace,
     startup,
+    startupSpans,
     fullRoom,
     inputDelayMs,
     screenshot,
@@ -225,6 +228,7 @@ function installProbe({
   forceNative,
   drawCalls,
   startup,
+  startupSpans,
   slowDraws,
   textureUploads,
   gpuTiming,
@@ -254,6 +258,7 @@ function installProbe({
     resolutions: {},
     longTasks: [],
     ...(startup && { firstDrag: { frames: [] } }),
+    ...(startupSpans && { startupSpans: [] }),
     ...(slowDraws && { slowDraws: [] }),
     ...((slowDraws || textureUploads) && { slowTextureUploads: [] }),
     recording: false,
@@ -358,6 +363,30 @@ function installProbe({
           a.id - b.id,
       );
     const drag = sample.firstDrag;
+    function recordStartupSpan(name, start, target) {
+      const duration = performance.now() - start;
+      if (duration < 16 || start >= (drag.move ?? Infinity) + 10000) return;
+      sample.startupSpans.push({
+        name,
+        start,
+        duration,
+        ...(target && { target: [target.width, target.height] }),
+      });
+    }
+    if (startupSpans) {
+      for (const name of ['compile', 'initTexture']) {
+        const execute = renderer[name];
+        renderer[name] = function (...args) {
+          const start = performance.now();
+          const target = renderer.getRenderTarget();
+          try {
+            return execute.apply(this, args);
+          } finally {
+            recordStartupSpan(name, start, target);
+          }
+        };
+      }
+    }
     let yaw;
     if (drag) {
       renderer.domElement.addEventListener(
@@ -526,7 +555,8 @@ function installProbe({
       const depthPrefill =
         sample.recording && room && scene.overrideMaterial?.name === 'Studio depth prefill';
       if (depthPrefill) sample.depthPrefillFrames = (sample.depthPrefillFrames ?? 0) + 1;
-      const start = primary ? performance.now() : 0;
+      const start = primary || startupSpans ? performance.now() : 0;
+      const startupTarget = startupSpans ? renderer.getRenderTarget() : null;
       let query;
       if (primary) query = depthQuery ?? gpu?.begin();
       else if (depthPrefill) query = gpu?.begin();
@@ -538,6 +568,8 @@ function installProbe({
         result = render.call(this, scene, camera);
         if (depthPrefill) depthQuery = query;
       } finally {
+        if (startupSpans)
+          recordStartupSpan(room ? 'room-render' : 'other-render', start, startupTarget);
         renderPanorama = false;
         if (primary && drawSample) {
           sample.drawCalls.push(drawSample);
@@ -923,6 +955,7 @@ async function measure({ base, directory, head, name, run, settings }) {
     drawCalls,
     loaderTrace,
     startup,
+    startupSpans,
     fullRoom,
     inputDelayMs,
     screenshot,
@@ -1011,6 +1044,7 @@ async function measure({ base, directory, head, name, run, settings }) {
     await page.addInitScript(installProbe, {
       ...profile,
       startup,
+      startupSpans,
       slowDraws,
       textureUploads,
       gpuTiming,
@@ -1130,6 +1164,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         drawCalls && 'draw-calls',
         loaderTrace && 'loader-trace',
         startup && 'startup',
+        startupSpans && 'startup-spans',
         inputDelayMs > 0 && `input-delay-${inputDelayMs}ms`,
         slowDraws && 'slow-draws',
         textureUploads && 'texture-uploads',
