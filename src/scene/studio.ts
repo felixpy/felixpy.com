@@ -22,7 +22,6 @@ import { collectionVitrine } from './collection-vitrine';
 import { deferredDisplayModel, loadDisplayModel } from './display-model';
 import { filamentPrinter } from './filament-printer';
 import { cabinetFloorLight, ceilingFixture, deskFixture } from './authored-fixtures';
-import { airborneDust } from './airborne-dust';
 import { desk, windowOpening } from './layout';
 import { outdoorRail } from './outdoor-rail';
 import { group, luminous, mesh } from './geometry';
@@ -841,7 +840,6 @@ export function* buildStudioSteps(
   warm.shadow.radius = 5.5;
   warm.shadow.camera.near = 0.03;
   const slats = new T.Vector2(0.0038, 0);
-  const updateDust = airborneDust(root, windowLight, warm, slats);
   const upper = new T.SpotLight('#ffdfb4', 4, 5.2, 1.27, 0.85, 2);
   ceiling.outlet.getWorldPosition(upper.position);
   upper.target.position.copy(upper.position);
@@ -1021,7 +1019,6 @@ export function* buildStudioSteps(
       }
       const { blocked, moving: blindsMoving, pitch, angle } = window.update(env, delta);
       slats.set(pitch, angle);
-      updateDust(env, delta);
       const doorMoving = architectureParts.update(delta, clock, env.reducedMotion);
       const cabinetMoving = bench.cabinet.update(delta, env.reducedMotion);
       const ease = env.reducedMotion ? 1 : 1 - Math.exp(-delta * 5);
