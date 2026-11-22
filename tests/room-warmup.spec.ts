@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
   BoxGeometry,
+  DataTexture,
   Group,
   Material,
   Mesh,
@@ -9,6 +10,7 @@ import {
   Scene,
   WebGLRenderTarget,
   type Object3D,
+  type Texture,
   type WebGLRenderer,
 } from 'three';
 import { roomWarmup } from '../src/scene/room-warmup';
@@ -185,5 +187,105 @@ test('catch-up warms newly visible meshes and late material revisions before the
     for (const object of [stable, changed, outside]) object.material.dispose();
     geometry.dispose();
     beauty.dispose();
+  }
+});
+
+test('isolated catch-up separates compiles, reflection and texture uploads', async () => {
+  const scene = new Scene();
+  const camera = new PerspectiveCamera(50, 1, 0.1, 100);
+  const beauty = new WebGLRenderTarget(1, 1);
+  const previous = new WebGLRenderTarget(1, 1);
+  const passes = [0, 1].map(() => ({
+    material: new MeshBasicMaterial(),
+    target: new WebGLRenderTarget(1, 1),
+  }));
+  const maps = Array.from({ length: 2 }, () => {
+    const texture = new DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    texture.needsUpdate = true;
+    return texture;
+  });
+  const material = new MeshBasicMaterial({ map: maps[0], alphaMap: maps[1] });
+  const mesh = new Mesh(new BoxGeometry(0.2, 0.2, 0.2), material);
+  mesh.position.z = -4;
+  scene.add(mesh);
+  camera.updateMatrixWorld();
+
+  let target: WebGLRenderTarget | null = previous;
+  let linked = false;
+  const work: string[] = [];
+  const programs: { program: object; isReady: () => boolean; getUniforms: () => void }[] = [];
+  const renderer = {
+    info: { programs },
+    getRenderTarget: () => target,
+    setRenderTarget(next: WebGLRenderTarget | null) {
+      target = next;
+    },
+    compile(_batch: Object3D, _camera: Object3D, actualScene?: Object3D) {
+      if (actualScene) {
+        expect(actualScene === scene && target === beauty).toBe(true);
+        work.push('compile room');
+      } else {
+        const pass = passes.findIndex((pass) => target === pass.target);
+        expect(pass).toBeGreaterThanOrEqual(0);
+        work.push(`compile pass ${pass}`);
+      }
+      programs.push({
+        program: {},
+        isReady: () => {
+          work.push('poll');
+          return linked;
+        },
+        getUniforms: () => work.push('reflect'),
+      });
+      return new Set([material]);
+    },
+    initTexture(texture: Texture) {
+      expect(target === previous).toBe(true);
+      work.push(`upload ${maps.indexOf(texture as DataTexture)}`);
+    },
+  };
+  const warmup = roomWarmup(
+    renderer as unknown as WebGLRenderer,
+    scene,
+    camera,
+    passes,
+    'isolated-catch-up',
+  );
+  function slice() {
+    work.length = 0;
+    const ready = warmup.prepareVisible(beauty, 0);
+    expect(target === previous).toBe(true);
+    return { ready, work: [...work] };
+  }
+  try {
+    for (const task of ['compile pass 0', 'compile pass 1', 'compile room'])
+      expect(slice()).toEqual({ ready: false, work: [task] });
+    const waiting = slice();
+    expect(waiting.ready).toBe(false);
+    expect(waiting.work).toContain('poll');
+    expect(waiting.work.every((task) => task === 'poll')).toBe(true);
+    linked = true;
+    let reflected = 0;
+    while (reflected < programs.length) {
+      const reflection = slice();
+      expect(reflection.ready).toBe(false);
+      expect(reflection.work).toContain('reflect');
+      expect(reflection.work.every((task) => task === 'poll' || task === 'reflect')).toBe(true);
+      reflected += reflection.work.filter((task) => task === 'reflect').length;
+    }
+    for (const task of ['upload 0', 'upload 1'])
+      expect(slice()).toEqual({ ready: false, work: [task] });
+    expect(slice()).toEqual({ ready: true, work: [] });
+  } finally {
+    warmup.dispose();
+    material.dispose();
+    mesh.geometry.dispose();
+    beauty.dispose();
+    previous.dispose();
+    for (const map of maps) map.dispose();
+    for (const { material, target } of passes) {
+      material.dispose();
+      target.dispose();
+    }
   }
 });

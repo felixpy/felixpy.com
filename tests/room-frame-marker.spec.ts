@@ -33,7 +33,7 @@ test('canvas marker wire order matches the DXGI witness', () => {
   expect(() => encodeRoomFrameMarker(0x1000000)).toThrow(RangeError);
 });
 
-test('canvas marker draws once at the physical ROI and restores renderer clear state', () => {
+test('canvas marker draws, repeats the same wire value on hold, and restores renderer state', () => {
   const marker = roomFrameMarker();
   const width = 3840;
   const height = 2160;
@@ -73,6 +73,10 @@ test('canvas marker draws once at the physical ROI and restores renderer clear s
   expect(material.blending).toBe(T.NoBlending);
   expect(material.depthTest || material.depthWrite || material.toneMapped).toBe(false);
   expect(material.uniforms.markerPayload.value).toBe(0xd7000001);
+  const checksum = material.uniforms.markerChecksum.value;
+  expect(marker.draw(gl, true)).toBe(1);
+  expect(material.uniforms.markerPayload.value).toBe(0xd7000001);
+  expect(material.uniforms.markerChecksum.value).toBe(checksum);
 
   target = new T.WebGLRenderTarget(1, 1);
   expect(marker.draw(gl)).toBeUndefined();
@@ -80,7 +84,7 @@ test('canvas marker draws once at the physical ROI and restores renderer clear s
   target = null;
   cropped = true;
   expect(marker.draw(gl)).toBeUndefined();
-  expect(rendered).toHaveLength(1);
+  expect(rendered).toHaveLength(2);
   cropped = false;
   fail = true;
   expect(() => marker.draw(gl)).toThrow('Draw interrupted');

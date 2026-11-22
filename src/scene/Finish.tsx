@@ -65,6 +65,7 @@ export function Finish({
   const warmWorkbench = warmup === 'workbench';
   const pacing = warmup === 'paced' || warmup === 'adaptive' ? warmup : undefined;
   const catchUp = warmup === 'catch-up';
+  const isolatedCatchUp = warmup === 'isolated-catch-up';
   useEffect(() => () => firstFrame.dispose(), [firstFrame]);
   useEffect(() => () => grade.dispose(), [grade]);
   useEffect(() => () => prefill?.dispose(), [prefill]);
@@ -79,6 +80,7 @@ export function Finish({
     typeof import('./room-frame-marker').roomFrameMarker
   > | null>(null);
   const shaders = useRef<'cold' | 'pending' | 'ready'>('cold');
+  const previewNext = useRef(true);
   const preparation = useRef<ReturnType<typeof roomWarmup> | null>(null);
   const workbenchPreparation = useRef<ReturnType<typeof roomWarmup> | null>(null);
   const scannedRevision = useRef(-1);
@@ -112,13 +114,14 @@ export function Finish({
   }, [camera, enabled, gl, scene, warmWorkbench, workbench]);
 
   useEffect(() => {
-    if (!catchUp) return;
+    if (!catchUp && !isolatedCatchUp) return;
     return () => {
       preparation.current?.dispose();
       preparation.current = null;
       shaders.current = 'cold';
+      previewNext.current = true;
     };
-  }, [camera, catchUp, enabled, gl, grade, scene]);
+  }, [camera, catchUp, enabled, gl, grade, isolatedCatchUp, scene]);
 
   useEffect(() => {
     if (!enabled || !gl.extensions.has('EXT_color_buffer_float')) return;
@@ -237,18 +240,27 @@ export function Finish({
           active?.beauty ?? null,
           detailRevision.current,
         ) ?? true;
-      if ((warmup === 'incremental' || pacing) && parallel) {
+      if ((warmup === 'incremental' || pacing || isolatedCatchUp) && parallel) {
         if (!preparation.current) {
           preparation.current = roomWarmup(
             gl,
             scene,
             camera,
             occlusionWarmup(active?.occlusion),
-            pacing,
+            isolatedCatchUp ? 'isolated-catch-up' : pacing,
           );
           performance.mark('studio-room-shader-warm-start');
+          if (isolatedCatchUp) performance.mark('studio-room-shader-catch-up-start');
         }
         const preview = () => firstFrame.draw(gl, scene, camera, night, look);
+        if (isolatedCatchUp) {
+          const drawPreview = previewNext.current;
+          previewNext.current = !drawPreview;
+          if (drawPreview) {
+            preview();
+            return;
+          }
+        }
         if (
           !preparation.current.prepareVisible(
             active?.beauty ?? null,
@@ -302,8 +314,10 @@ export function Finish({
       }
       shaders.current = 'ready';
     }
+    const marker = frameMarker.current;
+    const held = !!(active && drawn && marker?.holdRequested);
     if (firstPicture.current === 'preparing') performance.mark('studio-room-full-draw-start');
-    grade.select(look);
+    if (!held) grade.select(look);
     if (!active) {
       if (prefill && !enabled && drawn && roomMode)
         prefill.render(gl, scene, camera, detailRevision.current);
@@ -312,13 +326,15 @@ export function Finish({
     } else {
       const { beauty, composite, occlusion, output } = active;
       const color = composite ?? beauty;
-      gl.setRenderTarget(beauty);
-      gl.render(scene, camera);
-      occlusion.render(gl, color, beauty, delta, false);
+      if (!held) {
+        gl.setRenderTarget(beauty);
+        gl.render(scene, camera);
+        occlusion.render(gl, color, beauty, delta, false);
+      }
       output.render(gl, beauty, color, delta, false);
     }
-    if (frameMarker.current?.draw(gl) === 1) performance.mark('studio-present-marker-ready');
-    if (drawn && pacing) preparation.current?.step(active?.beauty ?? null);
+    if (marker?.draw(gl, held) === 1 && !held) performance.mark('studio-present-marker-ready');
+    if (drawn && pacing && !held) preparation.current?.step(active?.beauty ?? null);
     if (firstPicture.current === 'preparing') {
       firstPicture.current = 'drawn';
       if (!simpleLow) firstFrame.dispose();

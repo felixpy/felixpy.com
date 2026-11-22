@@ -4,6 +4,12 @@ The website code baseline is `5ce54d92feea442a2611f74c93cece7a5d59c80b` on `code
 
 The current project covers startup, worker scheduling, high-quality rendering and native low-quality rendering. Frame generation, upscaling and weak-network optimization are outside this project. Reuse the current assets first and seek approval for new GLBs, meshes or LODs before creating them.
 
+The named hardware profiles keep their renderer checks for acceptance. The UHD 770 profile matches the full model name and excludes Arc A770. For another GPU, add `--current-adapter` to keep the profile's quality and dimensions while measuring the hardware renderer Chrome actually uses. On Windows the runner uses ANGLE D3D11. On other operating systems Chrome selects its own backend. Run 134 verified a 2560 × 1440 viewport and drawing buffer on Windows with the active RTX 4090. The macOS argument check verified the backend selection with a simulated platform value. Actual Mac browser behavior is awaiting hardware testing.
+
+```sh
+node scripts/performance/studio-benchmark.mjs 1440p 1 --current-adapter
+```
+
 ## Hardware milestones
 
 - **RTX 4090:** Validate native 3840 × 2160 at 144 FPS with all settings at highest quality. Use the full-quality desk route to check the effect of each rendering change.
@@ -342,6 +348,19 @@ Runs 128–131 replayed the same 4K startup with in-view upload ordering. The tr
 
 The opposite-order pair reversed the frame-interval result. First change remained similar across all visits and full shading still took about 16 seconds. The shared block trial was removed.
 
+## Isolated catch-up scheduling
+
+`--isolated-catch-up` alternates interactive preview submissions with individual room-warmup steps. A warmup callback compiles a batch or one post-processing pass, reflects ready programs, or uploads one texture. The preview retains existing gesture-priority texture handling. Runs 132–133 and 135–136 compared the option against `--catch-up-warmup` on the same native 4K RTX 4090 workbench build with in-view uploads, gesture priority and detail on inspection. StudioView SHA-256 began `4bb38ba2`.
+
+| Run and warmup | First change after loader | Room readiness | Post-input interval P95 / max |
+| -------------- | ------------------------: | -------------: | ----------------------------: |
+| 132, catch-up  |                  197.8 ms |        16.63 s |              326.4 / 500.1 ms |
+| 133, isolated  |                  170.3 ms |        20.63 s |              201.3 / 548.5 ms |
+| 135, isolated  |                  181.6 ms |        20.71 s |              166.7 / 451.3 ms |
+| 136, catch-up  |                  183.3 ms |        16.32 s |              347.3 / 472.2 ms |
+
+The isolated option lowered post-input P95 in both orders. Whole-room readiness took 4.0–4.4 seconds longer and the worst intervals remained over 450 ms. Native endpoint stills showed the same workbench, furnishings and lighting. Keep the option experimental while improving throughput when the view is idle.
+
 ## UHD 770 desk GPU attribution
 
 Runs 106–107 used native 1920 × 1080 with matte and lean lighting, scissor, window-only water and depth prefill. `--gpu-panorama` alternates whole main-color queries with queries around the panorama draw on separate frames. On the stock opaque order, GPU P95 was 39.64 ms inclusive and 0.98 ms for the panorama alone, with 14 samples each. The panorama query covers that single draw and its result is a sampled cost ceiling for savings on the photographed exterior, with other scene work still in the inclusive measurement. Near-first opaque sorting moved inclusive P95 to 40.74 ms and did not close the 30 FPS frame budget gap. It remains a benchmark diagnostic.
@@ -357,4 +376,22 @@ The GPU difference was 0.60 ms with 16 timer samples per run. Near-identical sub
 
 Runs 126–127 compared stock transparent lighting with exact direct-light culling on the window pane and two outer PC glass materials. Both used the same UHD 770 native 1080p build and matched lean, matte, scissor, depth-prefill and window-only water settings. The candidate kept the authored glass shading and preserved the window and PC in the endpoint screenshots. Both poses showed 1,139 draws and 1,544,136 triangles. Warm submissions changed from 25.96 to 26.37 FPS and main-color GPU P50/P95 from 36.38/40.58 to 36.55/39.68 ms (16 timer samples each). Room readiness increased from 13.36 to 14.67 s and interval P99 from 118 to 125 ms. The trial was removed given the small steady difference and slower readiness in this pair.
 
+Runs 137–138 tested matte lighting and more compact diffuse light loops on selected rough walls, millwork and backings. The trial kept the regular renderer, authored textures, weather and occlusion. Desktop, floor, text, transparent panes and authored material hooks used the prior path. The two native 1080p UHD 770 replays had 1,139 draws and 1,544,136 triangles at the ending pose. Warm submissions moved from 26.16 to 26.52 FPS, GPU P50/P95 from 37.46/40.38 to 35.05/38.90 ms, and room readiness from 13.92 to 14.10 seconds. Each run had 16 GPU samples. The two desk stills show similar lighting on the visible walls and preserved main props. The small cadence gain leaves the 30 FPS goal open. The trial was removed.
+
 `scripts/performance/studio-witness.mjs` validates a completed `studio-dxgi-roi-v1` file offline. It checks QPC order and marker CRC and distinguishes repeated serials, skipped serials and missed acquisitions. Synthetic covered-window tests passed. A two-second PresentMon preflight targeting the invoking process exited with code 1 before producing a CSV under the current user token. A headed GPU process and joint PresentMon and desktop witness capture are still required for physical calibration.
+
+## Physical display calibration runner
+
+Build the DXGI witness from an MSVC x64 Developer Prompt and pass the resulting executable to the calibration driver. Use an existing writable output directory for the generated files.
+
+```bat
+cl /nologo /std:c++17 /utf-8 /W4 /WX /EHsc scripts\performance\studio-dxgi-witness.cpp /Fo"<output-directory>\studio-dxgi-witness.obj" /Fe"<output-directory>\studio-dxgi-witness.exe" /link d3d11.lib dxgi.lib
+```
+
+Build the website with `npm run build`. The dry run checks the witness, PresentMon, built hold hook and selected native display without opening Chrome. The explicit capture mode opens a private foreground Chrome kiosk and requires a clear display. It scopes PresentMon to Chrome's GPU process and saves only the witness marker metadata from the 160 × 4 pixel region. A moving, held, and resumed sequence checks whether the canvas serial stays fixed while the same output is redrawn. ETW chain attribution and actual presented cadence remain separate checks.
+
+```powershell
+node scripts/performance/studio-physical.mjs --dry-run --display='\\.\DISPLAY1' --witness='<output-directory>\studio-dxgi-witness.exe'
+```
+
+The MSVC build and witness CPU self-test passed. The runner dry run confirmed native 3840 × 2160 at 143999/1000 Hz and found the test build's hold hook. No foreground capture results are available yet.

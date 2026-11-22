@@ -28,6 +28,11 @@ export function encodeRoomFrameMarker(serial: number) {
 }
 
 export function roomFrameMarker() {
+  const control = (
+    globalThis as typeof globalThis & {
+      studioPresentWitness?: { hold: boolean; held: boolean; serial: number };
+    }
+  ).studioPresentWitness;
   const roi = roomFrameMarkerRoi;
   const viewport = new T.Vector4();
   const bounds = new T.Vector4();
@@ -73,7 +78,10 @@ export function roomFrameMarker() {
   let serial = 0;
 
   return {
-    draw(renderer: T.WebGLRenderer) {
+    get holdRequested() {
+      return control?.hold === true;
+    },
+    draw(renderer: T.WebGLRenderer, held = false) {
       if (renderer.getRenderTarget() || renderer.getScissorTest() || renderer.xr.isPresenting)
         return;
       const context = renderer.getContext();
@@ -96,7 +104,7 @@ export function roomFrameMarker() {
         (2 * (roi.x + roi.width)) / width - 1,
         1 - (2 * roi.y) / height,
       );
-      const next = (serial + 1) & serialMask;
+      const next = held ? serial : (serial + 1) & serialMask;
       const { payload, checksum } = encodeRoomFrameMarker(next);
       uniforms.markerPayload.value = payload;
       uniforms.markerChecksum.value = checksum;
@@ -109,6 +117,10 @@ export function roomFrameMarker() {
         renderer.autoClear = autoClear;
       }
       serial = next;
+      if (control) {
+        control.serial = serial;
+        control.held = held;
+      }
       return serial;
     },
     dispose() {

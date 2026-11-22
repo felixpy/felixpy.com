@@ -20,7 +20,7 @@ type LinkedProgram = NonNullable<WebGLRenderer['info']['programs']>[number] & {
   isReady?: () => boolean;
 };
 type WarmupPass = { material: Material; target: WebGLRenderTarget };
-type WarmupMode = 'paced' | 'adaptive' | 'catch-up';
+type WarmupMode = 'paced' | 'adaptive' | 'catch-up' | 'isolated-catch-up';
 
 const pacedProgramLimit = 2;
 const pacedFrameBudget = 3;
@@ -45,7 +45,8 @@ export function roomWarmup(
   mode?: WarmupMode,
   subtrees?: readonly Object3D[],
 ) {
-  const catchUp = mode === 'catch-up';
+  const isolated = mode === 'isolated-catch-up';
+  const catchUp = mode === 'catch-up' || isolated;
   const pacePrograms = mode === 'paced' || mode === 'adaptive';
   const batchLimit = subtrees ? 6 : 20;
   let seen = new WeakMap<Renderable, string>();
@@ -253,7 +254,7 @@ export function roomWarmup(
     const probe = new Scene();
     const screenCamera = new OrthographicCamera();
     const screenGeometry = new PlaneGeometry(2, 2).deleteAttribute('normal');
-    const end = pacePrograms ? nextPass + 1 : passes.length;
+    const end = pacePrograms || isolated ? nextPass + 1 : passes.length;
     try {
       for (; nextPass < end; nextPass++) {
         const pass = passes[nextPass];
@@ -409,6 +410,14 @@ export function roomWarmup(
       }
       if (!programs.size && frontMaps.size && performance.now() < until)
         upload(frontMaps, until - performance.now());
+      return false;
+    }
+
+    if (isolated) {
+      if (nextPass < passes.length) compilePasses();
+      else if (programs.size < batchLimit && visibleOffset < visible.length) compileVisible(target);
+      else if (programs.size) reflectPrograms(performance.now() + 3);
+      else if (frontMaps.size) upload(frontMaps, 0);
       return false;
     }
 

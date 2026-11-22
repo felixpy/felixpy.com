@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { chromium } from '@playwright/test';
 import { preview } from 'vite';
@@ -17,7 +18,9 @@ const profiles = {
 const adapterNames = {
   4090: /NVIDIA.*4090/i,
   3060: /NVIDIA.*RTX 3060\s*\(/i,
-  intel: /Intel.*770/i,
+  intel: /\bIntel\b.*\bUHD Graphics 770\b/i,
+  current:
+    /^(?!.*(?:swiftshader|llvmpipe|softpipe|software rasterizer|microsoft basic render|\bwarp\b)).+$/i,
 };
 const roomRoutes = {
   desk: null,
@@ -68,6 +71,7 @@ const experiments = {
   '--incremental-warmup': ['studio-warmup', 'incremental'],
   '--paced-warmup': ['studio-warmup', 'paced'],
   '--catch-up-warmup': ['studio-warmup', 'catch-up'],
+  '--isolated-catch-up': ['studio-warmup', 'isolated-catch-up'],
   '--warm-workbench': ['studio-warmup', 'workbench'],
   '--adaptive-warmup': ['studio-warmup', 'adaptive'],
   '--culled-lights': ['studio-lighting', 'culled'],
@@ -86,6 +90,7 @@ const usage = `Usage: node scripts/performance/studio-benchmark.mjs [profiles] [
 Profiles: 4k (default), 1440p, 3060, uhd-adaptive, uhd-native
 List profiles or positive run IDs with commas. Run ID defaults to 1.
 Example: node scripts/performance/studio-benchmark.mjs 4k,uhd-adaptive 1,2,3
+Use --current-adapter to keep the selected resolution and quality on Chrome's active hardware GPU.
 Use --loader-profile to profile startup CPU work through loader removal.
 Use --steady-profile to profile CPU work during the warmed desk turn.
 Use --gpu-timing to sample main-color GPU work during the final steady route, including any depth prefill.
@@ -110,7 +115,8 @@ Use --texture-uploads to record uploads of at least 10 ms without timing every d
 Use --warm to prime the origin in the same browser context before measuring a reload.
 Use --dist=<directory> to serve an alternate production build.
 Experiment switches: ${Object.keys(experiments).join(', ')}.
-Build first with npm run build. Use installed Chrome on Windows, with ANGLE D3D11.
+Build first with npm run build. Named adapter checks use installed Chrome on Windows and ANGLE D3D11.
+On other operating systems, --current-adapter leaves the graphics backend to installed Chrome.
 Local results are grouped by commit in the output directory. Matching run IDs are replaced.`;
 
 function options(args) {
@@ -118,6 +124,7 @@ function options(args) {
   const positional = args.filter((arg) => !captured.has(arg));
   const names = (positional[0] ?? '4k').split(',');
   const ids = (positional[1] ?? '1').split(',');
+  const currentAdapter = captured.delete('--current-adapter');
   const captureProfile = captured.delete('--loader-profile');
   const steadyProfile = captured.delete('--steady-profile');
   const gpuTiming = captured.delete('--gpu-timing');
@@ -180,6 +187,7 @@ function options(args) {
   return {
     names,
     runs: ids.map(Number),
+    currentAdapter,
     captureProfile,
     steadyProfile,
     gpuTiming,
@@ -206,10 +214,14 @@ function options(args) {
 }
 
 function browserArgs(adapter) {
+  const args = ['--enable-gpu', '--mute-audio'];
+  if (process.platform === 'win32') args.unshift('--use-angle=d3d11');
+  else if (adapter !== 'current') throw new Error('Use --current-adapter outside Windows.');
+  if (adapter === 'current') return args;
   let luid = adapter === 'intel' ? process.env.INTEL_LUID : process.env.DISCRETE_LUID;
   if (adapter === 'intel' && !luid) {
     const query =
-      "Get-ChildItem 'HKLM:/SOFTWARE/Microsoft/DirectX' | Get-ItemProperty | Where-Object { $_.Description -match 'Intel.*770' } | Select-Object -First 1 -ExpandProperty AdapterLuid";
+      "Get-ChildItem 'HKLM:/SOFTWARE/Microsoft/DirectX' | Get-ItemProperty | Where-Object { $_.Description -match '\\bIntel\\b.*\\bUHD Graphics 770\\b' } | Select-Object -First 1 -ExpandProperty AdapterLuid";
     const id = execFileSync('powershell.exe', ['-NoProfile', '-Command', query], {
       encoding: 'utf8',
     }).trim();
@@ -220,7 +232,6 @@ function browserArgs(adapter) {
   }
   if (luid && !/^-?\d+,\d+$/.test(luid))
     throw new Error('An adapter LUID requires high,low decimal integers.');
-  const args = ['--use-angle=d3d11', '--enable-gpu', '--mute-audio'];
   if (luid) args.push('--use-adapter-luid=' + luid);
   return args;
 }
@@ -830,7 +841,8 @@ async function sampleDesk(
 
 function checkSamples(raw, profile, { captureProfile, loaderTrace, startup }) {
   if (
-    !adapterNames[profile.adapter].test(raw.gpu) ||
+    typeof raw.gpu !== 'string' ||
+    !adapterNames[profile.adapter].test(raw.gpu.trim()) ||
     raw.visible !== 'visible' ||
     raw.visibilityChanged
   )
@@ -971,8 +983,9 @@ async function measure({ base, directory, head, name, run, settings }) {
     seconds,
     route,
     weather,
+    currentAdapter,
   } = settings;
-  const profile = profiles[name];
+  const profile = currentAdapter ? { ...profiles[name], adapter: 'current' } : profiles[name];
   const url = new URL(base);
   for (const flag of selected) url.searchParams.set(...experiments[flag]);
   const args = browserArgs(profile.adapter);
@@ -1115,6 +1128,7 @@ async function measure({ base, directory, head, name, run, settings }) {
       time: new Date().toISOString(),
       node: process.version,
       chrome: browser.version(),
+      platform: process.platform,
       os: os.release(),
       cpu: os.cpus()[0]?.model,
       gpu: raw.gpu,
@@ -1176,6 +1190,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         route !== 'desk' && route,
         day && 'day',
         weather !== 'clear' && weather,
+        currentAdapter && 'current-adapter',
         name,
         ...selected.map((flag) => flag.slice(2)),
         run,
@@ -1308,7 +1323,10 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exitCode = 1;
-});
+export { adapterNames, browserArgs, installProbe, profiles, turnDesk, waitForShading };
+
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url)
+  main().catch((error) => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
