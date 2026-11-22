@@ -43,6 +43,7 @@ const experiments = {
   '--warm-oled': ['studio-preview', 'oled'],
   '--staged-preview-textures': ['studio-preview-textures', 'staged'],
   '--input-priority-textures': ['studio-preview-textures', 'input-priority'],
+  '--in-view-preview-uploads': ['studio-preview-upload-order', 'in-view'],
   '--warm-buffers': ['studio-buffers', 'warm'],
   '--worker-parts': ['studio-parts', 'worker'],
   '--worker-meshopt': ['studio-meshopt', 'worker'],
@@ -98,6 +99,7 @@ Use --day to start in daylight. Combine with --weather=overcast for the Shanghai
 Use --loader-trace to capture compositor events and screenshots during loading.
 Use --startup to exercise the first drag as soon as the loader disappears.
 Add --startup-spans to record long renderer calls during loading and the first ten seconds of input.
+Add --in-view-preview-uploads to prioritize visible textures with an existing preview staging mode.
 Add --route=workbench to turn toward the workbench on that first drag.
 Combine --loader-profile and --startup to profile through the first ten seconds after the drag.
 Add --full-room to wait for rear asset readiness on builds that report it.

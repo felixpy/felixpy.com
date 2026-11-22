@@ -151,8 +151,13 @@ export function roomFirstFrame({
   warmBuffers = false,
   stagedTextures = false,
   inputPriorityTextures = false,
+  preferVisibleTextures = false,
 } = {}) {
   const stageTextures = stagedTextures || inputPriorityTextures;
+  const uploadView =
+    stageTextures && preferVisibleTextures
+      ? { frustum: new Frustum(), projection: new Matrix4() }
+      : undefined;
   const materials = [new Map<Surface, RawShaderMaterial>(), new Map<Surface, RawShaderMaterial>()];
   const meshes: Mesh[] = [];
   const originals: (Material | Material[])[] = [];
@@ -207,6 +212,42 @@ export function roomFirstFrame({
       return white;
     }
     return texture;
+  }
+
+  function pendingMap(material: Material) {
+    if (!(material instanceof MeshStandardMaterial || material instanceof MeshBasicMaterial))
+      return;
+    const { map, alphaMap } = material;
+    if (map && pendingTextures.has(map)) return map;
+    if (alphaMap && pendingTextures.has(alphaMap)) return alphaMap;
+  }
+
+  function nextPreviewTexture(camera: Camera) {
+    const first = pendingTextures.values().next().value;
+    if (!uploadView || pendingTextures.size <= 1) return first;
+    const { frustum, projection } = uploadView;
+    frustum.setFromProjectionMatrix(
+      projection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse),
+      camera.coordinateSystem,
+      camera.reversedDepth,
+    );
+    for (let i = 0; i < meshes.length; i++) {
+      const mesh = meshes[i];
+      if (!mesh.layers.test(camera.layers)) continue;
+      const original = originals[i];
+      let texture: Texture | undefined;
+      if (Array.isArray(original)) {
+        for (const group of mesh.geometry.groups) {
+          if (group.materialIndex === undefined) continue;
+          const material = original[group.materialIndex];
+          if (!material) continue;
+          texture = pendingMap(material);
+          if (texture) break;
+        }
+      } else texture = pendingMap(original);
+      if (texture && (!mesh.frustumCulled || frustum.intersectsObject(mesh))) return texture;
+    }
+    return first;
   }
 
   function surface(source: Material, instanced = false) {
@@ -465,7 +506,7 @@ export function roomFirstFrame({
       });
     },
     draw(gl: WebGLRenderer, scene: Scene, camera: Camera, atNight: boolean, look: RoomLook) {
-      pendingTextures.clear();
+      let textureToUpload: Texture | undefined;
       const shadows = gl.shadowMap.enabled;
       const environment = scene.environment;
       gl.shadowMap.enabled = false;
@@ -536,6 +577,17 @@ export function roomFirstFrame({
           );
         }
         gl.render(scene, camera);
+        if (stageTextures) {
+          const now = inputPriorityTextures ? performance.now() : 0;
+          if (inputPriorityTextures) firstPreviewAt ??= now;
+          const previewAge = now - (firstPreviewAt ?? now);
+          const canUpload =
+            !inputPriorityTextures ||
+            previewAge >= maximumTextureHoldMs ||
+            (previewAge >= initialTextureHoldMs && now >= resumeUploadsAt);
+          if (drewPreview && canUpload) textureToUpload = nextPreviewTexture(camera);
+          drewPreview = true;
+        }
       } finally {
         for (let i = 0; i < meshes.length; i++) meshes[i].material = originals[i];
         for (const light of lights) light.visible = true;
@@ -543,22 +595,11 @@ export function roomFirstFrame({
         meshes.length = originals.length = spots.length = 0;
         gl.shadowMap.enabled = shadows;
         scene.environment = environment;
-      }
-      if (stageTextures) {
-        const now = inputPriorityTextures ? performance.now() : 0;
-        if (inputPriorityTextures) firstPreviewAt ??= now;
-        const previewAge = now - (firstPreviewAt ?? now);
-        const canUpload =
-          !inputPriorityTextures ||
-          previewAge >= maximumTextureHoldMs ||
-          (previewAge >= initialTextureHoldMs && now >= resumeUploadsAt);
-        const texture = pendingTextures.values().next().value;
-        if (drewPreview && canUpload && texture) {
-          gl.initTexture(texture);
-          uploadedTextures.add(texture);
-        }
-        drewPreview = true;
         pendingTextures.clear();
+      }
+      if (textureToUpload) {
+        gl.initTexture(textureToUpload);
+        uploadedTextures.add(textureToUpload);
       }
     },
     dispose() {

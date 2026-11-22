@@ -308,6 +308,21 @@ The reversed pair 110–111 again skipped the full atlas request on the ordinary
 
 The same-build runs 112–114 compared no worker flag, the BPK worker and the Meshopt worker independently. The worker marks confirm each selected path ran. First changed submit was 177, 179 and 176 ms, room readiness was 15.68, 16.67 and 16.43 s and post-input interval P95 was 278, 313 and 299 ms. BPK fetch-to-install was 55 ms in the control and 79 ms with its worker. Preserve both worker switches for dedicated inspection tests. This cold workbench comparison showed little first-response change with more time to full shading. Raw samples are under `.review/performance/6ba0a04/`.
 
+## In-view preview texture order
+
+`--in-view-preview-uploads` works with staged or input-priority preview textures. It selects the first pending map of a mesh in the current camera frustum and layers, respecting material groups and disabled frustum culling. It falls back to discovery order when no visible mesh has a pending map. The existing one-texture cap and gesture hold still apply. Runs 122–125 were cold native 4K RTX 4090 workbench turns on StudioView SHA-256 prefix `91a9a68a`, with input-priority textures, atlas detail on inspection and catch-up warmup.
+
+| Run and order  | First change after loader | Room readiness | Post-input interval P95 / max |
+| -------------- | ------------------------: | -------------: | ----------------------------: |
+| 122, discovery |                  189.1 ms |        16.26 s |              305.5 / 465.3 ms |
+| 123, in view   |                  177.6 ms |        16.32 s |              347.2 / 590.4 ms |
+| 124, in view   |                  178.4 ms |        16.90 s |              361.2 / 624.9 ms |
+| 125, discovery |                  196.0 ms |        16.62 s |              382.0 / 645.8 ms |
+
+The in-view runs submitted the first change 11.5–17.6 ms earlier. Their ten-second tails had mixed results and readiness was slightly later in each neighboring comparison. Keep the option experimental. All four visits still had several long full-size preview calls and slow shader or texture preparation. Samples and screenshots are under `.review/performance/abe1ab5/`.
+
+The separate profiled run 121 recorded several long preview draws without a logged slow texture upload. During one 479 ms preview call, CPU samples landed at Three's framebuffer clear and uniform array serialization. The 528 ms gap in the same visit overlapped a separate 249 ms ImageBitmap upload and a 252 ms warmup compile. The profile also sampled garbage collection during the compile. The CPU sample attribution can include driver waits and scheduling. Record a matched shader or scheduling change independently from texture ordering.
+
 ## UHD 770 desk GPU attribution
 
 Runs 106–107 used native 1920 × 1080 with matte and lean lighting, scissor, window-only water and depth prefill. `--gpu-panorama` alternates whole main-color queries with queries around the panorama draw on separate frames. On the stock opaque order, GPU P95 was 39.64 ms inclusive and 0.98 ms for the panorama alone, with 14 samples each. The panorama query covers that single draw and its result is a sampled cost ceiling for savings on the photographed exterior, with other scene work still in the inclusive measurement. Near-first opaque sorting moved inclusive P95 to 40.74 ms and did not close the 30 FPS frame budget gap. It remains a benchmark diagnostic. Native samples are under `.review/performance/69e3f8c/`.

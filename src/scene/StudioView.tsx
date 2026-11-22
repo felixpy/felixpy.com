@@ -1576,6 +1576,7 @@ export default function StudioView(props: Props) {
       warmOled: preview === 'oled',
       stagedTextures: previewTextures === 'staged',
       inputPriorityTextures: previewTextures === 'input-priority',
+      preferVisibleTextures: options.get('studio-preview-upload-order') === 'in-view',
       warmBuffers: options.get('studio-buffers') === 'warm',
     });
   });
