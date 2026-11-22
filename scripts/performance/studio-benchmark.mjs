@@ -57,6 +57,7 @@ const experiments = {
   '--warm-waterfront': ['studio-waterfront', 'warm'],
   '--cold-waterfront': ['studio-waterfront', 'cold'],
   '--window-scissor': ['studio-window-clip', 'scissor'],
+  '--warm-ferry': ['studio-ferry', 'warm'],
   '--eager-water-motion': ['studio-water-motion', 'eager'],
   '--bitmap-images': ['studio-images', 'bitmap'],
   '--incremental-warmup': ['studio-warmup', 'incremental'],
@@ -67,6 +68,7 @@ const experiments = {
   '--lean-lighting': ['studio-light-kernel', 'lean'],
   '--culled-all-lights': ['studio-lighting', 'culled-all'],
   '--matte-surfaces': ['studio-lighting', 'matte'],
+  '--depth-prefill': ['studio-depth-prefill', 'coarse'],
   '--shared-reflections': ['studio-reflections', 'shared'],
   '--legacy-loader': ['studio-loader', 'legacy'],
   '--merge-first': ['studio-batching', 'merge-first'],
@@ -79,7 +81,7 @@ List profiles or positive run IDs with commas. Run ID defaults to 1.
 Example: node scripts/performance/studio-benchmark.mjs 4k,uhd-adaptive 1,2,3
 Use --loader-profile to profile startup CPU work through loader removal.
 Use --steady-profile to profile CPU work during the warmed desk turn.
-Use --gpu-timing to sample main-color GPU work during the final steady route.
+Use --gpu-timing to sample main-color GPU work during the final steady route, including any depth prefill.
 Use --repeat-desk to prime the shaders and geometry with one matched desk turn before sampling.
 Use --seconds=<duration> to set the measured steady desk route duration (default 12).
 Use --route=<${Object.keys(roomRoutes).join('|')}> and --weather=<${Object.keys(weatherCodes).join('|')}> to replay room views.
@@ -420,6 +422,7 @@ function installProbe({
     }
     const gpu = gpuTiming ? attachGpuTiming(renderer) : undefined;
     let world, roomCamera;
+    let depthQuery;
     sample.project = (name) => {
       const object = world?.getObjectByName(name);
       if (!object || !roomCamera) return null;
@@ -445,13 +448,22 @@ function installProbe({
       if (room) roomCamera = camera;
       const primary =
         sample.recording && room && !scene.overrideMaterial && sample.roomFrames.at(-1) !== frame;
+      const depthPrefill =
+        sample.recording && room && scene.overrideMaterial?.name === 'Studio depth prefill';
+      if (depthPrefill) sample.depthPrefillFrames = (sample.depthPrefillFrames ?? 0) + 1;
       const start = primary ? performance.now() : 0;
-      const query = primary ? gpu?.begin() : null;
+      let query;
+      if (primary) query = depthQuery ?? gpu?.begin();
+      else if (depthPrefill) query = gpu?.begin();
       let result;
       try {
         result = render.call(this, scene, camera);
+        if (depthPrefill) depthQuery = query;
       } finally {
-        if (query) gpu.end(query);
+        if (query && (!depthPrefill || depthQuery !== query)) {
+          gpu.end(query);
+          depthQuery = undefined;
+        }
       }
       if (drag && room) {
         yaw = camera.quaternion.y;
@@ -663,6 +675,7 @@ async function sampleDesk(
       sample.submissions = [];
       sample.rotations = [];
       sample.resolutions = {};
+      if (sample.depthPrefillFrames !== undefined) sample.depthPrefillFrames = 0;
       return { roomFrames, submissions };
     });
     await page.waitForTimeout(1000);

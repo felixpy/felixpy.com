@@ -4,7 +4,7 @@ import { group, mesh } from './geometry';
 import type { buildRainGlass } from './rain-glass';
 import { panoramaMaterial, panoramaMeshName, panoramaPoint, bankSlope } from './window-depth';
 import { windowExposure, type WindowExposure } from '../content/window-scenes';
-import { riverFerry } from './river-ferry';
+import { riverFerry, type FerryWarmup } from './river-ferry';
 import { roomExteriorScissor } from './room-exterior-scissor';
 
 export function panoramaGeometry() {
@@ -117,7 +117,8 @@ export function buildExterior(
   function vesselResources() {
     if (ferry) return;
     uniforms.ferryReflection.value = loadFerryReflection();
-    ferry = riverFerry(world, motionLoader.manager);
+    const warmup = motionRequest?.ferry ? () => motionRequest?.ferry : undefined;
+    ferry = riverFerry(world, motionLoader.manager, warmup);
   }
   function loadFerryReflection() {
     const texture = motionLoader.load('/media/panoramas/river-ferry-reflection.png');
@@ -179,12 +180,18 @@ export function buildExterior(
   type MotionRequest = {
     warm: (material: T.ShaderMaterial) => Promise<boolean>;
     signal: AbortSignal;
+    ferry?: FerryWarmup;
   };
   let motionEnabled = !deferWaterMotion;
   let motionRequest: MotionRequest | undefined;
   let attemptedMotion: MotionRequest | undefined;
-  function prepareWaterMotion(warm: MotionRequest['warm'], signal: AbortSignal) {
-    if (!motionEnabled && !signal.aborted) motionRequest = { warm, signal };
+  function prepareWaterMotion(
+    warm: MotionRequest['warm'],
+    signal: AbortSignal,
+    warmFerry?: FerryWarmup['warm'],
+  ) {
+    if ((!motionEnabled || warmFerry) && !signal.aborted)
+      motionRequest = { warm, signal, ferry: warmFerry ? { warm: warmFerry, signal } : undefined };
   }
   function startWaterMotion() {
     const request = motionRequest;

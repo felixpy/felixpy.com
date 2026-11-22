@@ -8,6 +8,7 @@ import { roomColorGrade } from './room-color-grade';
 import { roomWarmup } from './room-warmup';
 import { roomOcclusion } from './room-occlusion';
 import { roomFirstFrame } from './room-first-frame';
+import { roomDepthPrefill } from './room-depth-prefill';
 
 export type FirstPicture = 'loading' | 'interactive' | 'preparing' | 'drawn';
 
@@ -30,6 +31,7 @@ export function Finish({
   setLowScale,
   nativeLow,
   simpleLow,
+  roomMode,
   onInteractive,
   night,
   firstFrame,
@@ -43,17 +45,26 @@ export function Finish({
   setLowScale: (scale: number) => void;
   nativeLow: boolean;
   simpleLow: boolean;
+  roomMode: boolean;
   onInteractive: () => void;
   night: boolean;
   firstFrame: ReturnType<typeof roomFirstFrame>;
 }) {
   const { gl, scene, camera, size, viewport } = useThree();
   const grade = useMemo(roomColorGrade, []);
+  const prefill = useMemo(
+    () =>
+      nativeLow && new URLSearchParams(location.search).get('studio-depth-prefill') === 'coarse'
+        ? roomDepthPrefill()
+        : undefined,
+    [nativeLow],
+  );
   const warmup = useMemo(() => new URLSearchParams(location.search).get('studio-warmup'), []);
   const pacing = warmup === 'paced' || warmup === 'adaptive' ? warmup : undefined;
   const catchUp = warmup === 'catch-up';
   useEffect(() => () => firstFrame.dispose(), [firstFrame]);
   useEffect(() => () => grade.dispose(), [grade]);
+  useEffect(() => () => prefill?.dispose(), [prefill]);
   const pipeline = useRef<{
     beauty: WebGLRenderTarget;
     composite?: WebGLRenderTarget;
@@ -251,7 +262,9 @@ export function Finish({
     if (firstPicture.current === 'preparing') performance.mark('studio-room-full-draw-start');
     grade.select(look);
     if (!active) {
-      gl.render(scene, camera);
+      if (prefill && !enabled && drawn && roomMode)
+        prefill.render(gl, scene, camera, detailRevision.current);
+      else gl.render(scene, camera);
       grade.gradeScreen(gl);
     } else {
       const { beauty, composite, occlusion, output } = active;

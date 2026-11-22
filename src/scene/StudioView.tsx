@@ -20,6 +20,7 @@ import { phoneDisplay } from './development-phone';
 import { Finish, type FirstPicture } from './Finish';
 import { roomFirstFrame } from './room-first-frame';
 import { warmRoomEffect } from './room-effect-material';
+import { warmRiverFerry } from './river-ferry';
 import { Minimap } from './Minimap';
 import { studioReflections } from './reflections';
 import { roomVisibility } from './room-visibility';
@@ -954,10 +955,26 @@ function CameraRig(props: RigProps & Assembly & { earlyRear: boolean }) {
     if (!prepare || !props.roomVisible || !shaded) return;
     const controller = new AbortController();
     const { signal } = controller;
+    const warmFerry = new URLSearchParams(location.search).get('studio-ferry') === 'warm';
     let cancel = () => {};
     void model.rearReady.then(() => {
       if (signal.aborted) return;
-      const enable = () => prepare((material) => warmRoomEffect(gl, material, signal), signal);
+      const enable = () =>
+        prepare(
+          (material) => warmRoomEffect(gl, material, signal),
+          signal,
+          warmFerry
+            ? (ferry) =>
+                warmRiverFerry(
+                  gl,
+                  ferry,
+                  camera,
+                  scene,
+                  () => live.current.environment.quality === 'high',
+                  signal,
+                )
+            : undefined,
+        );
       if (typeof window.requestIdleCallback === 'function') {
         const idle = window.requestIdleCallback(enable, { timeout: 1500 });
         cancel = () => window.cancelIdleCallback(idle);
@@ -970,7 +987,7 @@ function CameraRig(props: RigProps & Assembly & { earlyRear: boolean }) {
       controller.abort();
       cancel();
     };
-  }, [gl, model, props.roomVisible, shaded]);
+  }, [camera, gl, model, props.roomVisible, scene, shaded]);
 
   useEffect(() => {
     if (props.roomVisible)
@@ -1511,6 +1528,7 @@ function StudioRoom({
         setLowScale={setLowScale}
         nativeLow={nativeLow}
         simpleLow={startup.simpleLow}
+        roomMode={props.mode === 'room'}
         screen={props.screen}
         enabled={props.environment.quality === 'high'}
       />

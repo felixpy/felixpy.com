@@ -12,9 +12,56 @@ const lighting: Record<string, readonly [string, number]> = {
   'Starboard green': ['#62e398', 1.6],
 };
 
-export function riverFerry(parent: T.Group, manager: T.LoadingManager) {
+export type FerryWarmup = { warm: (ferry: T.Group) => Promise<void>; signal: AbortSignal };
+
+export async function warmRiverFerry(
+  gl: T.WebGLRenderer,
+  ferry: T.Group,
+  camera: T.Camera,
+  scene: T.Scene,
+  highQuality: () => boolean,
+  signal: AbortSignal,
+) {
+  if (signal.aborted || !gl.extensions.has('KHR_parallel_shader_compile')) return;
+  const context = gl.getContext();
+  const floatColor = gl.extensions.has('EXT_color_buffer_float');
+  if (context.isContextLost()) return;
+  performance.mark('studio-ferry-warm-start');
+  while (!signal.aborted && !context.isContextLost()) {
+    const hdr = floatColor && highQuality();
+    const environment = scene.environment;
+    const target = hdr ? new T.WebGLRenderTarget(1, 1, { type: T.HalfFloatType }) : null;
+    const previous = gl.getRenderTarget();
+    const face = gl.getActiveCubeFace();
+    const mip = gl.getActiveMipmapLevel();
+    let linking: Promise<T.Object3D>;
+    try {
+      gl.setRenderTarget(target);
+      linking = gl.compileAsync(ferry, camera, scene);
+      context.flush();
+    } finally {
+      gl.setRenderTarget(previous, face, mip);
+      target?.dispose();
+    }
+    await linking;
+    if (signal.aborted || context.isContextLost()) return;
+    if (hdr === (floatColor && highQuality()) && environment === scene.environment) {
+      performance.mark('studio-ferry-warm-end');
+      return;
+    }
+  }
+}
+
+export function riverFerry(
+  parent: T.Group,
+  manager: T.LoadingManager,
+  warmup?: () => FerryWarmup | undefined,
+) {
   const ferry = new T.Group();
   ferry.name = 'Passing river ferry';
+  let ready = !warmup;
+  ferry.visible = ready;
+  let attempted: FerryWarmup | undefined;
   parent.add(ferry);
   const lamps: { surface: T.MeshStandardMaterial; power: number }[] = [];
   void loadDisplayModel(ferry, '/media/models/river-ferry.glb', manager, {
@@ -44,7 +91,19 @@ export function riverFerry(parent: T.Group, manager: T.LoadingManager) {
     weather: string,
     visibility: number,
   ) => {
-    ferry.visible = Boolean(route && visibility > 0 && ferry.children.length);
+    if (!ready && ferry.children.length) {
+      const request = warmup?.();
+      if (request && request !== attempted && !request.signal.aborted) {
+        attempted = request;
+        const finish = () => {
+          if (warmup?.() === request && !request.signal.aborted) ready = true;
+        };
+        void Promise.resolve()
+          .then(() => (request.signal.aborted ? undefined : request.warm(ferry)))
+          .then(finish, finish);
+      }
+    }
+    ferry.visible = Boolean(ready && route && visibility > 0 && ferry.children.length);
     if (!route || !ferry.visible) return track.set(100000, 100000, 0, -1);
     let curve = curves.get(route);
     if (!curve) {
