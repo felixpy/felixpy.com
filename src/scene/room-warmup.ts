@@ -1,5 +1,6 @@
 import {
   Camera,
+  DoubleSide,
   Frustum,
   Group,
   Light,
@@ -19,6 +20,14 @@ type LinkedProgram = NonNullable<WebGLRenderer['info']['programs']>[number] & {
   isReady?: () => boolean;
 };
 type WarmupPass = { material: Material; target: WebGLRenderTarget };
+type WarmupPacing = 'paced' | 'adaptive';
+
+const pacedProgramLimit = 2;
+const pacedFrameBudget = 3;
+const adaptiveProgramLimit = 4;
+const steadyInterval = 8.5;
+const fallbackInterval = 16.7;
+const steadyWindow = 750;
 
 function renderable(object: Object3D): object is Renderable {
   return object instanceof Mesh || object instanceof Line || object instanceof Points;
@@ -33,7 +42,9 @@ export function roomWarmup(
   scene: Scene,
   camera: Camera,
   passes: WarmupPass[] = [],
+  pacing?: WarmupPacing,
 ) {
+  const pacePrograms = pacing !== undefined;
   let seen = new WeakMap<Renderable, string>();
   const materials = new WeakMap<Material, Texture[]>();
   const maps = new Set<Texture>();
@@ -45,8 +56,9 @@ export function roomWarmup(
   const view = new Frustum();
   const projection = new Matrix4();
   const trackedMaterials = new WeakMap<Material, { version: number; revision: number }>();
-  const knownPrograms = new WeakSet<LinkedProgram>();
+  const knownPrograms = new WeakSet<LinkedProgram>(pacePrograms ? (gl.info.programs ?? []) : []);
   const programs = new Set<LinkedProgram>();
+  let partial = new WeakMap<Renderable, { version: string; nextMaterial: number }>();
   let visible: Renderable[] = [];
   let visibleOffset = 0;
   let visibleAt = Number.NEGATIVE_INFINITY;
@@ -54,7 +66,27 @@ export function roomWarmup(
   let environment = scene.environment;
   let lights = '';
   let surface: WebGLRenderTarget | null = null;
-  let pendingPasses = passes.length > 0;
+  let nextPass = 0;
+  let programLimit = pacedProgramLimit;
+  let lastSubmission: number | undefined;
+  let steadyFor = 0;
+
+  function budgetAfterDraw() {
+    const now = performance.now();
+    if (pacing === 'adaptive') {
+      const interval = lastSubmission === undefined ? 0 : now - lastSubmission;
+      lastSubmission = now;
+      const previous = programLimit;
+      if (interval >= fallbackInterval) programLimit = pacedProgramLimit;
+      steadyFor = interval <= steadyInterval ? steadyFor + interval : 0;
+      if (programLimit < adaptiveProgramLimit && steadyFor >= steadyWindow) {
+        programLimit++;
+        steadyFor = 0;
+      }
+      if (programLimit !== previous) performance.mark(`studio-room-shader-limit-${programLimit}`);
+    }
+    return now + pacedFrameBudget;
+  }
 
   function trackMaterial(material: Material) {
     let tracked = trackedMaterials.get(material);
@@ -146,6 +178,7 @@ export function roomWarmup(
     const lightKey = lightsInView.join(',');
     if (environment !== scene.environment || surface !== target || lights !== lightKey) {
       seen = new WeakMap();
+      partial = new WeakMap();
       environment = scene.environment;
       surface = target;
       lights = lightKey;
@@ -157,11 +190,14 @@ export function roomWarmup(
   }
 
   function trackPrograms() {
+    let added = 0;
     for (const program of gl.info.programs ?? []) {
       if (knownPrograms.has(program)) continue;
       knownPrograms.add(program);
       programs.add(program);
+      added++;
     }
+    return added;
   }
 
   function reflectPrograms(until: number) {
@@ -179,8 +215,10 @@ export function roomWarmup(
     const probe = new Scene();
     const screenCamera = new OrthographicCamera();
     const screenGeometry = new PlaneGeometry(2, 2).deleteAttribute('normal');
+    const end = pacePrograms ? nextPass + 1 : passes.length;
     try {
-      for (const pass of passes) {
+      for (; nextPass < end; nextPass++) {
+        const pass = passes[nextPass];
         const screen = new Mesh(screenGeometry, pass.material);
         probe.add(screen);
         gl.setRenderTarget(pass.target);
@@ -191,14 +229,10 @@ export function roomWarmup(
     } finally {
       gl.setRenderTarget(previous);
       screenGeometry.dispose();
-      pendingPasses = false;
     }
   }
 
-  function compileVisible(target: WebGLRenderTarget | null) {
-    const count = Math.min(32, visible.length - visibleOffset);
-    const batch = visible.slice(visibleOffset, visibleOffset + count);
-    visibleOffset += count;
+  function compileObjects(target: WebGLRenderTarget | null, batch: Renderable[]) {
     const previous = gl.getRenderTarget();
     try {
       gl.setRenderTarget(target);
@@ -208,18 +242,80 @@ export function roomWarmup(
         const tracked = trackedMaterials.get(material);
         if (tracked) tracked.version = material.version;
       }
-      for (const object of batch) {
-        seen.set(object, visibleVersion(object));
-        collectMaps(object, frontMaps);
-      }
-      trackPrograms();
+      return trackPrograms();
     } finally {
       group.children.length = 0;
       gl.setRenderTarget(previous);
     }
   }
 
-  function prepareVisible(target: WebGLRenderTarget | null, revision: number) {
+  function compileVisible(target: WebGLRenderTarget | null) {
+    const end = Math.min(visibleOffset + 32, visible.length);
+    const batch = visible.slice(visibleOffset, end);
+    visibleOffset = end;
+    compileObjects(target, batch);
+    for (const object of batch) {
+      seen.set(object, visibleVersion(object));
+      collectMaps(object, frontMaps);
+    }
+  }
+
+  function compilePaced(
+    objects: Renderable[],
+    index: number,
+    target: WebGLRenderTarget | null,
+    until: number,
+    complete?: (object: Renderable) => void,
+  ) {
+    while (programs.size < programLimit && index < objects.length) {
+      if (performance.now() >= until) break;
+      const object = objects[index];
+      if (!object.parent) {
+        seen.delete(object);
+        partial.delete(object);
+        index++;
+        continue;
+      }
+      const original = object.material;
+      const list = Array.isArray(original) ? original : [original];
+      const version = visibleVersion(object);
+      let progress = partial.get(object);
+      if (progress?.version !== version) {
+        progress = { version, nextMaterial: 0 };
+        partial.set(object, progress);
+      }
+      const material = list[progress.nextMaterial];
+      if (!material) {
+        partial.delete(object);
+        complete?.(object);
+        index++;
+        continue;
+      }
+      const variants =
+        material.transparent && material.side === DoubleSide && !material.forceSinglePass ? 2 : 1;
+      if (programs.size + variants > programLimit) break;
+      let added;
+      try {
+        object.material = material;
+        added = compileObjects(target, [object]);
+      } finally {
+        object.material = original;
+      }
+      if (++progress.nextMaterial === list.length) {
+        partial.delete(object);
+        complete?.(object);
+        index++;
+      }
+      if (added) break;
+    }
+    return index;
+  }
+
+  function prepareVisible(
+    target: WebGLRenderTarget | null,
+    revision: number,
+    drawPending?: () => void,
+  ) {
     const now = performance.now();
     if (
       detailRevision !== revision ||
@@ -230,7 +326,12 @@ export function roomWarmup(
     )
       updateVisible(target, revision, now);
 
-    if (!programs.size && visibleOffset === visible.length && !frontMaps.size && !pendingPasses) {
+    if (
+      !programs.size &&
+      visibleOffset === visible.length &&
+      !frontMaps.size &&
+      nextPass === passes.length
+    ) {
       scene.traverseVisible((object) => {
         if (!renderable(object) || seen.get(object) !== visibleVersion(object)) return;
         const list = Array.isArray(object.material) ? object.material : [object.material];
@@ -239,7 +340,25 @@ export function roomWarmup(
       return true;
     }
 
-    if (pendingPasses) compilePasses();
+    if (pacePrograms) {
+      drawPending?.();
+      const until = budgetAfterDraw();
+      trackPrograms();
+      reflectPrograms(until);
+      if (programs.size < programLimit && performance.now() < until) {
+        if (nextPass < passes.length) compilePasses();
+        else
+          visibleOffset = compilePaced(visible, visibleOffset, target, until, (object) => {
+            seen.set(object, visibleVersion(object));
+            collectMaps(object, frontMaps);
+          });
+      }
+      if (!programs.size && frontMaps.size && performance.now() < until)
+        upload(frontMaps, until - performance.now());
+      return false;
+    }
+
+    if (nextPass < passes.length) compilePasses();
     else if (programs.size < 20 && visibleOffset < visible.length) compileVisible(target);
     const until = performance.now() + 3;
     reflectPrograms(until);
@@ -275,6 +394,16 @@ export function roomWarmup(
     },
     scan: () => scan(),
     step(target: WebGLRenderTarget | null) {
+      if (pacePrograms) {
+        const until = budgetAfterDraw();
+        trackPrograms();
+        reflectPrograms(until);
+        offset = compilePaced(queue, offset, target, until);
+        if (offset === queue.length) offset = queue.length = 0;
+        if (!programs.size && maps.size && performance.now() < until)
+          upload(maps, until - performance.now());
+        return;
+      }
       if (offset < queue.length) {
         const end = Math.min(offset + 40, queue.length);
         for (; offset < end; offset++) group.children.push(queue[offset]);

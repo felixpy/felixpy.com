@@ -48,13 +48,18 @@ test('a throwing deferred factory leaves the remaining room loads usable', async
     throw new Error('Test factory failed before starting a request');
   });
   let mounted = false;
+  const finish = Promise.withResolvers<void>();
   rear.defer('bench')(async () => {
-    manager.itemStart('bench');
-    await Promise.resolve();
+    await finish.promise;
     mounted = true;
-    manager.itemEnd('bench');
   });
-  await rear.prepare();
+  let loaded = false;
+  const ready = rear.prepare().then(() => (loaded = true));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const loadedBeforeMount = loaded;
+  finish.resolve();
+  await ready;
+  expect(loadedBeforeMount).toBe(false);
   expect(errors).toHaveLength(1);
   expect(mounted).toBe(true);
 });

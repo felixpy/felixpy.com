@@ -62,6 +62,26 @@ const windowButtons = [
   'Switch day or night',
 ];
 
+function loadBitmapTexture(
+  loader: T.TextureLoader,
+  src: string,
+  onLoad?: (texture: T.Texture) => void,
+  onError?: (error: unknown) => void,
+) {
+  const texture = new T.Texture();
+  const setImage = (image: TexImageSource) => {
+    texture.image = image;
+    texture.needsUpdate = true;
+    onLoad?.(texture);
+  };
+  new T.ImageBitmapLoader(loader.manager)
+    .setOptions({ imageOrientation: 'flipY', premultiplyAlpha: 'none' })
+    .load(src, setImage, undefined, () => {
+      loader.load(src, (fallback) => setImage(fallback.image), undefined, onError);
+    });
+  return texture;
+}
+
 export function* buildStudioSteps(
   manager: T.LoadingManager,
   initial = initialEnvironment,
@@ -81,14 +101,18 @@ export function* buildStudioSteps(
   }
   const loader = new T.TextureLoader(manager);
   const p = materials(loader);
-  const photo = (src: string) => {
-    const texture = loader.load(src);
+  const bitmapTextures =
+    !import.meta.env.DEV &&
+    typeof createImageBitmap === 'function' &&
+    new URLSearchParams(location.search).get('studio-images') === 'bitmap';
+  const photo = (src: string, useBitmap = false) => {
+    const texture = bitmapTextures && useBitmap ? loadBitmapTexture(loader, src) : loader.load(src);
     texture.colorSpace = T.SRGBColorSpace;
     texture.anisotropy = 8;
     return texture;
   };
-  const atlas = photo('/media/photography/travel-prints.webp');
-  const hometown = photo('/media/photography/fanjingshan-print.webp');
+  const atlas = photo('/media/photography/travel-prints.webp', true);
+  const hometown = photo('/media/photography/fanjingshan-print.webp', true);
   const places = [...travelPrints.slice(0, 6).map((_, i) => photoTile(atlas, i)), hometown];
   const aura = Array.from({ length: 7 }, (_, i) =>
     luminous(new T.Color().setHSL(i / 7, 0.68, 0.48), 1.35),
@@ -258,9 +282,13 @@ export function* buildStudioSteps(
   const mapPreview = photo('/media/graphics/world-atlas-room.webp');
   const atlasFrame = wallAtlas(interior, p, mapPreview);
   deferDesk(async () => {
-    const detail = await new T.TextureLoader(rearLoader).loadAsync(
-      '/media/graphics/world-atlas.webp',
-    );
+    const loader = new T.TextureLoader(rearLoader);
+    const src = '/media/graphics/world-atlas.webp';
+    const detail = bitmapTextures
+      ? await new Promise<T.Texture>((resolve, reject) => {
+          loadBitmapTexture(loader, src, resolve, reject);
+        })
+      : await loader.loadAsync(src);
     detail.colorSpace = mapPreview.colorSpace;
     detail.anisotropy = mapPreview.anisotropy;
     atlasFrame.ink.map = detail;

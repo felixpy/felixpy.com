@@ -19,6 +19,22 @@ const adapterNames = {
   3060: /NVIDIA.*RTX 3060\s*\(/i,
   intel: /Intel.*770/i,
 };
+const roomRoutes = {
+  desk: null,
+  case: {
+    target: 'ROG Hyperion GR701 chassis',
+    mode: 'case',
+    caption: 'Look closer at the PC case',
+  },
+  window: { target: 'Window glass', mode: 'window', turn: -430 },
+  cabinet: {
+    target: 'NIKKOR Z 135mm f/1.8 S Plena · cabinet mount',
+    mode: 'case',
+    caption: 'Explore the collection cabinet',
+    turn: -865,
+  },
+};
+const weatherCodes = { clear: 0, rain: 61, snow: 71 };
 const experiments = {
   '--deferred-books': ['studio-startup', 'deferred-books'],
   '--warm-preview': ['studio-preview', 'warm'],
@@ -26,6 +42,7 @@ const experiments = {
   '--worker-parts': ['studio-parts', 'worker'],
   '--worker-meshopt': ['studio-meshopt', 'worker'],
   '--priority-rear': ['studio-rear', 'priority'],
+  '--early-rear': ['studio-rear', 'early'],
   '--native-low': ['studio-low', 'native'],
   '--sliced-build': ['studio-build', 'sliced'],
   '--photo-fasteners': ['studio-photo-fasteners', 'instanced'],
@@ -34,7 +51,10 @@ const experiments = {
   '--fused-output': ['studio-output', 'fused'],
   '--legacy-output': ['studio-output', 'legacy'],
   '--stable-effects': ['studio-effects', 'stable'],
+  '--bitmap-images': ['studio-images', 'bitmap'],
   '--incremental-warmup': ['studio-warmup', 'incremental'],
+  '--paced-warmup': ['studio-warmup', 'paced'],
+  '--adaptive-warmup': ['studio-warmup', 'adaptive'],
   '--culled-lights': ['studio-lighting', 'culled'],
   '--legacy-loader': ['studio-loader', 'legacy'],
   '--merge-first': ['studio-batching', 'merge-first'],
@@ -46,9 +66,15 @@ Profiles: 4k (default), 1440p, 3060, uhd-adaptive, uhd-native
 List profiles or positive run IDs with commas. Run ID defaults to 1.
 Example: node scripts/performance/studio-benchmark.mjs 4k,uhd-adaptive 1,2,3
 Use --loader-profile to profile startup CPU work through loader removal.
+Use --steady-profile to profile CPU work during the warmed desk turn.
+Use --repeat-desk to prime the shaders and geometry with one matched desk turn before sampling.
+Use --seconds=<duration> to set the measured steady desk route duration (default 12).
+Use --route=<${Object.keys(roomRoutes).join('|')}> and --weather=<${Object.keys(weatherCodes).join('|')}> to replay room views.
 Use --loader-trace to capture compositor events and screenshots during loading.
 Use --startup to exercise the first desk drag as soon as the loader disappears.
-Combine both to extend CPU profiling through the first ten seconds after the drag.
+Combine --loader-profile and --startup to profile through the first ten seconds after the drag.
+Add --full-room to wait for rear asset readiness on builds that report it.
+Set --input-delay-ms=<milliseconds> to wait before the first drag.
 Use --screenshot to save a full-viewport image after sampling.
 Use --slow-draws to attribute individual draw calls taking longer than 50 ms.
 Use --warm to prime the origin in the same browser context before measuring a reload.
@@ -63,11 +89,26 @@ function options(args) {
   const names = (positional[0] ?? '4k').split(',');
   const ids = (positional[1] ?? '1').split(',');
   const captureProfile = captured.delete('--loader-profile');
+  const steadyProfile = captured.delete('--steady-profile');
   const loaderTrace = captured.delete('--loader-trace');
   const startup = captured.delete('--startup');
+  const fullRoom = captured.delete('--full-room');
+  const delayArgument = [...captured].find((arg) => arg.startsWith('--input-delay-ms='));
+  captured.delete(delayArgument);
+  const inputDelayMs = delayArgument ? Number(delayArgument.slice('--input-delay-ms='.length)) : 0;
   const screenshot = captured.delete('--screenshot');
   const slowDraws = captured.delete('--slow-draws');
   const warm = captured.delete('--warm');
+  const repeatDesk = captured.delete('--repeat-desk');
+  const routeArgument = [...captured].find((arg) => arg.startsWith('--route='));
+  const weatherArgument = [...captured].find((arg) => arg.startsWith('--weather='));
+  captured.delete(routeArgument);
+  captured.delete(weatherArgument);
+  const route = routeArgument ? routeArgument.slice('--route='.length) : 'desk';
+  const weather = weatherArgument ? weatherArgument.slice('--weather='.length) : 'clear';
+  const secondsArgument = [...captured].find((arg) => arg.startsWith('--seconds='));
+  captured.delete(secondsArgument);
+  const seconds = secondsArgument ? Number(secondsArgument.slice('--seconds='.length)) : 12;
   const selected = Object.keys(experiments).filter((flag) => captured.delete(flag));
   const distArgument = [...captured].find((arg) => arg.startsWith('--dist='));
   captured.delete(distArgument);
@@ -76,8 +117,18 @@ function options(args) {
     positional.length > 2 ||
     captured.size ||
     !dist ||
+    ((fullRoom || delayArgument) && !startup) ||
+    !Number.isSafeInteger(inputDelayMs) ||
+    inputDelayMs < 0 ||
     (captureProfile && screenshot) ||
     (loaderTrace && (captureProfile || startup || screenshot || slowDraws)) ||
+    (steadyProfile && (captureProfile || loaderTrace || startup || slowDraws)) ||
+    ((repeatDesk || secondsArgument) && (captureProfile || loaderTrace || startup)) ||
+    (route !== 'desk' && (captureProfile || loaderTrace || startup)) ||
+    !Object.hasOwn(roomRoutes, route) ||
+    !Object.hasOwn(weatherCodes, weather) ||
+    !Number.isSafeInteger(seconds) ||
+    seconds < 1 ||
     names.some((name) => !Object.hasOwn(profiles, name)) ||
     ids.some((id) => !/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id))) ||
     new Set(names).size !== names.length ||
@@ -89,11 +140,18 @@ function options(args) {
     names,
     runs: ids.map(Number),
     captureProfile,
+    steadyProfile,
     loaderTrace,
     startup,
+    fullRoom,
+    inputDelayMs,
     screenshot,
     slowDraws,
     warm,
+    repeatDesk,
+    seconds,
+    route,
+    weather,
     selected,
     dist,
   };
@@ -136,10 +194,11 @@ function installProbe({ quality, forceNative, startup, slowDraws }) {
     submissions: [],
     rotations: [],
     loaderFrames: [],
+    loaderProgress: [],
     resolutions: {},
     longTasks: [],
     ...(startup && { firstDrag: { frames: [] } }),
-    ...(slowDraws && { slowDraws: [] }),
+    ...(slowDraws && { slowDraws: [], slowTextureUploads: [] }),
     recording: false,
     visible: document.visibilityState,
     visibilityChanged: false,
@@ -151,7 +210,11 @@ function installProbe({ quality, forceNative, startup, slowDraws }) {
     for (const task of list.getEntries()) sample.longTasks.push([task.startTime, task.duration]);
   }).observe({ type: 'longtask', buffered: true });
   const observer = new MutationObserver(() => {
-    const attached = !!document.querySelector('.studio-loading');
+    const loader = document.querySelector('.studio-loading');
+    const attached = !!loader;
+    const meter = loader?.querySelector('progress');
+    if (meter && sample.loaderProgress.at(-1)?.value !== meter.value)
+      sample.loaderProgress.push({ time: performance.now(), value: meter.value });
     if (sample.loaderStart == null && attached) {
       sample.loaderStart = performance.now();
       function record() {
@@ -165,7 +228,7 @@ function installProbe({ quality, forceNative, startup, slowDraws }) {
       observer.disconnect();
     }
   });
-  observer.observe(document, { subtree: true, childList: true });
+  observer.observe(document, { subtree: true, childList: true, attributeFilter: ['value'] });
   window.__THREE_DEVTOOLS__ = new EventTarget();
   window.__THREE_DEVTOOLS__.addEventListener('observe', ({ detail: renderer }) => {
     if (!renderer.isWebGLRenderer) return;
@@ -198,6 +261,31 @@ function installProbe({ quality, forceNative, startup, slowDraws }) {
       setRatio(1);
     }
     if (slowDraws) {
+      const gl = renderer.getContext();
+      for (const name of ['texImage2D', 'texSubImage2D', 'texImage3D', 'texSubImage3D']) {
+        const upload = gl[name];
+        gl[name] = function (...args) {
+          const start = performance.now();
+          const result = upload.apply(this, args);
+          const duration = performance.now() - start;
+          if (duration >= 10) {
+            const image = args.find(
+              (arg) => arg instanceof HTMLImageElement || arg instanceof ImageBitmap,
+            );
+            sample.slowTextureUploads.push({
+              name,
+              start,
+              duration,
+              ...(image && { width: image.width, height: image.height }),
+              ...(image instanceof HTMLImageElement && {
+                path: new URL(image.src, location.href).pathname,
+              }),
+              ...(image instanceof ImageBitmap && { source: 'ImageBitmap' }),
+            });
+          }
+          return result;
+        };
+      }
       const renderBufferDirect = renderer.renderBufferDirect;
       renderer.renderBufferDirect = function (camera, scene, geometry, material, object, group) {
         const start = performance.now();
@@ -245,7 +333,18 @@ function installProbe({ quality, forceNative, startup, slowDraws }) {
         return result;
       };
     }
-    let world;
+    let world, roomCamera;
+    sample.project = (name) => {
+      const object = world?.getObjectByName(name);
+      if (!object || !roomCamera) return null;
+      const point = object.getWorldPosition(roomCamera.position.clone()).project(roomCamera);
+      if (point.z < -1 || point.z > 1) return null;
+      const rect = renderer.domElement.getBoundingClientRect();
+      return {
+        x: rect.x + ((1 + point.x) * rect.width) / 2,
+        y: rect.y + ((1 - point.y) * rect.height) / 2,
+      };
+    };
     const render = renderer.render;
     renderer.render = function (scene, camera) {
       if (
@@ -257,6 +356,7 @@ function installProbe({ quality, forceNative, startup, slowDraws }) {
         world = scene;
       const frame = document.timeline.currentTime;
       const room = world === scene && camera.isPerspectiveCamera && !camera.parent?.isCubeCamera;
+      if (room) roomCamera = camera;
       const primary =
         sample.recording && room && !scene.overrideMaterial && sample.roomFrames.at(-1) !== frame;
       const start = primary ? performance.now() : 0;
@@ -294,9 +394,10 @@ function installProbe({ quality, forceNative, startup, slowDraws }) {
 }
 
 function readSamples() {
-  const { renderer, rotations, recording, ...raw } = window.studioBench;
+  const { renderer, rotations, recording, project, ...raw } = window.studioBench;
   const gl = renderer.getContext();
   const info = gl.getExtension('WEBGL_debug_renderer_info');
+  const { weather, night } = JSON.parse(localStorage.getItem('felix-studio-v1') ?? '{}');
   const resources = performance
     .getEntriesByType('resource')
     .filter((entry) => new URL(entry.name).origin === location.origin)
@@ -311,6 +412,9 @@ function readSamples() {
   return {
     ...raw,
     gpu: info && gl.getParameter(info.UNMASKED_RENDERER_WEBGL),
+    mode: document.querySelector('.studio')?.dataset.mode,
+    weather,
+    night,
     viewport: [innerWidth, innerHeight],
     devicePixelRatio,
     drawingBuffer: [gl.drawingBufferWidth, gl.drawingBufferHeight],
@@ -348,10 +452,15 @@ function waitForShading(page) {
   );
 }
 
-async function sampleStartup(page, profile) {
-  await page.waitForFunction(() => window.studioBench?.loaderEnd > 0, null, {
-    timeout: 120000,
-  });
+async function sampleStartup(page, profile, inputDelayMs) {
+  await page.waitForFunction(
+    (delay) => {
+      const end = window.studioBench?.loaderEnd;
+      return end > 0 && performance.now() >= end + delay;
+    },
+    inputDelayMs,
+    { timeout: 120000 + inputDelayMs },
+  );
   const { x, y } = deskOrigin(profile);
   const start = performance.now();
   await page.mouse.move(x, y);
@@ -375,22 +484,21 @@ async function sampleStartup(page, profile) {
   };
 }
 
-async function sampleDesk(page, profile, screenshot) {
-  await waitForShading(page);
-  await page.waitForTimeout(5000);
+async function turnDesk(page, profile, duration, reset) {
   const origin = deskOrigin(profile);
   await page.mouse.move(origin.x, origin.y);
   await page.mouse.down();
   await page.evaluate(
-    ({ x, y, screenshot }) =>
+    ({ x, y, duration, reset }) =>
       new Promise((done) => {
         let start;
         function tick(time) {
           start ??= time;
           const elapsed = time - start;
           const sample = window.studioBench;
-          sample.recording = elapsed > 2000 && elapsed < 14000;
-          const phase = screenshot && elapsed >= 14000 ? 0 : elapsed / 1500;
+          const finished = elapsed >= duration;
+          sample.recording = elapsed > 2000 && !finished;
+          const phase = reset && finished ? 0 : elapsed / 1500;
           sample.renderer.domElement.dispatchEvent(
             new PointerEvent('pointermove', {
               pointerType: 'mouse',
@@ -401,15 +509,66 @@ async function sampleDesk(page, profile, screenshot) {
               clientY: y + 25 * Math.sin(phase),
             }),
           );
-          if (elapsed >= 14000) done();
+          if (finished) done();
           else requestAnimationFrame(tick);
         }
         requestAnimationFrame(tick);
       }),
-    { ...origin, screenshot },
+    { ...origin, duration, reset },
   );
   await page.mouse.up();
+}
+
+async function enterRoute(page, profile, routeName) {
+  const route = roomRoutes[routeName];
+  if (!route) return;
+  if (route.turn) {
+    const origin = deskOrigin(profile);
+    await page.mouse.move(origin.x, origin.y);
+    await page.mouse.down();
+    await page.mouse.move(origin.x + route.turn, origin.y);
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+  }
+  const projected = await page.waitForFunction((target) => {
+    const point = window.studioBench.project(target);
+    return point && point.x > 0 && point.x < innerWidth && point.y > 0 && point.y < innerHeight
+      ? point
+      : null;
+  }, route.target);
+  const { x, y } = await projected.jsonValue();
+  await page.mouse.click(x, y);
+  await page.waitForFunction(
+    ({ mode, caption }) =>
+      document.querySelector('.studio')?.dataset.mode === mode &&
+      (!caption || document.querySelector('.object-caption')?.textContent?.includes(caption)),
+    route,
+  );
+  await page.waitForTimeout(1200);
+}
+
+async function sampleDesk(page, profile, { repeatDesk, seconds, screenshot, route }, startProfile) {
+  await waitForShading(page);
+  await page.waitForTimeout(5000);
+  await enterRoute(page, profile, route);
+  let firstTurn;
+  if (repeatDesk) {
+    await turnDesk(page, profile, 14000, true);
+    firstTurn = await page.evaluate(() => {
+      const sample = window.studioBench;
+      const { roomFrames, submissions } = sample;
+      sample.roomFrames = [];
+      sample.submissions = [];
+      sample.rotations = [];
+      sample.resolutions = {};
+      return { roomFrames, submissions };
+    });
+    await page.waitForTimeout(1000);
+  }
+  await startProfile?.();
+  await turnDesk(page, profile, 2000 + seconds * 1000, screenshot);
   if (screenshot) await page.waitForTimeout(500);
+  return firstTurn;
 }
 
 function checkSamples(raw, profile, { captureProfile, loaderTrace, startup }) {
@@ -521,8 +680,23 @@ function startupSummary(raw, automationCommandMs) {
 }
 
 async function measure({ base, directory, head, name, run, settings }) {
-  const { captureProfile, loaderTrace, startup, screenshot, slowDraws, selected, dist, warm } =
-    settings;
+  const {
+    captureProfile,
+    steadyProfile,
+    loaderTrace,
+    startup,
+    fullRoom,
+    inputDelayMs,
+    screenshot,
+    slowDraws,
+    selected,
+    dist,
+    warm,
+    repeatDesk,
+    seconds,
+    route,
+    weather,
+  } = settings;
   const profile = profiles[name];
   const url = new URL(base);
   for (const flag of selected) url.searchParams.set(...experiments[flag]);
@@ -565,7 +739,7 @@ async function measure({ base, directory, head, name, run, settings }) {
     cdp.on('Network.responseReceivedExtraInfo', ({ requestId, statusCode }) => {
       if (statusCode === 304) revalidatedRequests.add(requestId);
     });
-    const weather = { current: { weather_code: 0, is_day: 0 } };
+    const weatherFixture = { current: { weather_code: weatherCodes[weather], is_day: 0 } };
     if (warm) {
       cdp.on('Fetch.requestPaused', ({ requestId, request }) => {
         const meteorology = new URL(request.url).hostname === 'api.open-meteo.com';
@@ -577,7 +751,7 @@ async function measure({ base, directory, head, name, run, settings }) {
                 { name: 'Content-Type', value: 'application/json' },
                 { name: 'Access-Control-Allow-Origin', value: '*' },
               ],
-              body: Buffer.from(JSON.stringify(weather)).toString('base64'),
+              body: Buffer.from(JSON.stringify(weatherFixture)).toString('base64'),
             }
           : { requestId, responseCode: 204 };
         void cdp.send('Fetch.fulfillRequest', response).catch((error) => {
@@ -588,7 +762,7 @@ async function measure({ base, directory, head, name, run, settings }) {
     } else {
       await page.route(/^https:\/\//, (route) => {
         if (new URL(route.request().url()).hostname === 'api.open-meteo.com')
-          return route.fulfill({ json: weather });
+          return route.fulfill({ json: weatherFixture });
         return route.abort();
       });
     }
@@ -600,17 +774,17 @@ async function measure({ base, directory, head, name, run, settings }) {
       cachedRequests.clear();
       revalidatedRequests.clear();
     }
-    if (captureProfile || loaderTrace) await cdp.send('Performance.enable');
-    if (captureProfile) {
+    if (captureProfile || steadyProfile || loaderTrace) await cdp.send('Performance.enable');
+    if (captureProfile || steadyProfile) {
       await cdp.send('Profiler.enable');
       await cdp.send('Profiler.setSamplingInterval', { interval: 1000 });
-      await cdp.send('Profiler.start');
     }
+    if (captureProfile) await cdp.send('Profiler.start');
     const stopTrace = loaderTrace ? await traceLoader(cdp) : undefined;
     if (warm) await page.reload({ waitUntil: 'domcontentloaded' });
     else await page.goto(url.href, { waitUntil: 'domcontentloaded' });
-    let cpuProfile, compositorTrace, navigationStart, automationCommandMs;
-    if (startup) automationCommandMs = await sampleStartup(page, profile);
+    let cpuProfile, compositorTrace, navigationStart, automationCommandMs, firstTurn;
+    if (startup) automationCommandMs = await sampleStartup(page, profile, inputDelayMs);
     if (stopTrace) {
       await page.waitForFunction(() => window.studioBench?.loaderEnd > 0, null, {
         timeout: 120000,
@@ -620,19 +794,28 @@ async function measure({ base, directory, head, name, run, settings }) {
       navigationStart = metrics.find((metric) => metric.name === 'NavigationStart')?.value;
       if (!navigationStart) throw new Error('The compositor trace has no navigation clock.');
     }
-    if (captureProfile) {
-      if (!startup)
-        await page.waitForFunction(() => window.studioBench?.loaderEnd > 0, null, {
-          timeout: 120000,
-        });
+    if (captureProfile && !startup)
+      await page.waitForFunction(() => window.studioBench?.loaderEnd > 0, null, {
+        timeout: 120000,
+      });
+    if (!captureProfile && !loaderTrace && !startup) {
+      const startProfile = steadyProfile ? () => cdp.send('Profiler.start') : undefined;
+      firstTurn = await sampleDesk(page, profile, settings, startProfile);
+    }
+    if (captureProfile || steadyProfile) {
       cpuProfile = (await cdp.send('Profiler.stop')).profile;
       const { metrics } = await cdp.send('Performance.getMetrics');
       navigationStart = metrics.find((m) => m.name === 'NavigationStart')?.value;
       if (!cpuProfile.samples.length || !navigationStart)
-        throw new Error('Startup CPU samples or navigation clock unavailable.');
+        throw new Error('CPU samples or navigation clock unavailable.');
     }
     if (startup) await waitForShading(page);
-    else if (!captureProfile && !loaderTrace) await sampleDesk(page, profile, screenshot);
+    if (fullRoom)
+      await page.waitForFunction(
+        () => performance.getEntriesByName('studio-room-rear-ready').length > 0,
+        null,
+        { polling: 250, timeout: 120000 },
+      );
     const raw = await page.evaluate(readSamples);
     checkSamples(raw, profile, settings);
     const summary = {
@@ -663,17 +846,32 @@ async function measure({ base, directory, head, name, run, settings }) {
       },
       args,
       profile,
+      route,
+      weather,
+      ...(startup && { requestedInputDelayMs: inputDelayMs }),
+      observedWeather: raw.weather,
+      night: raw.night,
+      mode: raw.mode,
       experiments: Object.fromEntries(url.searchParams),
-      ...(slowDraws && { slowDraws: raw.slowDraws.length }),
+      ...(slowDraws && {
+        slowDraws: raw.slowDraws.length,
+        slowTextureUploads: raw.slowTextureUploads.length,
+      }),
     };
     const stem = join(
       directory,
       [
         captureProfile && 'loader-profile',
+        steadyProfile && 'steady-profile',
         loaderTrace && 'loader-trace',
         startup && 'startup',
+        inputDelayMs > 0 && `input-delay-${inputDelayMs}ms`,
         slowDraws && 'slow-draws',
         warm && 'warm',
+        repeatDesk && 'repeat-desk',
+        seconds !== 12 && `${seconds}s`,
+        route !== 'desk' && route,
+        weather !== 'clear' && weather,
         name,
         ...selected.map((flag) => flag.slice(2)),
         run,
@@ -681,22 +879,25 @@ async function measure({ base, directory, head, name, run, settings }) {
         .filter(Boolean)
         .join('-'),
     );
+    const frontMs = raw.marks['studio-room-material-prep-end'];
+    const rearMs = raw.marks['studio-room-rear-ready'];
+    const shadedMs = raw.marks['studio-room-shaded'];
+    if ([frontMs, rearMs, shadedMs].every(Number.isFinite))
+      summary.roomReadinessMs = {
+        front: rounded(frontMs),
+        rear: rounded(rearMs),
+        initialShading: rounded(shadedMs),
+        assetsAndInitialShading: rounded(Math.max(frontMs, rearMs, shadedMs)),
+      };
+    summary.loaderProgress = raw.loaderProgress;
+    if (cpuProfile) {
+      summary.navigationStartMonotonicSeconds = navigationStart;
+      summary.sampledIntervalMicroseconds = 1000;
+      writeFileSync(stem + '.cpuprofile.gz', gzipSync(JSON.stringify(cpuProfile)));
+    }
     if (captureProfile) {
       if (startup) Object.assign(summary, startupSummary(raw, automationCommandMs));
-      writeFileSync(stem + '.cpuprofile.gz', gzipSync(JSON.stringify(cpuProfile)));
-      writeFileSync(
-        stem + '.meta.json',
-        JSON.stringify(
-          {
-            ...raw,
-            ...summary,
-            navigationStartMonotonicSeconds: navigationStart,
-            sampledIntervalMicroseconds: 1000,
-          },
-          null,
-          2,
-        ),
-      );
+      writeFileSync(stem + '.meta.json', JSON.stringify({ ...raw, ...summary }, null, 2));
     } else {
       const loaderTasks = raw.longTasks.filter(
         ([start, duration]) => start < raw.loaderEnd && start + duration > raw.loaderStart,
@@ -718,7 +919,15 @@ async function measure({ base, directory, head, name, run, settings }) {
           draws: raw.draws,
           tris: raw.tris,
           motion: raw.motion,
+          durationSeconds: seconds,
         });
+      if (firstTurn) {
+        summary.firstTurn = {
+          room: stats(intervals(firstTurn.roomFrames)),
+          primarySubmitP95: stats(firstTurn.submissions).p95,
+        };
+        raw.firstTurn = firstTurn;
+      }
       if (compositorTrace) {
         const captures = JSON.parse(compositorTrace)
           .traceEvents.filter((event) => event.name === 'Screenshot')

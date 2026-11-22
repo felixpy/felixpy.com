@@ -23,13 +23,15 @@ export function rearLoading(manager: LoadingManager, prioritized: boolean) {
   }
 
   function launchTogether() {
-    for (const { load } of jobs.splice(0)) {
-      try {
-        void load().catch(() => {});
-      } catch {
-        manager.itemError(token);
-      }
-    }
+    return Promise.allSettled(
+      jobs.splice(0).map(({ load }) => {
+        try {
+          return load();
+        } catch {
+          manager.itemError(token);
+        }
+      }),
+    );
   }
 
   async function launchPrioritized() {
@@ -38,7 +40,7 @@ export function rearLoading(manager: LoadingManager, prioritized: boolean) {
       const { default: Queue } = await import('p-queue');
       scheduler = new Queue({ concurrency: 3, autoStart: false });
     } catch {
-      launchTogether();
+      await launchTogether();
       return;
     }
     queue = scheduler;
@@ -75,14 +77,9 @@ export function rearLoading(manager: LoadingManager, prioritized: boolean) {
       }
       if (!started) {
         started = true;
-        if (prioritized) {
-          void launchPrioritized()
-            .catch(() => manager.itemError(token))
-            .finally(() => manager.itemEnd(token));
-        } else {
-          launchTogether();
-          manager.itemEnd(token);
-        }
+        void (prioritized ? launchPrioritized() : launchTogether())
+          .catch(() => manager.itemError(token))
+          .finally(() => manager.itemEnd(token));
       }
       return ready;
     },

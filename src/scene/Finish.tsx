@@ -40,10 +40,8 @@ export function Finish({
 }) {
   const { gl, scene, camera, size, viewport } = useThree();
   const grade = useMemo(roomColorGrade, []);
-  const incrementalWarmup = useMemo(
-    () => new URLSearchParams(location.search).get('studio-warmup') === 'incremental',
-    [],
-  );
+  const warmup = useMemo(() => new URLSearchParams(location.search).get('studio-warmup'), []);
+  const pacing = warmup === 'paced' || warmup === 'adaptive' ? warmup : undefined;
   useEffect(() => () => firstFrame.dispose(), [firstFrame]);
   useEffect(() => () => grade.dispose(), [grade]);
   const pipeline = useRef<{
@@ -160,16 +158,17 @@ export function Finish({
       return;
     }
     const active = pipeline.current;
-    if (preparation.current && firstPicture.current === 'drawn') {
+    const drawn = firstPicture.current === 'drawn';
+    if (preparation.current && drawn) {
       if (scannedRevision.current !== detailRevision.current) {
         preparation.current.scan();
         scannedRevision.current = detailRevision.current;
       }
-      preparation.current.step(active?.beauty ?? null);
+      if (!pacing) preparation.current.step(active?.beauty ?? null);
     }
     if (firstPicture.current === 'preparing') {
       const parallel = gl.extensions.has('KHR_parallel_shader_compile');
-      if (incrementalWarmup && parallel) {
+      if ((warmup === 'incremental' || pacing) && parallel) {
         if (!preparation.current) {
           const passes = active
             ? [
@@ -180,11 +179,18 @@ export function Finish({
                 { material: active.occlusion.pdMaterial, target: active.occlusion.pdRenderTarget },
               ]
             : [];
-          preparation.current = roomWarmup(gl, scene, camera, passes);
+          preparation.current = roomWarmup(gl, scene, camera, passes, pacing);
           performance.mark('studio-room-shader-warm-start');
         }
-        if (!preparation.current.prepareVisible(active?.beauty ?? null, detailRevision.current)) {
-          firstFrame.draw(gl, scene, camera, night, look);
+        const preview = () => firstFrame.draw(gl, scene, camera, night, look);
+        if (
+          !preparation.current.prepareVisible(
+            active?.beauty ?? null,
+            detailRevision.current,
+            pacing ? preview : undefined,
+          )
+        ) {
+          if (warmup === 'incremental') preview();
           return;
         }
         performance.mark('studio-room-shader-warm-end');
@@ -223,6 +229,7 @@ export function Finish({
       occlusion.render(gl, color, beauty, delta, false);
       output.render(gl, beauty, color, delta, false);
     }
+    if (drawn && pacing) preparation.current?.step(active?.beauty ?? null);
     if (firstPicture.current === 'preparing') {
       firstPicture.current = 'drawn';
       if (!simpleLow) firstFrame.dispose();

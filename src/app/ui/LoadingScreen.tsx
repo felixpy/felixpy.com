@@ -4,6 +4,7 @@ import phosphor from '../../spectral/shaders/phosphor-loader.glsl?raw';
 import '@fontsource/ibm-plex-mono/latin-500.css';
 
 const approachProgress = 0.9;
+const progressIntervalMs = 100;
 
 export default function LoadingScreen({
   progress,
@@ -50,7 +51,8 @@ export default function LoadingScreen({
   );
   useEffect(() => {
     const started = (start.current ??= performance.now());
-    let frame = requestAnimationFrame(update);
+    let frame = 0;
+    let timer = 0;
     function update(now: number) {
       const elapsed = Math.max(0, now - started);
       const waiting = Math.min(1, elapsed / 1900);
@@ -67,10 +69,17 @@ export default function LoadingScreen({
         if (percent.current && percent.current.textContent !== label)
           percent.current.textContent = label;
       }
-      if (waiting < 1 && next < approachProgress) frame = requestAnimationFrame(update);
+      if (waiting >= 1 || next >= approachProgress) return;
+      if (legacy) frame = requestAnimationFrame(update);
+      else timer = window.setTimeout(() => update(performance.now()), progressIntervalMs);
     }
-    return () => cancelAnimationFrame(frame);
-  }, [progress]);
+    if (legacy) frame = requestAnimationFrame(update);
+    else update(performance.now());
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [legacy, progress]);
 
   return (
     <section

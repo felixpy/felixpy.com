@@ -124,7 +124,7 @@ function assemblyLoading() {
   return { assets, manager, frontReady };
 }
 
-function CameraRig(props: RigProps & Assembly) {
+function CameraRig(props: RigProps & Assembly & { earlyRear: boolean }) {
   const { camera: baseCamera, gl, scene } = useThree();
   const camera = baseCamera as T.PerspectiveCamera;
   const { model, assets } = props;
@@ -352,6 +352,7 @@ function CameraRig(props: RigProps & Assembly) {
       roomMeshes.current?.refresh();
       props.detailRevision.current++;
       shadowWarmup.current = 2;
+      performance.mark('studio-room-rear-ready');
     });
     function pick(x: number, y: number) {
       const rect = element.getBoundingClientRect();
@@ -938,14 +939,14 @@ function CameraRig(props: RigProps & Assembly) {
   }, [model, props.roomVisible, shaded]);
 
   useEffect(() => {
-    if (!props.roomVisible || !shaded) return;
+    if (!props.roomVisible || (!props.earlyRear && !shaded)) return;
     if (typeof window.requestIdleCallback === 'function') {
       const idle = window.requestIdleCallback(() => void model.prepareRear(), { timeout: 240 });
       return () => window.cancelIdleCallback(idle);
     }
     const timer = window.setTimeout(() => void model.prepareRear(), 32);
     return () => window.clearTimeout(timer);
-  }, [model, props.roomVisible, shaded]);
+  }, [model, props.earlyRear, props.roomVisible, shaded]);
 
   useEffect(() => {
     if (props.roomVisible)
@@ -1372,13 +1373,15 @@ function StudioRoom({
   const gl = useThree((state) => state.gl);
   const [startup] = useState(() => {
     const query = new URLSearchParams(location.search);
+    const rearMode = query.get('studio-rear');
     return {
       environment: props.environment,
+      earlyRear: rearMode === 'early',
       sliced: query.get('studio-build') === 'sliced',
       simpleLow: query.get('studio-low-shading') === 'simple',
       options: {
         deferBookBacks: query.get('studio-startup') === 'deferred-books',
-        prioritizeRear: query.get('studio-rear') === 'priority',
+        prioritizeRear: rearMode === 'priority' || rearMode === 'early',
         preloadInspection: query.get('studio-details') === 'preload',
         mergeFirst: query.get('studio-batching') !== 'transform-first',
       },
@@ -1464,7 +1467,7 @@ function StudioRoom({
   if (!assembly) return null;
   return (
     <>
-      <CameraRig {...props} {...assembly} nativeLow={nativeLow} />
+      <CameraRig {...props} {...assembly} nativeLow={nativeLow} earlyRear={startup.earlyRear} />
       <Finish
         firstFrame={firstFrame}
         night={props.environment.night}
