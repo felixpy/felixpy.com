@@ -78,6 +78,7 @@ const experiments = {
   '--resident-warmup-maps': ['studio-warmup-maps', 'resident'],
   '--live-front-warmup': ['studio-warmup-live', 'front'],
   '--legacy-tea-warmup': ['studio-tea-warmup', 'legacy'],
+  '--static-pc-telemetry': ['studio-pc-telemetry', 'static'],
   '--warm-workbench': ['studio-warmup', 'workbench'],
   '--adaptive-warmup': ['studio-warmup', 'adaptive'],
   '--culled-lights': ['studio-lighting', 'culled'],
@@ -707,7 +708,10 @@ function installProbe({
           const duration = performance.now() - start;
           if (duration >= 10) {
             const image = args.find(
-              (arg) => arg instanceof HTMLImageElement || arg instanceof ImageBitmap,
+              (arg) =>
+                arg instanceof HTMLImageElement ||
+                arg instanceof HTMLCanvasElement ||
+                arg instanceof ImageBitmap,
             );
             sample.slowTextureUploads.push({
               name,
@@ -718,6 +722,7 @@ function installProbe({
                 path: new URL(image.src, location.href).pathname,
               }),
               ...(image instanceof ImageBitmap && { source: 'ImageBitmap' }),
+              ...(image instanceof HTMLCanvasElement && { source: 'HTMLCanvasElement' }),
             });
           }
           return result;

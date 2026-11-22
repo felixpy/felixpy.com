@@ -110,10 +110,21 @@ export function tower(
   installMotherboard(unit, manager, registerLight, details);
   const power = pcPowerHarness(unit, p);
   const showTemperature = ryuoIV(unit, p, aura, power.braid, registerLight, details);
+  const staticTelemetry =
+    typeof location !== 'undefined' &&
+    new URLSearchParams(location.search).get('studio-pc-telemetry') === 'static';
+  let staticTelemetryMarked = false;
   let lastSecond = -1;
   let celsius: number;
   let watts: number;
-  function updateTelemetry(time: number) {
+  function updateTelemetry(time: number, nativeLow = false) {
+    if (staticTelemetry && nativeLow) {
+      if (!staticTelemetryMarked) {
+        staticTelemetryMarked = true;
+        performance.mark('studio-pc-telemetry-static');
+      }
+      return;
+    }
     const second = Math.floor(time);
     if (second === lastSecond) return;
     lastSecond = second;

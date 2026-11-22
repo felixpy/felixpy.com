@@ -453,6 +453,10 @@ After the tea fix, the remaining long spans included warm preview geometry draws
 
 Runs 210–211 used compositor screenshots of the loader on that same native 1080p build, with stock preview and `--warm-oled` respectively. Including the loader boundaries, the longest gaps between changed screenshots were 320 and 255 ms, while the main-thread callback gaps were 896 and 875 ms. Both visits had visible feedback within one second. Loader removal occurred at 2.37 and 2.23 seconds. OLED's first visible uniform query still took 367 and 281 ms, and the trial's OLED warm-end mark occurred just after loader removal. Repeat before changing the default OLED preparation order.
 
+Runs 227–229 used the same native 1080p UHD 770 build, StudioView SHA-256 prefix `f22ffa9b`, with gesture-priority textures and in-view upload order. Each cold visit turned from the desk immediately after the loader. Live-front control reached whole-room readiness at 12.36 seconds, submitted a changed view 571 ms after the loader and recorded first-input interval P95/max of 243/521 ms. Separating original front shader batches from preview renders on alternating callbacks changed those measurements to 12.66 seconds, 610 ms and 118/465 ms. Intervals over 50 ms increased from 48 of 165 to 65 of 192. Texture preparation and other rendering still accumulated in the same intervals. The longest interval in the control included 372 ms of texture initialization and 131 ms of room rendering. The scheduling trial was removed.
+
+Run 229 requested idle pre-linking for the reflection probe's equirectangular conversion. It recorded no pre-link activity marks, so its frame timings cannot establish an effect. The trial was removed. Resolve the early activation window before comparing an equivalent preparation path again.
+
 ## Idle-aware catch-up
 
 `--idle-catch-up` keeps isolated preparation and permits up to three preparation frames before a quiet preview. It prioritizes the preview when 50 ms has elapsed since the preceding preview and restores alternating preparation and preview on input or visible movement. A single blocking render or warmup call can exceed that interval. Runs 140–143 used one native 4K RTX 4090 workbench build, StudioView SHA-256 prefix `ef5db8ab`. Each comparison used in-view uploads, gesture priority and detail on inspection.
@@ -566,6 +570,29 @@ Runs 161–162 increased the wide draw limit from 96 to 160 while keeping the 96
 `--gpu-color-passes` alternates inclusive GPU timings with separate elapsed queries for opaque and translucent default-framebuffer render calls after depth prefill. The opaque query begins at the first color draw. The translucent query begins at the first blended or transmissive material and ends with the room render. The benchmark records sampled offscreen or late opaque draws to validate the boundary.
 
 Run 165 used the production bundle from `ced4278` (StudioView SHA-256 prefix `6d1c7816`) for a 12-second warmed native UHD 770 desk turn with wide depth prefill. The ten split frames had zero offscreen or late opaque draws, a median of 1,069 opaque color draws and 58 translucent color draws. GPU P50 was 31.89 ms for opaque and 1.17 ms for translucent. Inclusive GPU P50/P95 was 34.21/34.74 ms from ten alternating samples. The room submitted 28.20 FPS. The measured cost supports prioritizing opaque shading and lowering the number of draws before tuning glass or depth further.
+
+Runs 225–226 used the same native 1080p UHD 770 low build, StudioView SHA-256 prefix `5aedcd90`, with matte and lean lighting, window scissor, window-only water and wide depth prefill. The repeated desk turn lasted 60 seconds and the workbench route lasted 15 seconds. Both visits checked shader compilation and completed without browser errors.
+
+| Route                    | Warm submissions | Submission P95 / P99 | Opaque GPU P50 | Main-color GPU P95 | Intervals over 66.67 ms |
+| ------------------------ | ---------------: | -------------------: | -------------: | -----------------: | ----------------------: |
+| 225, 60-second desk      |        28.34 FPS |      62.5 / 111.1 ms |       31.10 ms |           34.92 ms |             78 of 1,700 |
+| 226, 15-second workbench |        33.78 FPS |       35.3 / 62.5 ms |       25.35 ms |           31.25 ms |                1 of 505 |
+
+The desk is 0.16 FPS below the tolerated average cadence even at the browser submission layer. The main-color samples placed 1,065 median opaque draws at the desk and 217 at the workbench. The desk visit had 42 submission gaps of at least 90 ms. Their clustering at roughly one-second intervals suggests a separate periodic cost alongside the sustained opaque pass. The blank-page control after the desk run reached 143.73 callbacks per second.
+
+### PC display updates
+
+Runs 230–232 repeated the native 1080p desk turn for 20 seconds each on the same build, StudioView SHA-256 prefix `56e6735f`, in control, frozen, control order. `--static-pc-telemetry` keeps the initial readings and suppresses later canvas changes for the PC power and cooler displays on the direct native-low path. The activation mark confirms the freeze in run 231. The three visits completed without browser errors.
+
+| Run and display mode | Warm submissions | Submission P95 / P99 | Intervals at least 90 ms | Intervals over 66.67 ms |
+| -------------------- | ---------------: | -------------------: | -----------------------: | ----------------------: |
+| 230, control         |        28.46 FPS |      62.5 / 111.1 ms |                       15 |               23 of 568 |
+| 231, frozen          |        28.63 FPS |       42.0 / 76.4 ms |                        0 |               11 of 572 |
+| 232, control         |        28.40 FPS |      62.3 / 111.1 ms |                       14 |               24 of 565 |
+
+The intervention isolated a contributor to the longest intervals and left opaque GPU P50 at 31.26–31.65 ms across the visits. The synchronous texture probe recorded no canvas transfer of at least 10 ms. It does not measure asynchronous driver work or mipmap generation. Keep the freeze as a diagnostic. A production change should retain the existing readings, cadence, color space and minification while comparing typed or separately prepared texture transfers.
+
+### Opaque shader experiments
 
 An opt-in opaque shader trial shared receiver-side LTC setup across multiple rectangle lights. Run 167 used a shader with a scalar clearcoat argument passed to a vector parameter. Its missing screen and other missing clearcoat surfaces invalidate the timing result. The corrected shader passed an offscreen WebGL pixel comparison using the stock rectangle-light lookup tables. Native run 170 verified the paths with `--check-shaders`, which enables compilation diagnostics in production builds, and its screenshot showed the restored screen and clearcoat objects.
 

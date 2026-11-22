@@ -1133,7 +1133,7 @@ export function* buildStudioSteps(
         Math.abs(current - goal) < 0.0001 ? goal : T.MathUtils.lerp(current, goal, ease);
       updateSteam(env.reducedMotion ? 1 : clock);
       updateDisplay(env.locale, env.reducedMotion ? 0 : clock);
-      updateTelemetry(clock);
+      updateTelemetry(clock, fullInspection && env.quality === 'low');
       updatePhone(env.locale);
       const phase = env.reducedMotion ? 0 : Math.sin(clock * 0.16) * 0.036;
       for (const [i, source] of aura.entries()) {
