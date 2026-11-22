@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
-import type { Environment } from '../environment';
+import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
+import { switchDaylight, type Environment } from '../environment';
+import { windowCities as places } from '../../content/window-scenes';
 
 type City = Environment['city'];
 type LocalConditions = Pick<Environment, 'night' | 'season'>;
@@ -8,10 +9,6 @@ type WeatherResponse = {
   daily?: { sunrise?: number[]; sunset?: number[] };
 };
 
-const places: Record<City, { latitude: number; longitude: number; timezone: string }> = {
-  上海: { latitude: 31.23, longitude: 121.47, timezone: 'Asia/Shanghai' },
-  纽约: { latitude: 40.71, longitude: -74.01, timezone: 'America/New_York' },
-};
 const clocks = Object.fromEntries(
   Object.entries(places).map(([city, { timezone }]) => [
     city,
@@ -45,7 +42,6 @@ export function useWindowConditions(
   update: Dispatch<SetStateAction<Environment>>,
 ) {
   const manual = useRef({ city, weather: false, night: false });
-  const [resolved, setResolved] = useState(false);
   useEffect(() => {
     if (!enabled) return;
     if (manual.current.city !== city) manual.current = { city, weather: false, night: false };
@@ -69,8 +65,7 @@ export function useWindowConditions(
         current.city !== city
           ? current
           : {
-              ...current,
-              night: manual.current.night ? current.night : night,
+              ...(manual.current.night ? current : switchDaylight(current, night)),
               season: local.season,
               weather: manual.current.weather || !weather ? current.weather : weather,
             },
@@ -110,7 +105,6 @@ export function useWindowConditions(
         if (alive && controller === request) apply('雨');
       } finally {
         window.clearTimeout(timeout);
-        if (alive && controller === request) setResolved(true);
       }
     }
     void refresh();
@@ -123,5 +117,5 @@ export function useWindowConditions(
       window.clearInterval(weatherTimer);
     };
   }, [city, enabled, update]);
-  return { manual, ready: !enabled || resolved };
+  return manual;
 }

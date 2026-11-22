@@ -1,0 +1,21 @@
+{
+  "mount": [0.09, 2.71, 0.98],
+  "railLength": 2,
+  "heads": [
+    {
+      "station": "door",
+      "x": -0.76,
+      "aim": [-1.15, 1.29, 1.262],
+      "beamDegrees": 52,
+      "candela": 12
+    },
+    { "station": "equipment", "x": 0, "aim": [0, 1.57, 0.105], "beamDegrees": 68, "candela": 5.8 },
+    {
+      "station": "cabinet",
+      "x": 0.76,
+      "aim": [1.19, 1.804, 0.0182],
+      "beamDegrees": 54,
+      "candela": 8.8
+    }
+  ]
+}

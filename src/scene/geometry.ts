@@ -150,21 +150,6 @@ export function print(
   );
 }
 
-export function paperGeometry(width: number, height: number, scale = 1, yOffset = 0, back = false) {
-  const geometry = new T.PlaneGeometry(width * scale, height * scale, 16, 16);
-  const points = geometry.attributes.position;
-  const side = back ? -1 : 1;
-  for (let i = 0; i < points.count; i++) {
-    const u = 0.5 + (side * points.getX(i)) / width;
-    const v = 0.5 + (points.getY(i) + yOffset) / height;
-    const curl = Math.max(0, (u - 0.55) / 0.45) ** 2 * Math.max(0, (0.53 - v) / 0.53) ** 2;
-    const bow = Math.sin(u * Math.PI) * Math.sin(v * Math.PI);
-    points.setZ(i, side * (0.007 * curl + 0.0012 * bow));
-  }
-  geometry.computeVertexNormals();
-  return geometry;
-}
-
 export function textTexture(
   title: string,
   subtitle: string,

@@ -1,0 +1,13 @@
+[
+  { "height": -47.1, "scale": 0.991 },
+  { "height": -46, "scale": 0.998 },
+  { "height": -41, "scale": 1.001 },
+  { "height": -29, "scale": 1.005, "fingerwell": 1.8 },
+  { "height": -16, "scale": 1.003, "fingerwell": 1.1 },
+  { "height": -4, "scale": 1.001, "fingerwell": -0.7 },
+  { "height": 6, "scale": 0.996, "fingerwell": -4.1 },
+  { "height": 12.8, "scale": 0.994, "fingerwell": -4.4 },
+  { "height": 16.5, "scale": 0.998, "fingerwell": -1.7 },
+  { "height": 20.1, "scale": 1.001, "fingerwell": 1.5, "slope": 1.8 },
+  { "height": 23.7, "scale": 0.999, "fingerwell": 2.4, "slope": 4.0 }
+]

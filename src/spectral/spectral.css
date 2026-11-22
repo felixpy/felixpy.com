@@ -49,7 +49,7 @@
 .phosphor-loader .spectral-shader {
   z-index: 1;
 }
-.phosphor-loader .spectral-shader:not([data-ready]) {
+.spectral-shader:not([data-ready]) {
   visibility: hidden;
 }
 .phosphor-loader > p {

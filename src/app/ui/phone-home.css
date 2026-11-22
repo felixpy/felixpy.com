@@ -1,0 +1,149 @@
+.phone-home {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  left: 0;
+  width: 390px;
+  height: 844px;
+  transform-origin: top left;
+  visibility: hidden;
+  overflow: hidden;
+  isolation: isolate;
+  border-radius: 52px;
+  color: #fff;
+  background:
+    linear-gradient(170deg, #30272299, #261d17b8),
+    url('/media/graphics/white-dunes.webp') center / cover,
+    #75695b;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Studio Han', sans-serif;
+  font-weight: 550;
+  color-scheme: light;
+  user-select: none;
+  pointer-events: none;
+}
+.phone-home-status {
+  height: 55px;
+  margin: 0 27px 0 35px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.phone-home-status > span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.phone-home-island {
+  position: absolute;
+  top: 13px;
+  left: 50%;
+  width: 103px;
+  height: 25px;
+  transform: translateX(-50%);
+  border-radius: 20px;
+  background: #080909;
+}
+.phone-home-content {
+  padding: 26px 19px 0;
+}
+.phone-home h1 {
+  font-size: 40px;
+  line-height: 1.12;
+  font-weight: 720;
+  letter-spacing: -1.8px;
+}
+.phone-home-summary {
+  margin-top: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 114px;
+  padding: 9px 15px 10px 12px;
+  border-radius: 24px;
+  background: #3c3734bb;
+  font-size: 15px;
+  line-height: 1.18;
+}
+.phone-home-summary svg {
+  color: #ffce69;
+}
+.phone-home-summary small {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: #f4eadf;
+}
+.phone-home h2 {
+  margin: 31px 0 13px;
+  font-size: 25px;
+  line-height: 1.15;
+  font-weight: 690;
+  letter-spacing: -0.7px;
+}
+.phone-home-accessories {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.phone-home-accessories button {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  height: 111px;
+  padding: 11px 13px;
+  border: 1px solid #ffffff25;
+  border-radius: 21px;
+  background: #403d3add;
+  color: #fff;
+  pointer-events: auto;
+  text-align: left;
+  touch-action: manipulation;
+}
+.phone-home-accessories button[aria-checked='true'] {
+  background: #fffaf1f5;
+  color: #211e1b;
+}
+.phone-home-accessories button:focus-visible {
+  outline: 3px solid #ffbe55;
+  outline-offset: 1px;
+}
+.phone-home-accessories button:active {
+  opacity: 0.82;
+}
+.phone-home-glyph {
+  margin-bottom: 7px;
+  color: #d4cfc7;
+}
+.phone-home [aria-checked='true'] .phone-home-glyph {
+  color: #a86409;
+}
+.phone-home-device {
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.4px;
+  line-height: 1.2;
+}
+.phone-home-state {
+  margin-top: 2px;
+  font-size: 14px;
+  color: #e0dcd5;
+  line-height: 1.15;
+}
+.phone-home [aria-checked='true'] .phone-home-state {
+  color: #655d52;
+}
+.phone-home-indicator {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  width: 119px;
+  height: 5px;
+  transform: translateX(-50%);
+  border-radius: 4px;
+  background: #fff;
+}

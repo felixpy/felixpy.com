@@ -1,128 +1,107 @@
 import * as T from 'three';
 import type { Environment } from '../app/environment';
-import { box, canvasTexture, group, mesh, random, tube, type XYZ } from './geometry';
+import { box, group, mesh, random, tube, type XYZ } from './geometry';
+import { snowfall } from './snowfall';
 import { plasterUV, type Palette } from './materials';
 import { buildExterior } from './exterior';
-import { windowOpening } from './furniture';
-import { pottedPlant } from './props';
+import { windowOpening } from './layout';
+import { sillBotanicals } from './sill-botanicals';
 import { buildRainGlass } from './rain-glass';
+import { batchMeshes } from './batching';
+import { blenderMesh } from './blender-mesh';
+const extrusion = 'window-extrusions';
+const epdm = 'window-epdm';
+const casting = 'amsterdam-casting';
+const hinge = 'amsterdam-hinges';
+const blindName = 'Aluminium Venetian blind slats';
 
-export { windowOpening } from './furniture';
+export { windowOpening } from './layout';
 
-function precipitation(parent: T.Object3D, snow: boolean) {
-  const rng = random(snow ? 701 : 54);
-  const count = snow ? 460 : 510;
-  const values = new Float32Array(count * (snow ? 3 : 6));
+export function editableBlindSlats(root: T.Object3D) {
+  const batch = root.getObjectByName(blindName);
+  if (!(batch instanceof T.InstancedMesh)) return root;
+  const assembly = new T.Group().copy(batch, false);
+  for (let i = 0; i < batch.count; i++) {
+    const leaf = new T.Mesh(batch.geometry.clone(), batch.material);
+    leaf.name = 'Blind slat ' + String(i + 1).padStart(2, '0');
+    leaf.castShadow = batch.castShadow;
+    leaf.receiveShadow = batch.receiveShadow;
+    leaf.userData = { ...batch.userData };
+    batch.getMatrixAt(i, leaf.matrix);
+    leaf.matrix.decompose(leaf.position, leaf.quaternion, leaf.scale);
+    assembly.add(leaf);
+  }
+  if (batch === root) return assembly;
+  batch.parent!.add(assembly);
+  batch.removeFromParent();
+  return root;
+}
+
+function rainfall(parent: T.Object3D) {
+  const rng = random(54);
+  const count = 340;
+  const values = new Float32Array(count * 6);
   const particles = Array.from({ length: count }, () => ({
     x: -1.58 - rng() * 4.8,
     y: rng() * 4 - 0.3,
     z: rng() * 8 - 3.5,
-    speed: snow ? 0.16 + rng() * 0.39 : 3.2 + rng() * 3.8,
-    length: 0.006 + rng() * 0.014,
+    speed: 3.2 + rng() * 3.8,
+    length: 0.0028 + rng() * 0.0065,
   }));
   const geometry = new T.BufferGeometry().setAttribute(
     'position',
     new T.BufferAttribute(values, 3).setUsage(T.DynamicDrawUsage),
   );
-  const snowMaterial = snow
-    ? new T.PointsMaterial({
-        color: '#eff4ff',
-        map: snowCrystal(),
-        size: 0.082,
-        opacity: 0.79,
-        transparent: true,
-        depthWrite: false,
-      })
-    : null;
-  if (snowMaterial) {
-    const flakeRandom = random(417);
-    geometry.setAttribute(
-      'flakeScale',
-      new T.Float32BufferAttribute(
-        Array.from({ length: count }, () => 0.6 + flakeRandom() ** 1.8 * 1.15),
-        1,
-      ),
-    );
-    snowMaterial.onBeforeCompile = (shader) => {
-      shader.vertexShader =
-        'attribute float flakeScale;\n' +
-        shader.vertexShader.replace('gl_PointSize = size;', 'gl_PointSize = size * flakeScale;');
-    };
-  }
-  const material =
-    snowMaterial ??
+  const object = new T.LineSegments(
+    geometry,
     new T.LineBasicMaterial({
       color: '#a6c5db',
       opacity: 0.12,
       transparent: true,
       depthWrite: false,
-    });
-  const object = snow ? new T.Points(geometry, material) : new T.LineSegments(geometry, material);
+    }),
+  );
   object.frustumCulled = false;
   parent.add(object);
   return {
     object,
     update(delta: number) {
-      for (const [i, particle] of particles.entries()) {
+      for (let i = 0; i < count; i++) {
+        const particle = particles[i];
         particle.y -= delta * particle.speed;
-        particle.z += delta * (snow ? Math.sin(particle.y * 5 + i) * 0.27 : 0.52);
+        particle.z += delta * 0.52;
         if (particle.y < -0.4) {
           particle.y = 3.7;
           particle.z = rng() * 8 - 3.5;
         }
-        const k = i * (snow ? 3 : 6);
-        values[k] = particle.x;
+        const k = i * 6;
+        values[k] = values[k + 3] = particle.x;
         values[k + 1] = particle.y;
         values[k + 2] = particle.z;
-        if (!snow) {
-          values[k + 3] = particle.x;
-          values[k + 4] = particle.y + particle.speed * particle.length;
-          values[k + 5] = particle.z - 0.011;
-        }
+        values[k + 4] = particle.y + particle.speed * particle.length;
+        values[k + 5] = particle.z - particle.length * 0.58;
       }
       geometry.attributes.position.needsUpdate = true;
     },
   };
 }
 
-function snowCrystal() {
-  return canvasTexture(96, 96, (ctx) => {
-    ctx.translate(48, 48);
-    const soft = ctx.createRadialGradient(0, 0, 3, 0, 0, 39);
-    soft.addColorStop(0, '#f4f6ffde');
-    soft.addColorStop(0.35, '#edf2f7a0');
-    soft.addColorStop(0.73, '#e2ecfb44');
-    soft.addColorStop(1, '#e2ecfb00');
-    ctx.fillStyle = soft;
-    ctx.fillRect(-40, -40, 80, 80);
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = '#f7faff88';
-    ctx.lineWidth = 5;
-    for (let i = 0; i < 6; i++) {
-      ctx.save();
-      ctx.rotate((i * Math.PI) / 3);
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(0, 34);
-      ctx.moveTo(-9, 21);
-      ctx.lineTo(0, 29);
-      ctx.lineTo(9, 21);
-      ctx.stroke();
-      ctx.restore();
-    }
-  });
-}
-
-export function buildWindow(root: T.Group, p: Palette, loader: T.TextureLoader) {
+export function buildWindow(
+  root: T.Group,
+  p: Palette,
+  loader: T.TextureLoader,
+  initial: Environment,
+) {
   const { wall: x, z0, z1, y0, y1, thickness } = windowOpening;
   const centerZ = (z0 + z1) / 2,
     width = z1 - z0;
   const unit = group(root, 'Recessed window');
-  const trim = p.woodVertical.clone();
-  trim.color.set('#8e8171');
-  trim.roughness = 1;
-  const trimRails = p.wood.clone();
-  trimRails.color.copy(trim.color);
+  const bronze = p.bronze.clone();
+  bronze.color.set('#544f43');
+  bronze.roughness = 0.57;
+  bronze.metalness = 0.48;
+  const gasket = p.rubber.clone();
+  gasket.color.set('#272e2e');
   const frameX = x - 0.154;
   const wallX = x - thickness / 2;
   const segment = (low: number, high: number, from: number, to: number) => {
@@ -139,31 +118,35 @@ export function buildWindow(root: T.Group, p: Palette, loader: T.TextureLoader) 
   segment(0, 2.71, z1, 3.19);
   segment(0, y0, z0, z1);
   segment(y1, 2.71, z0, z1);
-  for (const y of [y0 + 0.032, y1 - 0.032, y0 + 0.77]) {
-    box(unit, [0.09, 0.064, width], [frameX, y, centerZ], trimRails, 0.003);
+  const midY = (y0 + y1) / 2;
+  const joinery = group(unit, 'Mitred aluminium window and tilt-turn sash', [frameX, y0, z0]);
+  mesh(joinery, blenderMesh(extrusion), bronze);
+  mesh(joinery, blenderMesh(epdm), gasket);
+  const satin = p.steel.clone();
+  satin.color.set('#b4b7b8');
+  satin.roughness = 0.32;
+  mesh(joinery, blenderMesh(casting), satin).name = 'HOPPE Amsterdam satin lever';
+  mesh(joinery, blenderMesh(hinge), gasket);
+  for (const z of [z0 + 0.009, z1 - 0.009]) {
+    box(unit, [0.142, y1 - y0, 0.018], [x - 0.064, midY, z], p.woodVertical, 0.0015);
+    box(unit, [0.018, y1 - y0 + 0.034, 0.039], [x + 0.003, midY, z], p.woodVertical, 0.002);
   }
-  for (const z of [z0 + 0.027, z1 - 0.027, centerZ]) {
-    box(unit, [0.088, y1 - y0 - 0.04, 0.055], [frameX, (y0 + y1) / 2, z], trim, 0.003);
-  }
-  for (const z of [z0 + 0.022, z1 - 0.022]) {
-    box(unit, [0.019, y1 - y0 - 0.074, 0.027], [x - 0.019, (y0 + y1) / 2, z], p.woodDark, 0.002);
-  }
-  box(unit, [0.019, 0.026, width - 0.056], [x - 0.019, y1 - 0.029, centerZ], p.woodDark, 0.002);
-  box(unit, [0.367, 0.046, width + 0.02], [x - 0.02, y0 + 0.014, centerZ], p.marble, 0.004);
-  beamHandle(unit, frameX, y0 + 0.7, centerZ, p);
+  box(unit, [0.15, 0.019, width - 0.029], [x - 0.063, y1 - 0.009, centerZ], p.wood, 0.002);
+  box(unit, [0.414, 0.043, width + 0.066], [x + 0.003, y0 + 0.0155, centerZ], p.limestone, 0.0032);
+  box(unit, [0.018, 0.046, width + 0.034], [x + 0.009, y0 - 0.024, centerZ], p.wood, 0.002);
   const glass = new T.MeshPhysicalMaterial({
-    color: '#77a1ce',
-    roughness: 0.09,
-    metalness: 0.16,
+    color: '#d3dedd',
+    roughness: 0.06,
+    metalness: 0,
     transparent: true,
-    opacity: 0.09,
+    opacity: 0.032,
     clearcoat: 1,
     depthWrite: false,
   });
   const pane = box(
     unit,
-    [0.004, y1 - y0 - 0.05, width - 0.044],
-    [frameX - 0.013, (y1 + y0) / 2, centerZ],
+    [0.024, y1 - y0 - 0.05, width - 0.044],
+    [frameX - 0.003, (y1 + y0) / 2, centerZ],
     glass,
   );
   pane.name = 'Window glass';
@@ -172,79 +155,100 @@ export function buildWindow(root: T.Group, p: Palette, loader: T.TextureLoader) 
     new T.Vector3(frameX - 0.017, y0 + 0.04, z1 - 0.025),
     new T.Vector2(width - 0.05, y1 - y0 - 0.08),
   );
-  const writing = canvasTexture(704, 223, (ctx) => {
-    ctx.translate(352, 110);
-    ctx.rotate(-0.062);
-    ctx.font = '500 124px Caveat, cursive';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#12263348';
-    ctx.fillText('Hello World', 1, 2, 580);
-    ctx.fillStyle = '#dce9e38a';
-    ctx.fillText('Hello World', 0, 0, 580);
-    ctx.lineWidth = 0.5;
-    ctx.strokeStyle = '#e3efeb45';
-    ctx.strokeText('Hello World', -0.6, -1, 580);
-  });
-  const condensation = mesh(
-    unit,
-    new T.PlaneGeometry(0.52, 0.166),
-    new T.MeshBasicMaterial({
-      map: writing,
-      transparent: true,
-      opacity: 0.86,
-      depthWrite: false,
-      toneMapped: false,
-    }),
-    [frameX + 0.006, y1 - 0.367, z1 - 0.329],
-  );
-  condensation.name = 'Handwritten message on the upper left pane';
-  condensation.rotation.y = Math.PI / 2;
-  condensation.castShadow = condensation.receiveShadow = false;
-  condensation.renderOrder = 4;
-  const blindMaterial = p.wood.clone();
-  blindMaterial.color.set('#bcad96');
+  const blindMaterial = p.steel.clone();
+  blindMaterial.color.set('#b5b5a6');
+  blindMaterial.metalness = 0.24;
+  blindMaterial.roughness = 0.49;
+  const blindX = x - 0.026;
   const railY = y1 - 0.083;
-  box(unit, [0.077, 0.038, width - 0.085], [x - 0.056, railY + 0.02, centerZ], p.woodDark, 0.002);
-  const slats = Array.from({ length: 33 }, (_, i) =>
-    box(
-      unit,
-      [0.055, 0.0048, width - 0.091],
-      [x - 0.058, railY - i * 0.0055, centerZ],
-      blindMaterial,
-      0.001,
-    ),
+  box(
+    unit,
+    [0.077, 0.038, width - 0.085],
+    [blindX + 0.002, railY + 0.02, centerZ],
+    p.woodDark,
+    0.002,
   );
+  const blade = new T.Shape();
+  blade.moveTo(-0.026, 0.0001);
+  blade.quadraticCurveTo(-0.001, 0.0059, 0.026, 0.0001);
+  blade.lineTo(0.026, -0.0007);
+  blade.quadraticCurveTo(-0.001, 0.0044, -0.026, -0.0007);
+  blade.closePath();
+  const bladeGeometry = new T.ExtrudeGeometry(blade, {
+    depth: width - 0.091,
+    curveSegments: 6,
+    bevelEnabled: false,
+  });
+  bladeGeometry.translate(0, 0, -(width - 0.091) / 2);
+  const slats = new T.InstancedMesh(bladeGeometry, blindMaterial, 33);
+  slats.name = blindName;
+  slats.castShadow = slats.receiveShadow = true;
+  slats.instanceMatrix.setUsage(T.DynamicDrawUsage);
+  unit.add(slats);
+  const slatMatrix = new T.Matrix4();
+  let lastPitch = -1,
+    lastAngle = -1;
+  function placeSlats(pitch: number, angle: number) {
+    if (pitch === lastPitch && angle === lastAngle) return;
+    slatMatrix.makeRotationZ(angle);
+    for (let i = 0; i < slats.count; i++) {
+      slatMatrix.setPosition(blindX, railY - (i + 1) * pitch, centerZ);
+      slats.setMatrixAt(i, slatMatrix);
+    }
+    slats.instanceMatrix.needsUpdate = true;
+    slats.computeBoundingSphere();
+    lastPitch = pitch;
+    lastAngle = angle;
+  }
   const bottom = box(
     unit,
     [0.056, 0.016, width - 0.086],
-    [x - 0.058, railY - 0.19, centerZ],
+    [blindX, railY - 0.19, centerZ],
     p.woodDark,
     0.002,
   );
   const ladder = [-0.62, 0.0, 0.62]
     .map((offset) =>
-      [-0.084, -0.032].map((dx) =>
-        tube(unit, [x + dx, 0, centerZ + offset], [x + dx, 1, centerZ + offset], 0.0014, p.paper),
+      [-0.026, 0.026].map((dx) =>
+        tube(
+          unit,
+          [blindX + dx, 0, centerZ + offset],
+          [blindX + dx, 1, centerZ + offset],
+          0.0014,
+          p.paper,
+        ),
       ),
     )
     .flat();
   for (const dz of [0.02, 0.029])
     tube(
       unit,
-      [x - 0.012, railY, z1 - 0.084 + dz],
-      [x - 0.012, railY - 0.65, z1 - 0.084 + dz],
+      [blindX + 0.046, railY, z1 - 0.084 + dz],
+      [blindX + 0.046, railY - 0.65, z1 - 0.084 + dz],
       0.0012,
       p.paper,
     );
   tube(
     unit,
-    [x - 0.012, railY - 0.65, z1 - 0.06],
-    [x - 0.012, railY - 0.67, z1 - 0.06],
+    [blindX + 0.046, railY - 0.65, z1 - 0.06],
+    [blindX + 0.046, railY - 0.67, z1 - 0.06],
     0.004,
     p.bronze,
   );
-  const { leaves } = pottedPlant(unit, p, [x + 0.081, y0 + 0.036, 0.086]);
+  const tintLeaves = sillBotanicals(
+    unit,
+    p,
+    loader.manager,
+    [x + 0.14, y0 + 0.037, 0.086],
+    [x + 0.07, y0 + 0.037, 0.94],
+  );
+  batchMeshes(unit, new Set([pane, bottom, ...ladder]));
+  const seasonalTint = {
+    春: new T.Color('#f1fff6'),
+    夏: new T.Color('#ffffff'),
+    秋: new T.Color('#fff0c8'),
+    冬: new T.Color('#e2e9e2'),
+  };
 
   const sky = new T.MeshBasicMaterial({
     color: '#102641',
@@ -255,11 +259,30 @@ export function buildWindow(root: T.Group, p: Palette, loader: T.TextureLoader) 
   const skyDome = mesh(root, new T.SphereGeometry(60, 32, 20), sky);
   skyDome.castShadow = false;
   skyDome.renderOrder = -10;
-  const exterior = buildExterior(root, loader, wetGlass);
-  const rain = precipitation(exterior.world, false),
-    snow = precipitation(exterior.world, true);
+  const exterior = buildExterior(root, loader, wetGlass, initial);
+  const rain = rainfall(exterior.world);
+  const updateSnow = snowfall(exterior.world);
   let openness = 0,
     angle = 0;
+  function setBlinds(lowered: boolean, tilt: Environment['angle'], blend = 1) {
+    const before = openness + angle;
+    openness = T.MathUtils.lerp(openness, Number(lowered), blend);
+    angle = T.MathUtils.lerp(angle, lowered ? [0, 0.58, 1.46][tilt] : 0, blend);
+    const pitch = T.MathUtils.lerp(0.0038, 0.0355, openness);
+    placeSlats(pitch, angle);
+    bottom.position.y = railY - (slats.count + 0.6) * pitch;
+    for (const cord of ladder) {
+      cord.scale.y = railY - bottom.position.y;
+      cord.position.y = (railY + bottom.position.y) / 2;
+    }
+    return {
+      pitch,
+      angle,
+      blocked: openness * (0.24 + (angle / 1.46) * 0.76),
+      moving: Math.abs(before - openness - angle) > 0.0005,
+    };
+  }
+  setBlinds(initial.blinds, initial.angle);
   let rainBlend = 0,
     snowBlend = 0;
   const nightSky = new T.Color('#132947'),
@@ -268,22 +291,12 @@ export function buildWindow(root: T.Group, p: Palette, loader: T.TextureLoader) 
   const skyTarget = new T.Color();
   return {
     pane,
+    unit,
+    setBlinds,
     remoteRest: [x + 0.079, y0 + 0.037, 0.39] satisfies XYZ,
-    update(env: Environment, delta: number, viewer: T.Vector3) {
+    update(env: Environment, delta: number) {
       const immediate = env.reducedMotion ? 1 : 1 - Math.exp(-delta * 7);
-      const before = openness + angle;
-      openness += ((env.blinds ? 1 : 0) - openness) * immediate;
-      angle += ((env.blinds ? [0, 0.58, 1.46][env.angle] : 0) - angle) * immediate;
-      const pitch = T.MathUtils.lerp(0.0056, 0.0355, openness);
-      slats.forEach((s, i) => {
-        s.position.y = railY - (i + 1) * pitch;
-        s.rotation.z = angle;
-      });
-      bottom.position.y = railY - (slats.length + 0.6) * pitch;
-      for (const cord of ladder) {
-        cord.scale.y = railY - bottom.position.y;
-        cord.position.y = (railY + bottom.position.y) / 2;
-      }
+      const blinds = setBlinds(env.blinds, env.angle, immediate);
       skyTarget.copy(env.night ? nightSky : env.weather === '晴' ? daySky : overcast);
       if (env.season === '冬') skyTarget.lerp(new T.Color('#a1aaba'), 0.1);
       sky.color.lerp(skyTarget, immediate);
@@ -291,36 +304,13 @@ export function buildWindow(root: T.Group, p: Palette, loader: T.TextureLoader) 
       rainBlend = T.MathUtils.lerp(rainBlend, Number(env.weather === '雨'), change);
       snowBlend = T.MathUtils.lerp(snowBlend, Number(env.weather === '雪'), change);
       wetGlass.update(rainBlend, env.reducedMotion ? 0 : delta);
-      exterior.update(env, delta, viewer);
+      exterior.update(env, delta);
       rain.object.visible = rainBlend > 0.012;
-      snow.object.visible = snowBlend > 0.012;
-      rain.object.material.opacity = rainBlend * 0.16;
-      snow.object.material.opacity = snowBlend * 0.79;
-      condensation.material.opacity = T.MathUtils.lerp(
-        condensation.material.opacity,
-        env.weather === '晴' ? 0.72 : 0.96,
-        change,
-      );
+      rain.object.material.opacity = rainBlend * (env.night ? 0.063 : 0.088);
       if (rain.object.visible) rain.update(env.reducedMotion ? 0 : delta);
-      if (snow.object.visible) snow.update(env.reducedMotion ? 0 : delta);
-      const seasonal = { 春: 0.245, 夏: 0.27, 秋: 0.17, 冬: 0.23 };
-      leaves.forEach((leaf, i) =>
-        leaf.color.setHSL(
-          seasonal[env.season] + i * 0.012,
-          env.season === '冬' ? 0.25 : 0.44,
-          0.18 + i * 0.035,
-        ),
-      );
-      return {
-        blocked: openness * (0.24 + (angle / 1.46) * 0.76),
-        moving: Math.abs(before - openness - angle) > 0.0005,
-      };
+      updateSnow(env, delta, snowBlend);
+      tintLeaves(seasonalTint[env.season]);
+      return blinds;
     },
   };
-}
-
-function beamHandle(parent: T.Group, x: number, y: number, z: number, p: Palette) {
-  box(parent, [0.018, 0.058, 0.03], [x + 0.048, y, z], p.steel, 0.003);
-  tube(parent, [x + 0.049, y, z], [x + 0.074, y, z], 0.007, p.steel);
-  tube(parent, [x + 0.074, y, z], [x + 0.074, y - 0.035, z], 0.007, p.steel, 0.004);
 }

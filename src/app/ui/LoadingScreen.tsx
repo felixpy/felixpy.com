@@ -1,27 +1,26 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Shader from '../../spectral/Shader';
 import phosphor from '../../spectral/shaders/phosphor-loader.glsl?raw';
 import '@fontsource/ibm-plex-mono/latin-500.css';
 
-const minimumDuration = 2000;
 const approachProgress = 0.9;
-const finishDuration = 450;
 
 export default function LoadingScreen({
   progress,
-  ready,
   reducedMotion,
-  onComplete,
 }: {
   progress: number;
-  ready: boolean;
   reducedMotion: boolean;
-  onComplete: () => void;
 }) {
   const track = useRef<HTMLDivElement>(null);
   const meter = useRef<HTMLProgressElement>(null);
   const percent = useRef<HTMLSpanElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
+  const [phosphorReady, setPhosphorReady] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setPhosphorReady(true), 2200);
+    return () => window.clearTimeout(timer);
+  }, []);
   const paintTitle = useCallback(
     (context: CanvasRenderingContext2D, viewport: HTMLCanvasElement) => {
       const heading = title.current;
@@ -43,37 +42,27 @@ export default function LoadingScreen({
     },
     [],
   );
-  const status = useRef({ progress, ready, onComplete });
-  status.current = { progress, ready, onComplete };
+  const status = useRef(progress);
+  status.current = progress;
   useEffect(() => {
     const start = performance.now();
     let displayed = 0,
       frame = 0;
-    let finish: { start: number; from: number } | undefined;
     function update(now: number) {
       const elapsed = Math.max(0, now - start);
-      const { progress, ready, onComplete } = status.current;
-      if (elapsed < minimumDuration) {
-        displayed = Math.max(
-          displayed,
-          approachProgress * (1 - (1 - elapsed / minimumDuration) ** 2.4),
-        );
-      } else if (ready) {
-        finish ??= { start: now, from: Math.max(approachProgress, displayed) };
-        const tail = Math.min(1, (now - finish.start) / finishDuration);
-        displayed = finish.from + (1 - finish.from) * (1 - (1 - tail) ** 2.2);
-      } else {
-        const waiting = 1 - Math.exp(-(elapsed - minimumDuration) / 4200);
-        displayed = Math.max(displayed, approachProgress + (0.025 + progress * 0.05) * waiting);
-      }
+      const waiting = Math.min(1, elapsed / 1900);
+      displayed = Math.max(
+        displayed,
+        approachProgress * (1 - (1 - waiting) ** 2.4),
+        status.current * 0.95,
+      );
       track.current?.style.setProperty('--progress', (displayed * 100).toFixed(2) + '%');
       if (meter.current) meter.current.value = displayed;
       if (percent.current) {
         const label = `${Math.floor(displayed * 100)}%`;
         if (percent.current.textContent !== label) percent.current.textContent = label;
       }
-      if (displayed >= 1) onComplete();
-      else frame = requestAnimationFrame(update);
+      frame = requestAnimationFrame(update);
     }
     frame = requestAnimationFrame(update);
     return () => cancelAnimationFrame(frame);
@@ -89,12 +78,14 @@ export default function LoadingScreen({
       <h1 id="loading-title" ref={title}>
         FELIX.PY
       </h1>
-      <Shader
-        fragment={phosphor}
-        animate={!reducedMotion}
-        maxDpr={0.8}
-        paintBackdrop={paintTitle}
-      />
+      {phosphorReady && (
+        <Shader
+          fragment={phosphor}
+          animate={!reducedMotion}
+          maxDpr={0.8}
+          paintBackdrop={paintTitle}
+        />
+      )}
       <p>Taste Is All You Need</p>
       <div className="phosphor-progress">
         <div className="phosphor-track" ref={track}>

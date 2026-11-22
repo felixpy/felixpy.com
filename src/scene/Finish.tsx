@@ -1,101 +1,177 @@
 import { useFrame, useThree } from '@react-three/fiber';
-import { useEffect, useRef } from 'react';
-import { HalfFloatType, WebGLRenderTarget, type WebGLRenderer } from 'three';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { useEffect, useMemo, useRef, type RefObject } from 'react';
+import { DepthTexture, HalfFloatType, WebGLRenderTarget } from 'three';
+import type { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import type { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import type { RoomLook } from '../app/environment';
+import { roomColorGrade } from './room-color-grade';
+import { roomWarmup } from './room-warmup';
+import { roomOcclusion } from './room-occlusion';
+import { roomFirstFrame } from './room-first-frame';
 
-const filmStock = {
-  uniforms: { tDiffuse: { value: null }, frame: { value: 0 } },
-  vertexShader: `
-    varying vec2 uvIn;
-    void main() {
-      uvIn = uv;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    }`,
-  fragmentShader: `
-    uniform sampler2D tDiffuse;
-    uniform float frame;
-    varying vec2 uvIn;
-    float noise(vec2 p) {
-      vec3 v = fract(vec3(p.xyx) * 0.1031);
-      v += dot(v, v.yzx + 33.33);
-      return fract((v.x + v.y) * v.z);
-    }
-    void main() {
-      vec4 base = texture2D(tDiffuse, uvIn);
-      float luma = dot(base.rgb, vec3(0.2126, 0.7152, 0.0722));
-      float response = smoothstep(0.018, 0.27, luma) * (1.0 - smoothstep(0.52, 0.93, luma));
-      vec2 p = gl_FragCoord.xy + vec2(frame * 23.0, frame * 13.0);
-      float stock = noise(p) * 0.62 + noise(floor(p * 0.52)) * 0.38 - 0.5;
-      gl_FragColor = vec4(clamp(base.rgb + stock * response * 0.037, 0.0, 1.0), base.a);
-    }`,
-};
+export type FirstPicture = 'loading' | 'interactive' | 'preparing' | 'drawn';
 
-export function Finish({ enabled, reducedMotion }: { enabled: boolean; reducedMotion: boolean }) {
+export function Finish({
+  enabled,
+  look,
+  roomVisible,
+  screen,
+  firstPicture,
+  detailRevision,
+  setLowScale,
+  onInteractive,
+  night,
+  firstFrame,
+}: {
+  enabled: boolean;
+  look: RoomLook;
+  roomVisible: boolean;
+  screen: RefObject<HTMLDivElement | null>;
+  firstPicture: RefObject<FirstPicture>;
+  detailRevision: RefObject<number>;
+  setLowScale: (scale: number) => void;
+  onInteractive: () => void;
+  night: boolean;
+  firstFrame: ReturnType<typeof roomFirstFrame>;
+}) {
   const { gl, scene, camera, size, viewport } = useThree();
+  const grade = useMemo(roomColorGrade, []);
+  useEffect(() => () => firstFrame.dispose(), [firstFrame]);
+  useEffect(() => () => grade.dispose(), [grade]);
   const pipeline = useRef<{
-    composer: EffectComposer;
-    grain: ShaderPass;
-    resize: () => void;
+    beauty: WebGLRenderTarget;
+    composite: WebGLRenderTarget;
+    occlusion: GTAOPass;
+    output: OutputPass;
   } | null>(null);
-  const dimensions = useRef({ size, dpr: viewport.dpr });
-  dimensions.current = { size, dpr: viewport.dpr };
+  const lastRoomFrame = useRef(0);
+  const shaders = useRef<'cold' | 'pending' | 'ready'>('cold');
+  const preparation = useRef<ReturnType<typeof roomWarmup> | null>(null);
+  const scannedRevision = useRef(-1);
+  const sample = useRef({ frames: 0, slowFrames: 0, elapsed: 0, headroom: 0 });
 
   useEffect(() => {
-    const renderer = gl as WebGLRenderer;
-    if (!enabled || !renderer.extensions.has('EXT_color_buffer_float')) return;
-    const target = new WebGLRenderTarget(1, 1, {
+    if (!enabled || !gl.extensions.has('EXT_color_buffer_float')) return;
+    const depth = new DepthTexture(1, 1);
+    const beauty = new WebGLRenderTarget(1, 1, {
       type: HalfFloatType,
-      samples: Math.min(4, renderer.capabilities.maxSamples),
+      samples: Math.min(4, gl.capabilities.maxSamples),
+      depthTexture: depth,
     });
-    const composer = new EffectComposer(renderer, target);
-    const color = new RenderPass(scene, camera);
-    const occlusion = new GTAOPass(scene, camera);
-    const output = new OutputPass();
-    const grain = new ShaderPass(filmStock);
-    occlusion.updateGtaoMaterial({ radius: 0.145, thickness: 0.08, scale: 1.1, samples: 12 });
-    occlusion.updatePdMaterial({ radius: 4, rings: 2, samples: 10 });
-    occlusion.blendIntensity = 0.66;
-    composer.addPass(color);
-    composer.addPass(occlusion);
-    composer.addPass(output);
-    composer.addPass(grain);
-    let width = 0,
-      height = 0,
-      ratio = 0;
-    const resize = () => {
-      const current = dimensions.current;
-      if (current.size.width === width && current.size.height === height && current.dpr === ratio)
-        return;
-      width = current.size.width;
-      height = current.size.height;
-      ratio = current.dpr;
-      composer.setPixelRatio(ratio);
-      composer.setSize(width, height);
-      occlusion.setSize(Math.ceil((width * ratio) / 2), Math.ceil((height * ratio) / 2));
-    };
-    resize();
-    pipeline.current = { composer, grain, resize };
+    const composite = new WebGLRenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false });
+    const occlusion = roomOcclusion(scene, camera, depth);
+    const output = grade.outputPass();
+    pipeline.current = { beauty, composite, occlusion, output };
     return () => {
       pipeline.current = null;
       occlusion.dispose();
+      occlusion.gtaoMaterial.dispose();
+      occlusion.blendMaterial.dispose();
       output.dispose();
-      grain.dispose();
-      composer.dispose();
+      beauty.dispose();
+      composite.dispose();
     };
-  }, [camera, enabled, gl, scene]);
+  }, [camera, enabled, gl, grade, scene]);
+
+  useEffect(() => {
+    const active = pipeline.current;
+    if (!active) return;
+    const width = Math.max(1, Math.floor(size.width * viewport.dpr));
+    const height = Math.max(1, Math.floor(size.height * viewport.dpr));
+    active.beauty.setSize(width, height);
+    active.composite.setSize(width, height);
+    active.occlusion.setSize(Math.ceil(width / 2), Math.ceil(height / 2));
+  }, [camera, enabled, gl, scene, size.width, size.height, viewport.dpr]);
 
   useFrame(({ clock }, delta) => {
-    if (pipeline.current) {
-      pipeline.current.resize();
-      pipeline.current.grain.uniforms.frame.value = reducedMotion
-        ? 0
-        : Math.floor(clock.elapsedTime * 18) % 997;
-      pipeline.current.composer.render(delta);
-    } else gl.render(scene, camera);
+    if (firstPicture.current === 'interactive' && !roomVisible) return;
+    if (firstPicture.current === 'loading' || firstPicture.current === 'interactive') {
+      firstFrame.draw(gl, scene, camera, night, look);
+      if (firstPicture.current === 'loading') onInteractive();
+      firstPicture.current = 'interactive';
+      return;
+    }
+    if (firstPicture.current === 'drawn' && !roomVisible) return;
+    const now = clock.elapsedTime;
+    const inComputer = screen.current?.dataset.interactive === 'true';
+    if (inComputer && now - lastRoomFrame.current < 0.16) return;
+    lastRoomFrame.current = now;
+    if (!enabled && firstPicture.current === 'drawn' && !inComputer && !document.hidden) {
+      const timing = sample.current;
+      timing.elapsed += delta;
+      if (delta > 1 / 42) timing.slowFrames++;
+      if (++timing.frames >= 3 && timing.elapsed >= 0.75) {
+        const average = timing.elapsed / timing.frames;
+        if (average > 1 / 42 && timing.slowFrames * 2 >= timing.frames) {
+          const next = Math.max(
+            0.5,
+            Math.floor(viewport.dpr * Math.sqrt(1 / 50 / average) * 8) / 8,
+          );
+          if (next < viewport.dpr) setLowScale(next);
+          timing.headroom = 0;
+        } else if (average < 1 / 55 && viewport.dpr < 1) {
+          timing.headroom += timing.elapsed;
+          if (timing.headroom >= 8) {
+            setLowScale(Math.min(1, viewport.dpr + 0.125));
+            timing.headroom = 0;
+          }
+        } else timing.headroom = 0;
+        timing.frames = timing.slowFrames = timing.elapsed = 0;
+      }
+    } else {
+      sample.current.frames =
+        sample.current.slowFrames =
+        sample.current.elapsed =
+        sample.current.headroom =
+          0;
+    }
+    const active = pipeline.current;
+    if (preparation.current && firstPicture.current === 'drawn') {
+      if (scannedRevision.current !== detailRevision.current) {
+        preparation.current.scan();
+        scannedRevision.current = detailRevision.current;
+      }
+      preparation.current.step(active?.beauty ?? null);
+    }
+    if (firstPicture.current === 'preparing') {
+      const mapsReady = preparation.current?.uploadFront() ?? true;
+      if (shaders.current === 'pending' || !mapsReady) {
+        firstFrame.draw(gl, scene, camera, night, look);
+        return;
+      }
+      if (shaders.current !== 'ready' && gl.extensions.has('KHR_parallel_shader_compile')) {
+        shaders.current = 'pending';
+        const pending = roomWarmup(gl, scene, camera);
+        preparation.current = pending;
+        scannedRevision.current = detailRevision.current;
+        void pending.front(active?.beauty ?? null).then(
+          () => {
+            shaders.current = 'ready';
+          },
+          () => {
+            shaders.current = 'ready';
+          },
+        );
+        return;
+      }
+      shaders.current = 'ready';
+    }
+    grade.select(look);
+    if (!active) {
+      gl.render(scene, camera);
+      grade.gradeScreen(gl);
+    } else {
+      const { beauty, composite, occlusion, output } = active;
+      gl.setRenderTarget(beauty);
+      gl.render(scene, camera);
+      occlusion.render(gl, composite, beauty, delta, false);
+      output.render(gl, beauty, composite, delta, false);
+    }
+    if (firstPicture.current === 'preparing') {
+      firstPicture.current = 'drawn';
+      firstFrame.dispose();
+      performance.mark('studio-room-shaded');
+    }
   }, 1);
   return null;
 }

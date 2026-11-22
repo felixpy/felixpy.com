@@ -8,9 +8,10 @@ import {
   type CSSProperties,
   type PointerEvent,
 } from 'react';
-import type { Environment } from '../app/environment';
+import { roomLooks, type Environment, type RoomLook } from '../app/environment';
 import { local } from '../app/locale';
 import type { AppID } from '../scene/studio';
+import { roomLookFilter } from '../scene/room-looks';
 import { MusicPlayer } from './apps/music/MusicPlayer';
 import type { StudioMusic } from './apps/music/useStudioMusic';
 import Profile from './apps/Profile';
@@ -20,6 +21,12 @@ import { Select } from './ui/Select';
 import { Tooltip } from './ui/Tooltip';
 
 const Game = lazy(() => import('./apps/arcade/Game'));
+const roomLookLabels = {
+  cinematic: ['Cinematic', '电影感'],
+  neutral: ['Neutral', '原色'],
+  'warm-film': ['Warm film', '暖调胶片'],
+  'cool-night': ['Cool night', '冷调夜色'],
+} satisfies Record<RoomLook, [string, string]>;
 const apps = {
   about: { en: 'About', zh: '关于', icon: CircleUserRound },
   music: { en: 'Music', zh: '音乐', icon: Music2 },
@@ -77,24 +84,25 @@ function Settings({
             </button>
           </div>
         </div>
-        <label>
-          <span>{t('Desk lamp', '台灯')}</span>
-          <input
-            type="checkbox"
-            className="os-switch"
-            checked={env.lamp}
-            onChange={(event) => setEnvironment({ lamp: event.target.checked })}
+        <div className="setting-row room-look-setting">
+          <span id="studio-look-label">{t('Room color style', '房间色彩风格')}</span>
+          <Select<RoomLook>
+            labelId="studio-look-label"
+            value={env.roomLook}
+            options={roomLooks.map((value) => ({ value, label: t(...roomLookLabels[value]) }))}
+            onChange={(roomLook) => setEnvironment({ roomLook })}
           />
-        </label>
-        <label>
-          <span>{t('Workbench lamp', '工作台灯')}</span>
-          <input
-            type="checkbox"
-            className="os-switch"
-            checked={env.benchLamp}
-            onChange={(event) => setEnvironment({ benchLamp: event.target.checked })}
-          />
-        </label>
+        </div>
+        <img
+          className="room-look-preview"
+          src={
+            env.night
+              ? '/media/graphics/room-look-night.webp'
+              : '/media/graphics/room-look-day.webp'
+          }
+          alt={t('Studio color preview', '工作室色彩预览')}
+          style={{ filter: roomLookFilter(env.roomLook) }}
+        />
         <label>
           <span>{t('Ceiling light at night', '夜间顶灯亮度')}</span>
           <input
@@ -137,14 +145,21 @@ function Settings({
       <div className="setting-group">
         <div className="setting-row">
           <span id="studio-quality-label">{t('Render quality', '实时画质')}</span>
-          <Select<Environment['quality']>
+          <Select<Environment['quality'] | 'auto'>
             labelId="studio-quality-label"
-            value={env.quality}
+            value={env.automaticQuality ? 'auto' : env.quality}
             options={[
+              { value: 'auto', label: t('Automatic', '自动') },
               { value: 'high', label: t('High', '高') },
               { value: 'low', label: t('Low power', '节能') },
             ]}
-            onChange={(quality) => setEnvironment({ quality })}
+            onChange={(quality) =>
+              setEnvironment(
+                quality === 'auto'
+                  ? { automaticQuality: true }
+                  : { quality, automaticQuality: false },
+              )
+            }
           />
         </div>
         <label>
@@ -275,16 +290,16 @@ export default function Desktop({
   }
 
   useEffect(() => {
-    if (sequence.current === request.sequence) return;
-    sequence.current = request.sequence;
-    if (session === 'locked') pendingApp.current = request.id;
-    else if (request.id) open(request.id);
-  }, [request, session]);
-
-  useEffect(() => {
-    if (!visible || session === 'locked') return;
-    setAppWindow((current) => (current && !current.closing ? current : newWindow('about')));
-  }, [visible, session]);
+    if (sequence.current !== request.sequence) {
+      sequence.current = request.sequence;
+      pendingApp.current = request.id;
+    }
+    if (!visible || session !== 'unlocked') return;
+    const requested = pendingApp.current;
+    pendingApp.current = undefined;
+    if (requested) open(requested);
+    else setAppWindow((current) => (current && !current.closing ? current : newWindow('about')));
+  }, [request, session, visible]);
 
   useEffect(() => {
     if (!visible) return;
@@ -307,9 +322,6 @@ export default function Desktop({
   function unlock(keyboard: boolean) {
     hasUnlocked.current = true;
     restoreKeyboardFocus.current = keyboard;
-    const requested = pendingApp.current;
-    pendingApp.current = undefined;
-    if (requested) open(requested);
     setSession(reducedMotion ? 'unlocked' : 'unlocking');
   }
 
@@ -480,8 +492,9 @@ export default function Desktop({
                 (appWindow.closing ? ' is-closing' : '')
               }
               aria-label={locale === 'en' ? title + ' window' : title + '窗口'}
+              aria-hidden={appWindow.minimized || appWindow.closing || undefined}
               hidden={appWindow.minimized}
-              inert={appWindow.closing}
+              inert={appWindow.minimized || appWindow.closing}
               style={
                 {
                   '--window-x': appWindow.x + '%',

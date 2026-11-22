@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="768" viewBox="0 0 512 768">
+  <defs>
+    <linearGradient id="gold" x1="0" y1=".3" x2="1" y2=".7" gradientUnits="objectBoundingBox">
+      <stop stop-color="#edc94c"/><stop offset=".42" stop-color="#f0d55d"/><stop offset=".58" stop-color="#dcb844"/><stop offset=".80" stop-color="#efd354"/><stop offset="1" stop-color="#d4ab34"/>
+    </linearGradient>
+    <linearGradient id="foil" x2="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#111113"/><stop offset=".35" stop-color="#252628"/><stop offset=".77" stop-color="#111113"/><stop offset="1" stop-color="#090a0b"/>
+    </linearGradient>
+    <pattern id="brush" width="163" height="7" patternUnits="userSpaceOnUse">
+      <path d="M0 .5h98m9 0h56M8 5h119" stroke="#d4d4d4" opacity=".035"/>
+    </pattern>
+  </defs>
+  <rect width="512" height="640" fill="#09090a"/>
+  <rect y="301" width="512" height="339" fill="url(#foil)"/>
+  <rect y="301" width="512" height="339" fill="url(#brush)"/>
+  <g transform="translate(27 52) scale(1.15 1.15)" stroke="#f5f5f5" stroke-width="6" stroke-linejoin="round" stroke-linecap="square" fill="none">
+    <path d="M2 42V4h31q8 0 8 8v3q0 7-8 7H3m50 20V10h29q7 0 7 6v3q0 6-7 6H54m21 0 14 17"/>
+    <g fill="#f5f5f5" stroke="none" transform="translate(95 10)">
+      <path d="M2 0h21l8 14H15zm24 0h13q5 0 5 5v14L35 30l-9-15 7-12zm18 22v5q0 8-7 8H22l-7-12h16zm-25 13H6q-6 0-6-7v-9l9-9 9 15-7 8zM0 14V6q0-4 3-5l10 13-7 10z"/>
+    </g>
+    <path d="M196 7q-3-4-10-4h-27q-9 0-9 9v20q0 10 10 10h29q8 0 8-8v-9h-18m30 17V10h28q8 0 8 7v3q0 5-8 5h-26m19 0 14 17m9 0 19-33 20 33m8 0V10h25q12 0 12 12v8q0 12-12 12zm50-32h33m-32 0v32h33m-31-17h27"/>
+  </g>
+  <rect y="155" width="512" height="146" fill="url(#gold)"/>
+  <g fill="#090909" font-family="Arial,Helvetica,sans-serif">
+    <text x="19" y="274" font-size="132" font-weight="700" letter-spacing="-8">256</text>
+    <text x="239" y="274" font-size="54" letter-spacing="-3">GB</text>
+    <text x="483" y="222" text-anchor="end" font-weight="700" font-size="66" letter-spacing="-3">1700</text>
+    <text x="483" y="277" text-anchor="end" font-size="53" letter-spacing="-2">MB/s</text>
+  </g>
+  <g transform="translate(32 414)" fill="#f6f6f4">
+    <path d="M85 0Q73 0 61 13L9 70q-17 20 0 39l52 60q12 14 24 15v-15q-8-1-15-9l-48-55q-11-12 0-25l51-56q6-7 12-8zm9 0v16q7 1 15 10l20 22h21l-29-32Q107 2 94 0zm0 169v15q12-1 24-14l14-15h-20q-9 12-18 14z"/>
+    <text x="37" y="104" font-family="Arial,Helvetica,sans-serif" font-weight="700" font-style="italic" font-size="64" letter-spacing="-4">CF</text>
+    <text x="52" y="134" font-family="Arial,Helvetica,sans-serif" font-style="italic" font-weight="700" font-size="34">express</text>
+    <text x="151" y="184" font-family="Arial,Helvetica,sans-serif" font-weight="700" font-size="39">B</text>
+  </g>
+  <path d="M401 505h40q42 0 39 35-2 20-22 27l27 37h-36l-18-27q-9-15-1-34h10l-14-20-18 18h11q-10 32 6 63h-24z" fill="#f5f5f4"/>
+  <path d="M0 640h512v128H0z" fill="#282729"/>
+  <text x="256" y="718" text-anchor="middle" fill="#a4a19d" font-family="Consolas,monospace" letter-spacing="2" font-size="35">33A21B0000000</text>
+</svg>

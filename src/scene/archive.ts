@@ -1,165 +1,209 @@
 import * as T from 'three';
 import type { Locale } from '../app/locale';
-import {
-  box,
-  cable,
-  canvasTexture,
-  group,
-  mesh,
-  paperGeometry,
-  random,
-  surface,
-  tube,
-} from './geometry';
+import { travelPrints } from '../content/travel';
+import { box, cable, canvasTexture, group, mesh, random, surface, tube } from './geometry';
 import type { Palette } from './materials';
-import { projectNotebook } from './notebook';
+import { landmarkPrint, paperSection, photoEmulsion } from './photography';
+import { pictureFrame } from './picture-frame';
 
-function accessCard(parent: T.Object3D, p: Palette) {
-  const card = group(parent, 'Studio access card', [-0.238, -0.205, 0.027]);
-  card.rotation.z = -0.14;
-  const shell = p.rubber.clone();
-  shell.color.set('#485a52');
-  shell.roughness = 0.53;
-  box(card, [0.086, 0.054, 0.0012], [0, 0, 0], shell, 0.0005);
-  const face = canvasTexture(512, 321, (ctx) => {
-    const rng = random(465);
-    ctx.fillStyle = '#495f58';
-    ctx.fillRect(0, 0, 512, 321);
-    ctx.fillStyle = '#a7afa5';
-    ctx.fillRect(0, 219, 512, 102);
-    ctx.fillStyle = '#e3e8d9';
-    ctx.font = '600 43px "IBM Plex Sans", sans-serif';
-    ctx.fillText('STUDIO', 35, 92);
-    ctx.font = '500 27px "IBM Plex Sans", sans-serif';
-    ctx.fillText('ACCESS', 35, 132);
-    ctx.strokeStyle = '#d4ddc6';
-    ctx.lineWidth = 4;
-    for (const radius of [11, 22, 34]) {
-      ctx.beginPath();
-      ctx.arc(400, 112, radius, -0.7, 0.7);
-      ctx.stroke();
+const instantPhotos = [
+  ['tideline', 'Low tide', '退潮', -0.393, 0.009, -0.095],
+  ['blue-hour', 'Blue hour', '蓝调时分', -0.237, 0.148, 0.079],
+  ['gelato', 'Two cones', '冰淇淋', -0.157, 0.068, -0.12],
+  ['pastry', 'Sunday coffee', '周日咖啡', 0.282, 0.147, 0.035],
+  ['shutters', 'Green shutters', '绿百叶窗', 0.383, 0.104, -0.061],
+  ['ridge', 'Cloud cover', '云起', -0.221, -0.024, 0.15],
+  ['noodles', 'Breakfast', '早餐', -0.355, -0.153, -0.107],
+  ['ferry', 'From the ferry', '渡轮上', -0.239, -0.16, 0.084],
+  ['camp', 'First light', '第一缕光', 0.07, -0.144, -0.111],
+  ['estuary', 'Estuary', '河口', 0.398, -0.151, 0.1],
+  ['river-steps', 'Above the river', '河上城景', 0.046, 0.141, 0.039],
+  ['tart', 'Market day', '市集点心', -0.14, -0.108, 0.124],
+  ['arcade', 'Courtyard', '庭院', 0.132, 0.015, -0.127],
+  ['tea', 'A quiet table', '午后茶桌', 0.205, -0.087, 0.051],
+  ['tram', 'Last tram', '夜班电车', -0.006, 0.08, 0.113],
+  ['waterfront', 'On the bank', '河畔', -0.049, 0.188, -0.062],
+  ['flat-white', 'Flat white', '馥芮白', 0.062, -0.023, -0.036],
+] as const;
+
+const enlargements = [
+  [0, -0.319, 0.088, 0.075],
+  [1, -0.104, 0.127, -0.052],
+  [3, 0.182, 0.098, 0.057],
+  [4, -0.049, -0.079, -0.11],
+  [5, 0.311, -0.067, 0.045],
+  [6, -0.301, -0.081, -0.068],
+] as const;
+
+const overlaidFilm = new Set([
+  'tideline',
+  'gelato',
+  'ridge',
+  'noodles',
+  'ferry',
+  'arcade',
+  'waterfront',
+]);
+const corkFace = 0.0007;
+const printThickness = 0.00025908;
+const filmThickness = 0.00058;
+const printCurl = 0.0011;
+
+function instantPhoto(parent: T.Group, p: Palette, image: T.Texture, note: string, index: number) {
+  const photo = group(parent, note);
+  const face = canvasTexture(432, 688, (ctx) => {
+    const rng = random(149 + index);
+    ctx.fillStyle = ['#f7f2e8', '#f2eee5', '#f5f1e9'][index % 3];
+    ctx.fillRect(0, 0, 432, 688);
+    for (let i = 0; i < 6500; i++) {
+      ctx.fillStyle = i % 2 ? '#bea98611' : '#ffffff28';
+      ctx.fillRect(rng() * 432, rng() * 688, 0.8, 1.1);
     }
-    ctx.strokeStyle = '#e3ead83b';
-    for (let i = 0; i < 24; i++) {
-      const x = 24 + rng() * 470,
-        y = 20 + rng() * 280;
-      ctx.lineWidth = 0.7 + rng();
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(x + 5 + rng() * 27, y - 2);
-      ctx.stroke();
+    if (index !== 3 && index !== 7) {
+      ctx.translate(215, 621);
+      ctx.rotate((rng() - 0.5) * 0.055);
+      ctx.font = '500 38px Caveat, cursive';
+      ctx.fillStyle = '#494641';
+      ctx.textAlign = 'center';
+      ctx.fillText(note, 0, 0, 348);
     }
   });
-  mesh(
-    card,
-    new T.PlaneGeometry(0.0845, 0.0525),
-    new T.MeshStandardMaterial({ map: face, normalMap: shell.normalMap, roughness: 0.58 }),
-    [0, 0, 0.0007],
-  ).castShadow = false;
-  box(card, [0.072, 0.01, 0.0002], [0, 0.008, -0.0007], p.black, 0.0001);
-  return card;
+  const backing = surface('#d5d1c5', 0.7);
+  paperSection(photo, 'instant-film', 'edge', backing);
+  paperSection(photo, 'instant-film', 'back', backing);
+  paperSection(
+    photo,
+    'instant-film',
+    'face',
+    new T.MeshStandardMaterial({
+      map: face,
+      roughness: 0.81,
+      normalMap: p.paper.normalMap,
+      normalScale: new T.Vector2(0.035, 0.035),
+    }),
+  );
+  paperSection(photo, 'instant-film', 'image', photoEmulsion(image));
+  paperSection(photo, 'instant-film', 'pod', surface('#4a443f', 0.66));
+  paperSection(photo, 'instant-film', 'stripe', p.graphite);
+  return photo;
 }
-export function personalArchive(root: T.Group, p: Palette) {
-  const board = group(root, 'Personal archive · pinboard', [-0.2, 1.654, -0.509]);
-  box(board, [1.28, 0.64, 0.028], [0, 0, 0], p.woodDark, 0.003);
-  box(board, [1.238, 0.597, 0.013], [0, 0, 0.014], p.linen, 0.002);
-  const cloth = new T.PlaneGeometry(1.235, 0.595, 20, 12);
-  const vertices = cloth.attributes.position;
-  for (let i = 0; i < vertices.count; i++) {
-    const u = vertices.getX(i) / 1.235 + 0.5;
-    const v = vertices.getY(i) / 0.595 + 0.5;
-    vertices.setZ(
-      i,
-      0.0015 * Math.sin(u * Math.PI) * Math.sin(v * Math.PI) * (1 + Math.sin(u * 12 + v * 8)),
+
+function fasten(wall: T.Group, p: Palette, card: T.Object3D, height: number, index: number) {
+  const mount = group(wall, 'Print fastener', card.position.toArray());
+  mount.rotation.z = card.rotation.z;
+  if (index % 11 === 4) {
+    const clip = group(mount, 'Foldback clip', [0.005, height / 2, 0.0014]);
+    box(clip, [0.012, 0.0068, 0.004], [0, -0.0015, 0.0013], p.graphite, 0.0006);
+    for (const z of [0.0038, -0.0009]) {
+      cable(
+        clip,
+        [
+          [-0.0047, -0.003, z],
+          [-0.004, 0.0005, z],
+          [-0.002, 0.004, z],
+          [-0.002, 0.008, z],
+          [0.002, 0.008, z],
+          [0.002, 0.004, z],
+          [0.004, 0.0005, z],
+          [0.0047, -0.003, z],
+        ],
+        0.00038,
+        p.steel,
+      );
+    }
+    tube(clip, [0, 0.008, -0.008], [0, 0.008, 0.002], 0.0008, p.bronze);
+  } else if (index % 7 === 1) {
+    const tape = new T.MeshStandardMaterial({
+      color: '#cdc197',
+      roughness: 0.87,
+      transparent: true,
+      opacity: 0.72,
+      depthWrite: false,
+    });
+    const strip = new T.PlaneGeometry(0.024, 0.0088, 4, 12);
+    strip.rotateZ(index % 2 ? 0.23 : -0.14);
+    const points = strip.attributes.position;
+    const paperTop = (height > 0.1 ? printThickness : filmThickness) / 2;
+    for (let i = 0; i < points.count; i++) {
+      const fold = T.MathUtils.smoothstep(points.getY(i), 0, 0.0017);
+      points.setZ(i, T.MathUtils.lerp(paperTop, corkFace - card.position.z, fold) + 0.00008);
+    }
+    strip.computeVertexNormals();
+    mesh(mount, strip, tape, [-0.004, height / 2, 0]).castShadow = false;
+  } else {
+    const y = height / 2 - 0.004;
+    tube(mount, [0, y, -0.004], [0, y, 0.0014], 0.00053, p.steel);
+    const dome = mesh(
+      mount,
+      new T.SphereGeometry(0.0024, 14, 9),
+      index % 4 === 0 ? p.bronze : index % 4 === 1 ? p.steel : p.graphite,
+      [0, y, 0.00135],
     );
+    dome.scale.z = 0.49;
   }
-  cloth.computeVertexNormals();
-  mesh(board, cloth, p.linen, [0, 0, 0.0206]).castShadow = false;
-  const card = accessCard(board, p);
-  box(board, [0.026, 0.01, 0.008], [-0.233, -0.18, 0.031], p.bronze, 0.0015);
-  const note = group(board, 'Handwritten pinboard tags', [0, 0, 0.023]);
-  const labels = {
-    en: [
-      ['World', 0.08, 0.266],
-      ['China', 0.07, -0.004],
-      ['Hometown', -0.425, 0.246],
-    ],
-    zh: [
-      ['世界', 0.08, 0.266],
-      ['中国', 0.07, -0.004],
-      ['故乡', -0.425, 0.246],
-    ],
-  } as const;
-  const paperTags = labels.en.map((_, index) => {
-    const [text, x, y] = labels.en[index];
-    const tag = group(note, 'Handwritten ' + text, [x, y, 0.003]);
-    tag.rotation.z = [-0.08, 0.06, -0.05][index];
-    mesh(tag, paperGeometry(0.115, 0.037), p.paper);
-    const ink = (locale: Locale) =>
-      canvasTexture(448, 142, (ctx) => {
-        ctx.fillStyle = '#373632';
-        ctx.textAlign = 'center';
-        ctx.font =
-          locale === 'en'
-            ? '500 88px Caveat, cursive'
-            : '74px "Studio Script", "Studio Han", serif';
-        ctx.fillText(labels[locale][index][0], 224, 95);
-      });
-    const print = mesh(
-      tag,
-      paperGeometry(0.115, 0.037),
-      new T.MeshStandardMaterial({
-        map: null,
-        transparent: true,
-        depthWrite: false,
-        roughness: 0.95,
-      }),
-      [0, 0, 0.0006],
-    );
-    print.castShadow = false;
-    tube(tag, [-0.045, 0.011, 0.0006], [-0.045, 0.011, 0.0037], 0.0022, p.bronze);
+}
+
+export function personalArchive(
+  root: T.Group,
+  p: Palette,
+  places: T.Texture[],
+  load: (url: string) => T.Texture,
+) {
+  const board = group(root, 'Travel photographs and instant film', [-0.183, 1.864, -0.537]);
+  box(board, [0.91, 0.523, 0.018], [0, 0, -0.011], p.woodDark, 0.002);
+  const color = load('/media/materials/cork-board.webp');
+  const normal = load('/media/materials/cork-grain.webp');
+  normal.colorSpace = T.NoColorSpace;
+  for (const texture of [color, normal]) {
+    texture.wrapS = texture.wrapT = T.RepeatWrapping;
+    texture.repeat.set(4.08, 2.35);
+  }
+  const cork = new T.MeshStandardMaterial({
+    map: color,
+    normalMap: normal,
+    roughness: 0.95,
+    color: '#e1dfca',
+    normalScale: new T.Vector2(0.39, 0.39),
+  });
+  mesh(board, new T.PlaneGeometry(0.895, 0.508), cork, [0, 0, corkFace]);
+  pictureFrame(board, 0.917, 0.53, 0.0105, 0.024, 0.0058, p.woodDark);
+  const original = enlargements.map(([id, x, y, turn], i) => {
+    const photo = landmarkPrint(board, p, places[id], id, [
+      x,
+      y,
+      corkFace + printThickness / 2 + 0.000025,
+    ]);
+    photo.card.rotation.z = turn;
+    fasten(board, p, photo.card, 0.1524, i);
     return {
-      material: print.material as T.MeshStandardMaterial,
-      textures: { en: ink('en'), zh: ink('zh') },
+      id: 'print-' + id,
+      object: photo.card,
+      size: 0.1524,
+      en: travelPrints[id].en,
+      zh: travelPrints[id].zh,
+      setLocale: photo.setLocale,
     };
   });
-  const line = surface('#8d644b', 0.89);
-  cable(
-    note,
-    [
-      [0.144, 0.262, 0.001],
-      [0.204, 0.262, 0.001],
-      [0.24, 0.25, 0.002],
-    ],
-    0.00065,
-    line,
-  );
-  cable(
-    note,
-    [
-      [0.134, -0.004, 0.001],
-      [0.195, -0.003, 0.002],
-      [0.229, -0.016, 0.001],
-    ],
-    0.00065,
-    line,
-  );
-  const clip = group(board, 'Brass bulldog clip and paper scrap', [0.51, -0.205, 0.027]);
-  clip.rotation.z = 0.13;
-  mesh(clip, paperGeometry(0.081, 0.057), p.paper);
-  box(clip, [0.022, 0.009, 0.008], [0, 0.024, 0.006], p.bronze, 0.0014);
-  for (const y of [0.022, 0.028])
-    tube(clip, [-0.011, y, 0.006], [0.011, y, 0.006], 0.0016, p.steel);
-  function setLocale(locale: Locale) {
-    for (const { material, textures } of paperTags) {
-      material.map = textures[locale];
-      material.needsUpdate = true;
-    }
-  }
-  setLocale('en');
-  const objects = [
-    { id: 'accessCard', object: card, size: 0.093 },
-    { id: 'openSource', object: projectNotebook(root, p), size: 0.14 },
-  ] as const;
-  return { board, objects, setLocale };
+  const instant = instantPhotos.map(([key, en, zh, x, y, turn], i) => {
+    const photo = instantPhoto(
+      board,
+      p,
+      load('/media/photography/field-notes/' + key + '.webp'),
+      en,
+      i,
+    );
+    const backing = overlaidFilm.has(key) ? printThickness + printCurl + 0.000025 : 0;
+    photo.position.set(x, y, corkFace + backing + filmThickness / 2 + 0.000025);
+    photo.rotation.z = turn;
+    fasten(board, p, photo, 0.086, i + original.length);
+    return { id: 'instant-' + key, object: photo, size: 0.086, en, zh };
+  });
+  const prints = [...original, ...instant];
+  return {
+    board,
+    prints,
+    setLocale(locale: Locale) {
+      original.forEach((photo) => photo.setLocale(locale));
+    },
+  };
 }

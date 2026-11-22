@@ -45,7 +45,7 @@
     "test:ci": "playwright test --grep-invert @webgl",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
-    "format:staged": "lint-staged",
+    "format:staged": "lint-staged --max-arg-length 4000",
     "hooks:install": "npm run prepare",
     "check:commit": "node scripts/git/check-commit.mjs"
   },
