@@ -1,5 +1,7 @@
-export function partLibraryPath(collection: 'studio' | 'workshop', version: 1 | 2 = 2) {
-  return '/media/models/' + collection + (version === 1 ? '-parts.bpk' : '-parts-v2.bpk');
+export type PartLibrary = 'studio' | 'workshop';
+
+export function partLibraryPath(collection: PartLibrary) {
+  return '/media/models/' + (collection === 'studio' ? 'room-parts.bpk' : 'workshop-tools.bpk');
 }
 
 export function meshStreams(bytes: Uint8Array) {

@@ -1,7 +1,7 @@
 import * as T from 'three';
 import { initialEnvironment, type Environment } from '../app/environment';
 import { ceilingLightLevel } from '../app/home-lights';
-import { biography, publicProfiles } from '../content/profile';
+import { publicProfiles } from '../content/profile';
 import { editions as publishedEditions } from '../content/books';
 import { remoteKeys } from '../app/environment';
 import type { Locale } from '../app/locale';
@@ -23,7 +23,7 @@ import { deferredDisplayModel, loadDisplayModel } from './display-model';
 import { filamentPrinter } from './filament-printer';
 import { cabinetFloorLight, ceilingFixture, deskFixture } from './authored-fixtures';
 import { airborneDust } from './airborne-dust';
-import { windowOpening } from './layout';
+import { desk, windowOpening } from './layout';
 import { outdoorRail } from './outdoor-rail';
 import { group, luminous, mesh } from './geometry';
 import { deskSetup, display, keyboard, monitor, mouse, speaker, tower } from './hardware';
@@ -34,7 +34,6 @@ import { notebookSignature, projectNotebook } from './notebook';
 import { deskPhotoFrame, photoPrinter, photoTile } from './photography';
 import { deskObjects, remote } from './props';
 import { rocketModel } from './rocket';
-import { aerospaceTitle, schoolNotebook } from './school';
 import { wallAtlas } from './travel-map';
 import { buildWindow } from './window';
 
@@ -44,59 +43,15 @@ import { wirelessMicrophone } from './wireless-microphone';
 import { skogDiffuser } from './still-life';
 import { flightProof, cardStorage } from './flight-proof';
 
-export type AppID = 'about' | 'music' | 'game' | 'settings';
-export type InspectionLink = {
-  url: string;
-  region?: { left: number; right: number; top: number; bottom: number; z: number };
-};
-export type HardwareOrbit = {
-  closeFov?: number;
-  rearClearance?: number;
-  center: [number, number, number];
-  azimuth: [number, number, number];
-  elevation: [number, number, number];
-  distance: [number, number, number];
-};
+import { opensStudioView, type Mode, type Target } from './interaction';
 
-export type Target = {
-  id: string;
-  label: string;
-  english: string;
-  object: T.Object3D;
-  prepare?: () => Promise<void> | undefined;
-} & (
-  | {
-      type: 'inspect';
-      size: number;
-      onInspect?: (held: boolean, reducedMotion: boolean) => void;
-      pose?: [number, number, number];
-      viewDistance?: number;
-      caption?: { en: string; zh: string };
-      link?: InspectionLink;
-    }
-  | {
-      type:
-        | 'remote'
-        | 'window'
-        | 'lamp'
-        | 'screen-bar'
-        | 'bench-lamp'
-        | 'tool-board-lamp'
-        | 'equipment-track'
-        | 'picture-lamp'
-        | 'floor-lamp'
-        | 'workbench'
-        | 'gear'
-        | 'bookshelf'
-        | 'map'
-        | 'map-pin'
-        | 'board'
-        | 'door';
-    }
-  | { type: 'case'; orbit?: HardwareOrbit }
-  | { type: 'computer'; app?: AppID }
-  | { type: 'drawer' | 'key' | 'cabinet'; index: number }
-);
+export {
+  opensStudioView,
+  type AppID,
+  type HardwareOrbit,
+  type InspectionLink,
+  type Target,
+} from './interaction';
 
 const windowButtons = [
   'Raise or lower blinds',
@@ -106,19 +61,6 @@ const windowButtons = [
   'Shuffle the window scene',
   'Switch day or night',
 ];
-
-const viewTypes = new Set<Target['type']>([
-  'window',
-  'map',
-  'board',
-  'gear',
-  'bookshelf',
-  'case',
-  'computer',
-  'workbench',
-  'drawer',
-]);
-export const opensStudioView = (target: Target) => viewTypes.has(target.type);
 
 export function buildStudio(manager: T.LoadingManager, initial = initialEnvironment) {
   const root = new T.Group();
@@ -270,7 +212,6 @@ export function buildStudio(manager: T.LoadingManager, initial = initialEnvironm
   const { unit: pointer, badge: mouseBadge } = mouse(interior, manager, mouseLight);
   const task = deskFixture(interior, p, [-0.981, 0.75, 0.01], loader);
   const control = remote(interior, manager, window.remoteRest);
-  const journal = schoolNotebook(interior, manager);
   const { model: rocket, prepare: prepareRocket } = rocketModel(bench.unit, p, detailMounted);
   deferRoomDetail(() => {
     void prepareRocket(rearLoader);
@@ -281,8 +222,8 @@ export function buildStudio(manager: T.LoadingManager, initial = initialEnvironm
     photo('/media/photography/desk-portrait.webp'),
   );
   const updateSteam = deskObjects(interior, manager);
-  const pencil = group(interior, 'Mitsubishi 9850 HB', [-0.867, 0.75, 0.262]);
-  pencil.rotation.y = Math.PI / 2 + 0.097;
+  const pencil = group(interior, 'Mitsubishi 9850 HB', [0.344, desk.top, 0.313]);
+  pencil.rotation.y = Math.PI / 2 - 0.18;
   loadDisplayModel(pencil, '/media/models/mitsubishi-9850.glb', manager);
   const deskCamera = nikonZ8(interior, p, bridgePrint, manager);
   const samplePrint = photoPrinter(
@@ -631,19 +572,6 @@ export function buildStudio(manager: T.LoadingManager, initial = initialEnvironm
       english: place.en,
     })),
     {
-      id: 'school-notebook',
-      type: 'inspect',
-      object: journal,
-      label: aerospaceTitle.zh,
-      english: aerospaceTitle.en,
-      size: 0.153,
-      pose: [0.06, -0.09, 0],
-      caption: {
-        en: 'Beihang University · ' + biography.school.years,
-        zh: biography.school.name + ' · ' + biography.school.years,
-      },
-    },
-    {
       id: 'keyboard',
       type: 'inspect',
       object: keys,
@@ -986,7 +914,7 @@ export function buildStudio(manager: T.LoadingManager, initial = initialEnvironm
       mouse: mouseLight.emissiveIntensity,
       speaker: speakerMeter.reduce((sum, light) => sum + light.emissiveIntensity, 0),
     }),
-    canReach(target: Target, mode: string, hardwareId: string) {
+    canReach(target: Target, mode: Mode, hardwareId: string) {
       if (opensStudioView(target)) {
         if (target.type === 'case') return mode !== 'case' || hardwareId !== target.id;
         if (target.type === 'workbench') return mode !== 'bench';

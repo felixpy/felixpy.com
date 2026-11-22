@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { gunzipSync } from 'node:zlib';
-import { assembleProducts, readProduct } from '../scripts/assets/static-product.mjs';
+import { assembleProducts, readProduct } from '../scripts/build/static-product.mjs';
 
 function describeScene(bytes, keepNode = () => true, keepSurface = () => true) {
   const { doc, data } = readProduct(bytes);

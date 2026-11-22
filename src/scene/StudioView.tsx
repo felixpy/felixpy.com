@@ -16,7 +16,6 @@ import {
   windowEye,
 } from './camera';
 import { display } from './hardware';
-import { workshopLayout } from './layout';
 import { phoneDisplay } from './development-phone';
 import { Finish, type FirstPicture } from './Finish';
 import { roomFirstFrame } from './room-first-frame';
@@ -25,43 +24,47 @@ import { studioReflections } from './reflections';
 import { roomVisibility } from './room-visibility';
 import { roomDetail } from './room-detail';
 import { roomPicking } from './room-picking';
-import { exportFinishGeometry, surfaceFinish, surfaceKey } from './surface-finish';
+import { surfaceFinish } from './surface-finish';
 import { screenProjection } from './screen-projection';
+import { buildStudio } from './studio';
 import {
-  buildStudio,
   opensStudioView,
+  atWindow,
+  canLookAround,
+  canPick,
+  isStation,
+  isWallView,
   type AppID,
-  type HardwareOrbit,
   type InspectionLink,
+  type Mode,
+  type Station,
+  type StudioControls,
   type Target,
-} from './studio';
-import { panoramaMeshName, waterfrontFarClip } from './window-depth';
-import { editableBlindSlats } from './window';
+} from './interaction';
+import {
+  frameHardware,
+  frameWallSurface,
+  initialOrbit,
+  localBounds,
+  savedPose,
+  towerOrbit,
+  towerRadius,
+  type Pose,
+  type WallFocus,
+} from './view-framing';
+import { waterfrontFarClip } from './window-depth';
+import { createStudioReview } from './review/studio-review';
 
-type Station = 'room' | 'bench';
-type WallView = 'board' | 'map' | 'gear' | 'bookshelf';
-export type Mode =
-  | Station
-  | WallView
-  | 'inspect'
-  | 'case'
-  | 'window'
-  | 'remote'
-  | 'computer'
-  | 'drawer'
-  | 'returning';
-const isStation = (mode: Mode): mode is Station => mode === 'room' || mode === 'bench';
-const canLookAround = (mode: Mode): mode is Station | 'gear' => isStation(mode) || mode === 'gear';
-const atWindow = (mode: Mode) => mode === 'window' || mode === 'remote';
-const isWallView = (mode: string): mode is WallView =>
-  mode === 'board' || mode === 'map' || mode === 'gear' || mode === 'bookshelf';
-const canPick = (mode: Mode) => mode !== 'returning';
+export type { Mode } from './interaction';
+
 const drawerEyeOffset = new T.Vector3(0, 0.54, 0.27);
 const drawerPitch = -Math.atan2(drawerEyeOffset.y, drawerEyeOffset.z);
 const drawerFov = 46;
+const returnDuration = 430;
 
 type Props = {
   initialLowScale: number;
+  computerLocked: boolean;
   roomVisible: boolean;
   environment: Environment;
   mode: Mode;
@@ -77,10 +80,9 @@ type Props = {
   screen: RefObject<HTMLDivElement | null>;
   inspectionAnchor: RefObject<HTMLAnchorElement | null>;
   objectCaption: RefObject<HTMLDivElement | null>;
-  controls: RefObject<{ open: () => void } | null>;
+  controls: RefObject<StudioControls | null>;
 };
 
-type Pose = { position: T.Vector3; quaternion: T.Quaternion };
 type Inspection = {
   target: Target;
   home: Pose;
@@ -91,104 +93,7 @@ type Inspection = {
   bounds: T.Box3;
   boundsRevision: number;
 };
-type FramedObject = { object: T.Object3D; bounds: T.Box3 };
-type WallFocus = FramedObject & { type: WallView; center: T.Vector3; fov: number; panY: number };
-
-function frameWallSurface(wall: WallFocus, aspect: number, position: T.Vector3) {
-  const { min, max } = wall.bounds;
-  const height = max.y - min.y;
-  const halfFrame = Math.max(height, (max.x - min.x) / aspect) / 1.79;
-  const distance = halfFrame / Math.tan(T.MathUtils.degToRad(viewFov / 2));
-  const rise = wall.type === 'board' ? distance * 0.06 : 0;
-  let centerY = wall.center.y - height * 0.027;
-  if (wall.type === 'bookshelf') {
-    const visibleHalfHeight = distance * Math.tan(T.MathUtils.degToRad(wall.fov / 2));
-    const limit = Math.max(0, ((1 - visibleHalfHeight / halfFrame) * height) / 2);
-    wall.panY = T.MathUtils.clamp(wall.panY, -limit, limit);
-    centerY = wall.center.y + wall.panY;
-  }
-  position.set(wall.center.x, centerY + rise, wall.center.z + distance);
-  return -Math.atan2(rise, distance);
-}
-
-const savedPose = (obj: T.Object3D): Pose => ({
-  position: obj.position.clone(),
-  quaternion: obj.quaternion.clone(),
-});
-
-const towerOrbit: HardwareOrbit = {
-  center: [0, 0.005, -0.024],
-  azimuth: [1.05, -Math.PI / 2, 1.52],
-  elevation: [0.24, 0.045, 0.52],
-  distance: [1.03, 0.34, 1.55],
-};
-function initialOrbit(orbit: HardwareOrbit) {
-  return {
-    orbit,
-    azimuth: orbit.azimuth[0],
-    elevation: orbit.elevation[0],
-    distance: orbit.distance[0],
-  };
-}
-function towerRadius(radius: number, azimuth: number, centerX: number, rearOffset = 0) {
-  const side = -Math.sin(azimuth);
-  const front = Math.cos(azimuth);
-  const clearSide = 0.17 / Math.max(Math.abs(side), 0.001);
-  const clearFront = (0.39 + rearOffset) / Math.max(front, 0.001);
-  const clearWorkbench = (workshopLayout.x - 0.38 - centerX) / Math.max(side, 0.001);
-  return T.MathUtils.clamp(radius, Math.min(clearSide, clearFront), clearWorkbench);
-}
-function frameHardware(
-  view: ReturnType<typeof initialOrbit> & { hardwareId: string; center: T.Vector3 },
-  position: T.Vector3,
-  rotation: T.Euler,
-) {
-  const { azimuth, elevation, center, orbit, distance: requested } = view;
-  const rear = orbit.rearClearance ? T.MathUtils.smoothstep(-Math.cos(azimuth), 0, 1) : 0;
-  const distance = T.MathUtils.lerp(
-    requested,
-    Math.min(requested, orbit.rearClearance ?? requested),
-    rear,
-  );
-  let radius = distance * Math.cos(elevation);
-  let lift = 0;
-  let rearOffset = 0;
-  if (view.hardwareId === 'case') {
-    const near = 1 - T.MathUtils.smoothstep(requested, 0.34, 0.6);
-    lift = 0.116 * near;
-    const sideView = T.MathUtils.smoothstep(-Math.sin(azimuth), 0.85, 1);
-    rearOffset = T.MathUtils.lerp(0.108, 0.079, sideView) * near;
-    radius = towerRadius(radius, azimuth, center.x, rearOffset);
-  }
-  position.set(
-    center.x - radius * Math.sin(azimuth),
-    center.y + radius * Math.tan(elevation) + lift,
-    center.z + radius * Math.cos(azimuth) - rearOffset,
-  );
-  rotation.set(-elevation - rear * 0.22, -azimuth, 0, 'YXZ');
-  const fov = viewFov + rear * 17;
-  if (!orbit.closeFov) return fov;
-  const zoom = 1 - T.MathUtils.smoothstep(requested, orbit.distance[1], orbit.distance[0]);
-  return T.MathUtils.lerp(fov, Math.min(fov, orbit.closeFov), zoom);
-}
 const lookKeys = new Set(['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight']);
-
-function localBounds(object: T.Object3D) {
-  object.updateWorldMatrix(true, true);
-  const toLocal = object.matrixWorld.clone().invert();
-  const matrix = new T.Matrix4(),
-    part = new T.Box3(),
-    bounds = new T.Box3();
-  object.traverseVisible((child) => {
-    if (!(child instanceof T.Mesh)) return;
-    if (!child.geometry.boundingBox) child.geometry.computeBoundingBox();
-    if (child.geometry.boundingBox) {
-      matrix.multiplyMatrices(toLocal, child.matrixWorld);
-      bounds.union(part.copy(child.geometry.boundingBox).applyMatrix4(matrix));
-    }
-  });
-  return bounds;
-}
 
 function CameraRig(
   props: Props & {
@@ -317,6 +222,77 @@ function CameraRig(
     object.quaternion.slerp(cached.rotation, ease);
   }
 
+  const openSequence = useRef(0);
+  const inspectedTarget = useRef<Extract<Target, { type: 'inspect' }> | undefined>(undefined);
+
+  function setMode(next: Mode, app?: AppID, link?: InspectionLink) {
+    openSequence.current++;
+    const from = mode.current;
+    const panel = live.current.screen.current;
+    returningFromTower.current =
+      next === 'returning' && from === 'case' && caseView.current.hardwareId === 'case';
+    if (from === 'computer' && next !== 'computer' && panel) {
+      panel.dataset.visible = 'false';
+      panel.dataset.interactive = 'false';
+      if (document.activeElement instanceof HTMLElement && panel.contains(document.activeElement))
+        document.activeElement.blur();
+    }
+    if (
+      next !== 'returning' &&
+      !isStation(next) &&
+      ((isStation(from) && from === station.current) ||
+        ((next === 'inspect' || next === 'remote') &&
+          (isWallView(from) || from === 'case' || from === 'drawer' || from === 'window')))
+    ) {
+      returnViews.current.set(from, { ...savedPose(camera), fov: camera.fov });
+    }
+    turning.current.clear();
+    hover.current = undefined;
+    mode.current = next;
+    const held = inspection.current?.target;
+    const selected = next === 'inspect' && held?.type === 'inspect' ? held : undefined;
+    if (selected !== inspectedTarget.current) {
+      inspectedTarget.current?.onInspect?.(false, live.current.environment.reducedMotion);
+      selected?.onInspect?.(true, live.current.environment.reducedMotion);
+      inspectedTarget.current = selected;
+    }
+    live.current.setPhoneHeld(
+      next === 'inspect' && inspection.current?.target.id === 'development-phone',
+    );
+    animationStart.current = performance.now();
+    live.current.onMode(next, app, link);
+  }
+  function restoreHeldItem() {
+    const moving = inspection.current;
+    if (!moving) return;
+    moving.target.object.position.copy(moving.home.position);
+    moving.target.object.quaternion.copy(moving.home.quaternion);
+    moving.target.object.updateMatrixWorld(true);
+    inspection.current = null;
+    shadowWarmup.current = 2;
+  }
+
+  function finishReturn() {
+    const destination = enclosingMode();
+    if (live.current.environment.reducedMotion) {
+      const view = returnViews.current.get(destination);
+      if (view) {
+        camera.position.copy(view.position);
+        camera.quaternion.copy(view.quaternion);
+        camera.fov = view.fov;
+      } else if (destination === 'room') {
+        camera.position.set(eye.x, eye.y, eye.defaultZ);
+        camera.rotation.set(looks.current.room.pitch, looks.current.room.yaw, 0, 'YXZ');
+        camera.fov = zoom.current.room;
+      }
+      camera.updateProjectionMatrix();
+      camera.updateMatrixWorld(true);
+      shadowWarmup.current = 2;
+    }
+    returnViews.current.delete(destination);
+    setMode(destination);
+  }
+
   useEffect(() => {
     const element = gl.domElement;
     const renderer = gl as T.WebGLRenderer;
@@ -380,45 +356,6 @@ function CameraRig(
       }
     }
 
-    let openSequence = 0;
-    let inspectedTarget: Extract<Target, { type: 'inspect' }> | undefined;
-    function setMode(next: Mode, app?: AppID, link?: InspectionLink) {
-      openSequence++;
-      const from = mode.current;
-      const panel = live.current.screen.current;
-      returningFromTower.current =
-        next === 'returning' && from === 'case' && caseView.current.hardwareId === 'case';
-      if (from === 'computer' && next !== 'computer' && panel) {
-        panel.dataset.visible = 'false';
-        panel.dataset.interactive = 'false';
-        if (document.activeElement instanceof HTMLElement && panel.contains(document.activeElement))
-          document.activeElement.blur();
-      }
-      if (
-        next !== 'returning' &&
-        !isStation(next) &&
-        ((isStation(from) && from === station.current) ||
-          ((next === 'inspect' || next === 'remote') &&
-            (isWallView(from) || from === 'case' || from === 'drawer' || from === 'window')))
-      ) {
-        returnViews.current.set(from, { ...savedPose(camera), fov: camera.fov });
-      }
-      turning.current.clear();
-      hover.current = undefined;
-      mode.current = next;
-      const held = inspection.current?.target;
-      const selected = next === 'inspect' && held?.type === 'inspect' ? held : undefined;
-      if (selected !== inspectedTarget) {
-        inspectedTarget?.onInspect?.(false, live.current.environment.reducedMotion);
-        selected?.onInspect?.(true, live.current.environment.reducedMotion);
-        inspectedTarget = selected;
-      }
-      live.current.setPhoneHeld(
-        next === 'inspect' && inspection.current?.target.id === 'development-phone',
-      );
-      animationStart.current = performance.now();
-      live.current.onMode(next, app, link);
-    }
     function walkTo(x: number, y: number, z: number) {
       const position = camera.position.clone();
       const distance = Math.hypot(x - position.x, y - position.y, z - position.z);
@@ -429,15 +366,6 @@ function CameraRig(
         start: performance.now(),
         duration: Math.max(480, distance * 950),
       };
-    }
-    function restoreHeldItem() {
-      const moving = inspection.current;
-      if (!moving) return;
-      moving.target.object.position.copy(moving.home.position);
-      moving.target.object.quaternion.copy(moving.home.quaternion);
-      moving.target.object.updateMatrixWorld(true);
-      inspection.current = null;
-      shadowWarmup.current = 2;
     }
     function applyReducedInspection() {
       if (live.current.environment.reducedMotion && inspection.current?.target.type === 'inspect') {
@@ -453,22 +381,7 @@ function CameraRig(
         return;
       }
       restoreHeldItem();
-      const destination = enclosingMode();
-      const view = returnViews.current.get(destination);
-      if (view) {
-        camera.position.copy(view.position);
-        camera.quaternion.copy(view.quaternion);
-        camera.fov = view.fov;
-        returnViews.current.delete(destination);
-      } else if (destination === 'room') {
-        camera.position.set(eye.x, eye.y, eye.defaultZ);
-        camera.rotation.set(looks.current.room.pitch, looks.current.room.yaw, 0, 'YXZ');
-        camera.fov = zoom.current.room;
-      }
-      camera.updateProjectionMatrix();
-      camera.updateMatrixWorld(true);
-      shadowWarmup.current = 2;
-      setMode(destination);
+      finishReturn();
     }
     function leaveFocusedView(target: Target) {
       restoreHeldItem();
@@ -515,7 +428,7 @@ function CameraRig(
       setMode(next);
     }
     function open(target: Target | undefined, prepared = false) {
-      const sequence = ++openSequence;
+      const sequence = ++openSequence.current;
       if (!target) return;
       if (
         !canPick(mode.current) ||
@@ -543,7 +456,7 @@ function CameraRig(
       const preparing = !prepared && target.prepare?.();
       if (preparing) {
         const proceed = () => {
-          if (sequence === openSequence && !surfaceAbort.signal.aborted) open(target, true);
+          if (sequence === openSequence.current && !surfaceAbort.signal.aborted) open(target, true);
         };
         void preparing.then(proceed, proceed);
         return;
@@ -697,9 +610,36 @@ function CameraRig(
       live.current.onHint('');
     }
 
+    function exit() {
+      openSequence.current++;
+      const current = mode.current;
+      if (current === 'room' || current === 'returning') return false;
+      if (current === 'bench') {
+        moveToStation('room');
+      } else if (current === 'drawer') {
+        closeDrawer();
+      } else {
+        if (isWallView(current)) wallFocus.current = null;
+        if (current === 'case') cabinetFocus.current = false;
+        if (current === 'window') windowFocus.current = false;
+        if (atWindow(current) && !windowFocus.current) {
+          windowTravel.current = null;
+          if (!live.current.environment.reducedMotion) {
+            if (station.current === 'bench') walkTo(benchEye.x, benchEye.y, benchEye.z);
+            else walkTo(eye.x, eye.y, eye.defaultZ);
+          }
+        }
+        pointer.current = null;
+        returnToView();
+        live.current.onHint('');
+      }
+      return true;
+    }
+
     const computer = model.targets.find((target) => target.id === 'computer');
     live.current.controls.current = {
       open: () => open(computer),
+      exit,
     };
 
     function move(event: PointerEvent) {
@@ -810,7 +750,7 @@ function CameraRig(
     }
     function down(event: PointerEvent) {
       if (event.button !== 0 || !canPick(mode.current)) return;
-      openSequence++;
+      openSequence.current++;
       const rect = element.getBoundingClientRect();
       pointer.current = {
         target: canPick(mode.current) ? pick(event.clientX, event.clientY) : undefined,
@@ -886,7 +826,11 @@ function CameraRig(
       }
     }
     function keyboard(event: KeyboardEvent) {
-      if (event.key === 'Escape' || lookKeys.has(event.code)) openSequence++;
+      if (
+        lookKeys.has(event.code) ||
+        (event.key === 'Escape' && (event.defaultPrevented || event.repeat))
+      )
+        openSequence.current++;
       if (
         !event.defaultPrevented &&
         canLookAround(mode.current) &&
@@ -908,31 +852,9 @@ function CameraRig(
         return;
       }
       if (event.defaultPrevented || event.repeat) return;
-      if (event.key === 'Escape' && mode.current === 'bench') {
+      if (event.key === 'Escape' && exit()) {
         event.preventDefault();
-        moveToStation('room');
         return;
-      }
-      if (event.key === 'Escape' && mode.current === 'drawer') {
-        event.preventDefault();
-        closeDrawer();
-        return;
-      }
-      if (event.key === 'Escape' && !isStation(mode.current) && mode.current !== 'returning') {
-        event.preventDefault();
-        if (isWallView(mode.current)) wallFocus.current = null;
-        if (mode.current === 'case') cabinetFocus.current = false;
-        if (mode.current === 'window') windowFocus.current = false;
-        if (atWindow(mode.current) && !windowFocus.current) {
-          windowTravel.current = null;
-          if (!live.current.environment.reducedMotion) {
-            if (station.current === 'bench') walkTo(benchEye.x, benchEye.y, benchEye.z);
-            else walkTo(eye.x, eye.y, eye.defaultZ);
-          }
-        }
-        pointer.current = null;
-        returnToView();
-        live.current.onHint('');
       }
       if (event.code === 'KeyE' && mode.current !== 'computer' && canPick(mode.current)) {
         const rect = element.getBoundingClientRect();
@@ -961,186 +883,17 @@ function CameraRig(
     window.addEventListener('keyup', releaseKey);
     window.addEventListener('blur', releaseMovement);
     if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('review')) {
-      window.__studioReview = {
-        inventory: () =>
-          model.targets.map(({ id, type, object }) => ({
-            id,
-            type,
-            name: object.name,
-            uuid: object.uuid,
-          })),
-        async captureLighting(location?: 'desk' | 'aj' | 'camp') {
-          await model.prepareRear();
-          await visibility.ready;
-          const { captureStudioLight } = await import('../../scripts/assets/capture-studio-light');
-          return captureStudioLight(renderer, scene, location);
-        },
-        activate: (id) => open(model.targets.find((t) => t.id === id)),
-        project: (id) => {
-          const object =
-            model.targets.find((t) => t.id === id)?.object ?? model.root.getObjectByName(id);
-          const point = object?.getWorldPosition(new T.Vector3()).project(camera);
-          const rect = element.getBoundingClientRect();
-          return point
-            ? {
-                x: rect.left + ((point.x + 1) * rect.width) / 2,
-                y: rect.top + ((1 - point.y) * rect.height) / 2,
-              }
-            : null;
-        },
-        camera: () => ({
-          position: camera.position.toArray(),
-          rotation: camera.quaternion.toArray(),
-          fov: camera.fov,
-        }),
-        objectPose: (id) => {
-          const object =
-            model.targets.find((item) => item.id === id)?.object ?? model.root.getObjectByName(id);
-          if (!object) return undefined;
-          return { position: object.position.toArray(), rotation: object.quaternion.toArray() };
-        },
-        bounds: (name) => {
-          const object = model.root.getObjectByName(name);
-          if (!object) throw new Error('Unknown studio object: ' + name);
-          const bounds = new T.Box3().setFromObject(object, true);
-          return { min: bounds.min.toArray(), max: bounds.max.toArray() };
-        },
-        drawer: (index) => model.targets.find((t) => t.id === 'drawer-' + index)?.object.position.z,
-        lightLevels: () => model.lightLevels(),
-        async exportRoom(objectName, authoring = false) {
-          if (authoring) await Promise.all([model.prepareRear(), model.prepareDrawerMedia()]);
-          const { GLTFExporter } = await import('three/addons/exporters/GLTFExporter.js');
-          const source = objectName ? model.root.getObjectByName(objectName) : model.root;
-          if (!source) throw new Error('Unknown studio object: ' + objectName);
-          if (authoring) await model.prepareBookExport(source);
-          let studio = source.clone();
-          const panorama = source.getObjectByName(panoramaMeshName);
-          const baked =
-            authoring && panorama instanceof T.Mesh
-              ? (await import('../../scripts/assets/bake-waterfront')).bakeWaterfront(
-                  renderer,
-                  panorama,
-                )
-              : undefined;
-          if (authoring) {
-            const geometries = new Map<T.BufferGeometry, T.BufferGeometry>();
-            const portable = new Set(
-              model.targets
-                .filter(
-                  (t) =>
-                    t.type === 'inspect' ||
-                    t.type === 'remote' ||
-                    t.type === 'door' ||
-                    t.type === 'drawer',
-                )
-                .map((t) => t.object),
-            );
-            const mark = (part: T.Object3D, copy: T.Object3D, cast: boolean) => {
-              cast = cast && !portable.has(part) && part.visible;
-              if (part instanceof T.Mesh) {
-                const mats = Array.isArray(part.material) ? part.material : [part.material];
-                copy.userData.studioOccluder =
-                  cast && part.castShadow && mats.every((material) => !material.transparent);
-                if (copy instanceof T.Mesh && part.geometry.getAttribute('normal')) {
-                  copy.userData.studioSurface = surfaceKey(part.geometry);
-                  if (!geometries.has(part.geometry))
-                    geometries.set(part.geometry, exportFinishGeometry(part.geometry));
-                  copy.geometry = geometries.get(part.geometry)!;
-                }
-              }
-              part.children.forEach((child, i) => mark(child, copy.children[i], cast));
-            };
-            mark(source, studio, true);
-            if (source === model.root) {
-              const rack = model.gearWall;
-              const view = new T.PerspectiveCamera(
-                gearEye.fov,
-                camera.aspect,
-                camera.near,
-                camera.far,
-              );
-              frameGearWall(rack, view.aspect, view.position);
-              view.rotation.set(gearEye.pitch, gearEye.yaw, 0, 'YXZ');
-              view.name = 'Equipment wall';
-              studio.add(view);
-            }
-          }
-          studio = editableBlindSlats(studio);
-          if (objectName) studio.position.set(0, 0, 0);
-          const tracks: T.KeyframeTrack[] = [];
-          studio.traverse((child) => {
-            if (
-              (!authoring &&
-                child instanceof T.InstancedMesh &&
-                !child.userData.exportInstalledInstances) ||
-              child instanceof T.Points ||
-              child instanceof T.LineSegments
-            )
-              child.visible = false;
-            if (authoring && child.name === 'Outside glazing surface' && child instanceof T.Mesh)
-              child.material = new T.MeshBasicMaterial({
-                transparent: true,
-                opacity: 0,
-                depthWrite: false,
-              });
-            if (
-              child.name === panoramaMeshName &&
-              child instanceof T.Mesh &&
-              child.material instanceof T.ShaderMaterial
-            ) {
-              if (baked) {
-                child.geometry = baked.geometry;
-                child.material = baked.material;
-                child.userData.waterfrontCamera = baked.calibration;
-                child.userData.studioOccluder = false;
-              } else {
-                child.material = new T.MeshBasicMaterial({
-                  map: child.material.uniforms.photoA.value,
-                  side: T.DoubleSide,
-                });
-              }
-            }
-            if (child.name !== 'Fan rotor') return;
-            child.name = 'Fan rotor ' + (tracks.length + 1);
-            const times = Array.from({ length: 61 }, (_, i) => i / 20);
-            const quaternions = times.flatMap((time) =>
-              new T.Quaternion()
-                .setFromAxisAngle(new T.Vector3(0, 0, 1), time * 14 + child.rotation.z)
-                .toArray(),
-            );
-            tracks.push(
-              new T.QuaternionKeyframeTrack(child.name + '.quaternion', times, quaternions),
-            );
-          });
-          if (!objectName) {
-            for (const child of [...studio.children])
-              if (child instanceof T.Light || child instanceof T.Mesh) studio.remove(child);
-          }
-          const buffer = await new GLTFExporter()
-            .parseAsync(studio, {
-              binary: true,
-              maxTextureSize: baked?.width ?? (authoring ? 2048 : 1024),
-              onlyVisible: !authoring,
-              animations: tracks.length ? [new T.AnimationClip('Fan rotors', 3, tracks)] : [],
-            })
-            .finally(() => {
-              baked?.geometry.dispose();
-              baked?.material.map?.dispose();
-              baked?.material.dispose();
-            });
-          const url = URL.createObjectURL(
-            new Blob([buffer as ArrayBuffer], { type: 'model/gltf-binary' }),
-          );
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = objectName ? 'studio-object.glb' : 'felix-studio.glb';
-          link.click();
-          setTimeout(() => URL.revokeObjectURL(url), 1000);
-        },
-      };
+      window.__studioReview = createStudioReview({
+        model,
+        camera,
+        renderer,
+        scene,
+        lightingReady: () => visibility.ready,
+        open,
+      });
     }
     return () => {
-      delete window.__studioReview;
+      if (import.meta.env.DEV) delete window.__studioReview;
       live.current.controls.current = null;
       element.removeEventListener('pointermove', move);
       element.removeEventListener('pointerdown', down);
@@ -1190,7 +943,7 @@ function CameraRig(
 
   useFrame(({ clock, size }, elapsed) => {
     const delta = Math.min(elapsed, 0.05);
-    const { environment: env, screen, onMode } = live.current;
+    const { environment: env, screen } = live.current;
     const load = loading.current;
     if (!load.complete && assets.total) {
       const ratio = assets.loaded / assets.total;
@@ -1421,11 +1174,13 @@ function CameraRig(
         const progress = T.MathUtils.smootherstep(
           performance.now() - animationStart.current,
           0,
-          430,
+          returnDuration,
         );
-        object.position.lerpVectors(start.position, moving.home.position, progress);
-        object.quaternion.slerpQuaternions(start.quaternion, moving.home.quaternion, progress);
-        if (progress === 1) inspection.current = null;
+        if (progress === 1) restoreHeldItem();
+        else {
+          object.position.lerpVectors(start.position, moving.home.position, progress);
+          object.quaternion.slerpQuaternions(start.quaternion, moving.home.quaternion, progress);
+        }
       } else placeHeldItem(moving, ease, current === 'remote');
     }
     const link =
@@ -1540,9 +1295,10 @@ function CameraRig(
         panel.dataset.visible = 'true';
         if (approach === 1 && !focused.current) {
           panel.dataset.interactive = 'true';
-          panel
-            .querySelector<HTMLButtonElement>('[data-lock-unlock]')
-            ?.focus({ preventScroll: true });
+          const entryButton = panel.querySelector<HTMLButtonElement>(
+            live.current.computerLocked ? '[data-lock-unlock]' : '.system-menu-button',
+          );
+          entryButton?.focus({ preventScroll: true });
           focused.current = true;
         }
       }
@@ -1551,10 +1307,9 @@ function CameraRig(
       current === 'returning' &&
       !inspection.current &&
       !windowTravel.current &&
-      (env.reducedMotion || performance.now() - animationStart.current > 430)
+      (env.reducedMotion || performance.now() - animationStart.current >= returnDuration)
     ) {
-      mode.current = enclosingMode();
-      onMode(mode.current);
+      finishReturn();
     }
     const geometryMoving = model.update(
       env,
@@ -1572,25 +1327,6 @@ function CameraRig(
     }
   });
   return <primitive object={model.root} />;
-}
-
-declare global {
-  interface Window {
-    __studioReview?: {
-      inventory: () => { id: string; type: string; name: string; uuid: string }[];
-      captureLighting: (
-        location?: 'desk' | 'aj' | 'camp',
-      ) => Promise<{ width: number; height: number; rgbe: string }>;
-      activate: (id: string) => void;
-      project: (id: string) => { x: number; y: number } | null;
-      camera: () => { position: number[]; rotation: number[]; fov: number };
-      objectPose: (id: string) => { position: number[]; rotation: number[] } | undefined;
-      bounds: (name: string) => { min: number[]; max: number[] };
-      drawer: (index: number) => number | undefined;
-      lightLevels: () => ReturnType<ReturnType<typeof buildStudio>['lightLevels']>;
-      exportRoom: (objectName?: string, authoring?: boolean) => Promise<void>;
-    };
-  }
 }
 
 export default function StudioView(props: Props) {

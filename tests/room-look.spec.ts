@@ -25,10 +25,8 @@ test('room color styles change the rendered room and preserve the computer displ
   const enter = async () => {
     await page.keyboard.press('e');
     await expect(studio).toHaveAttribute('data-mode', 'computer');
-    const unlock = page.getByRole('button', { name: 'Unlock', exact: true });
     const settings = page.getByRole('button', { name: 'Settings', exact: true });
-    await expect(unlock.or(settings).first()).toBeVisible({ timeout: 40_000 });
-    if (await unlock.isVisible()) await unlock.press('Enter');
+    await expect(settings).toBeVisible({ timeout: 40_000 });
     if (!(await page.locator('.os-window-settings').isVisible())) await settings.click();
   };
   await enter();
@@ -108,7 +106,6 @@ test('settings migrate the room color style and preserve the selected look', asy
   });
   await page.goto('/?review');
   async function openSettings() {
-    await page.getByRole('button', { name: 'Unlock' }).tap();
     await page.getByRole('button', { name: 'Settings', exact: true }).tap();
   }
   await openSettings();

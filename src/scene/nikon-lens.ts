@@ -107,7 +107,6 @@ export function nikkorZoom(parent: T.Object3D, manager: T.LoadingManager) {
   barrel.rotation.set(-Math.PI / 2, 0, Math.PI);
   const detail = productDetail();
   void loadDisplayModel(barrel, '/media/models/nikkor-z24-70-sii.glb', manager, {
-    installed: true,
     mesh(part) {
       const finish = part.material instanceof T.Material ? part.material.name : '';
       if (

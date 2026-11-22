@@ -13,7 +13,6 @@ export function installMotherboard(
   const board = group(unit, 'ROG Strix Z890-A Gaming WiFi S · Fubuki', [0.077, 0.194, -0.289]);
   board.rotation.y = -Math.PI / 2;
   loadDisplayModel(board, '/media/models/strix-z890-a.glb', manager, {
-    installed: true,
     mesh: registerLight,
     mounted(model) {
       model.traverse((part) => {
@@ -42,7 +41,6 @@ export function installMotherboard(
     return slot;
   });
   loadDisplayModel(sockets[0], '/media/models/xpg-d50-fubuki.glb', manager, {
-    installed: true,
     mesh: registerLight,
     mounted(module) {
       module.traverse((part) => {

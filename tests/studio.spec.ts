@@ -9,6 +9,9 @@ import {
   Quaternion,
   Raycaster,
   Vector3,
+  type DataTexture,
+  type MeshPhysicalMaterial,
+  type Scene,
 } from 'three';
 import { benchEye, eye, gearEye, roomFov, windowEye } from '../src/scene/camera';
 import { panoramaGeometry } from '../src/scene/exterior';
@@ -467,7 +470,7 @@ test('shelved covers keep their editions and load full prints before extraction 
       loaded.add(pathname.split('/').pop()!.replace('.webp', ''));
     if (pathname === '/media/graphics/shelf-covers.webp') loaded.add('shelf-covers');
   });
-  const visible = ['sicp', 'ways', 'creativity', 'color', 'design-us', 'shelf-covers'];
+  const visible = ['sicp', 'ways', 'creativity', 'color', 'shelf-covers'];
   const delayed = Promise.withResolvers<void>();
   let duneRequests = 0;
   await page.route('**/*', async (route) => {
@@ -518,7 +521,7 @@ test('shelved covers keep their editions and load full prints before extraction 
   await page.evaluate(() => window.__studioReview!.activate('book-14'));
   await expect(page.locator('.interaction-caption')).toContainText(editions[14].en);
   expect([...loaded].sort()).toEqual(
-    [...visible, 'sound-and-fury', 'walden', 'dune', 'type'].sort(),
+    [...visible, 'sound-and-fury', 'walden', 'dune', 'type', 'design-us'].sort(),
   );
 });
 
@@ -1034,8 +1037,50 @@ test('live weather keeps the previous sky until a city response settles @webgl',
 test('physical monitor keeps its aspect ratio and owns input while in use @webgl', async ({
   page,
 }) => {
+  test.setTimeout(150_000);
   await page.setViewportSize({ width: 1280, height: 800 });
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'felix-studio-v1',
+      JSON.stringify({ quality: 'low', automaticQuality: false }),
+    );
+    const scenes: Scene[] = [];
+    const events = new EventTarget();
+    events.addEventListener('observe', (event) => {
+      const scene = (event as CustomEvent<Scene>).detail;
+      if (scene.isScene) scenes.push(scene);
+    });
+    Object.assign(window, {
+      __THREE_DEVTOOLS__: events,
+      readOledText() {
+        for (const scene of scenes) {
+          const screen = scene.getObjectByName('LG OLED active pixels and clock') as
+            | Mesh
+            | undefined;
+          const clock = (
+            screen?.material as (MeshPhysicalMaterial & { oledClock?: DataTexture }) | undefined
+          )?.oledClock;
+          if (!clock) continue;
+          const pixels = clock.image.data as Uint8Array;
+          const rowHasInk = (from: number, to: number) =>
+            pixels.subarray(from * pixels.length, to * pixels.length).some((value) => value > 0);
+          return { date: rowHasInk(0, 0.25), time: rowHasInk(0.25, 0.75) };
+        }
+      },
+    });
+  });
   await start(page);
+  const expectRoomClock = () =>
+    expect
+      .poll(() =>
+        page.evaluate(() =>
+          (
+            window as Window & { readOledText: () => { date: boolean; time: boolean } | undefined }
+          ).readOledText(),
+        ),
+      )
+      .toEqual({ date: true, time: true });
+  await expectRoomClock();
   const screen = page.locator('.screen-anchor[data-visible=true]');
   async function enterComputer() {
     await page.mouse.move(640, 400);
@@ -1048,9 +1093,16 @@ test('physical monitor keeps its aspect ratio and owns input while in use @webgl
   expect(bounds.width / bounds.height).toBeCloseTo(16 / 9, 2);
   expect(Math.max(bounds.width / 1280, bounds.height / 800)).toBeGreaterThan(0.86);
   const lock = page.getByRole('region', { name: 'Lock screen' });
+  await expect(lock).toHaveCount(0);
+  await page.getByRole('button', { name: 'System menu' }).click();
+  await page.getByRole('button', { name: 'Lock screen' }).click();
   await expect(lock).toBeVisible();
   await expect(screen.locator('.aurora-canvas')).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'Applications' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.studio')).toHaveAttribute('data-mode', 'room', { timeout: 18_000 });
+  await expectRoomClock();
+  await enterComputer();
   await expect(lock.getByRole('button', { name: 'Unlock' })).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(lock).toBeHidden();
@@ -1148,7 +1200,7 @@ test('deferred cookware occupies the rear wall before the next rendered frame @w
 });
 
 for (const side of ['Left', 'Right']) {
-  test(`the ${side.toLowerCase()} speaker opens Music after the lock screen releases the desktop @webgl`, async ({
+  test(`the ${side.toLowerCase()} speaker opens Music directly on the desktop @webgl`, async ({
     page,
   }) => {
     const width = 1280,
@@ -1213,9 +1265,7 @@ for (const side of ['Left', 'Right']) {
     await expect(page.locator('.screen-anchor')).toHaveAttribute('data-interactive', 'true', {
       timeout: 20_000,
     });
-    await expect(lock.getByRole('button', { name: 'Unlock' })).toBeFocused();
-    await page.keyboard.press('Enter');
-    await expect(lock).toBeHidden();
+    await expect(lock).toHaveCount(0);
     await expect(page.getByRole('region', { name: 'Music window' })).toBeVisible();
     await expect(page.locator('.desktop')).toHaveAttribute('data-first-window', 'Music window');
     await expect(page.locator('.desktop')).toHaveAttribute('data-lock-at-first-window', 'false');
@@ -1807,7 +1857,7 @@ test('the music collection shares playback state and the computer keeps portrait
     });
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Unlock' }).click();
+  await expect(page.getByRole('region', { name: 'Lock screen' })).toHaveCount(0);
   await expect(page.locator('.os-window-about')).toBeVisible();
   await expect(
     page.locator('.menu-bar').getByRole('button', { name: 'Window', exact: true }),
@@ -1863,9 +1913,12 @@ test('the music collection shares playback state and the computer keeps portrait
   await page.getByRole('button', { name: '关于', exact: true }).click();
   await expect(page.locator('.os-window-settings')).toHaveCount(0);
   await expect(page.getByText('北京航空航天大学', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '系统菜单' }).click();
+  await page.getByRole('button', { name: '锁定屏幕' }).click();
+  await expect(page.getByRole('button', { name: '解锁' })).toBeVisible();
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-Hans');
-  await page.getByRole('button', { name: '解锁' }).click();
+  await expect(page.getByRole('region', { name: '锁屏' })).toHaveCount(0);
   await page.getByRole('button', { name: '音乐', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Moonlit Skyline' })).toBeVisible();
   await expect(page.locator('.spectral-artist')).toHaveText('Nihilore');

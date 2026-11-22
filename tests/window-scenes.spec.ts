@@ -190,10 +190,10 @@ test('the Blender export retains the photographed depths and window camera @webg
       shader
     )) as typeof import('../src/scene/window-depth');
     const { panoramaGeometry } = (await import(exterior)) as typeof import('../src/scene/exterior');
-    const path = '/scripts/assets/bake-waterfront.ts';
+    const path = '/src/scene/review/bake-waterfront.ts';
     const { bakeWaterfront } = (await import(
       path
-    )) as typeof import('../scripts/assets/bake-waterfront');
+    )) as typeof import('../src/scene/review/bake-waterfront');
     const camera = '/src/scene/camera.ts';
     const { windowEye, roomFov } = (await import(camera)) as typeof import('../src/scene/camera');
     const renderer = new T.WebGLRenderer();
@@ -432,7 +432,9 @@ test('both river cities load original plates and apply each exposure mask and sa
   expect(views).toHaveLength(6);
   expect(new Set(views.map((v) => v.shore.join(','))).size).toBe(6);
   expect(requests.filter((path) => path.includes('-wings'))).toEqual([]);
-  expect(requests.filter((path) => path.endsWith('/river-ferry.glb'))).toHaveLength(1);
+  expect(requests.filter((path) => path.includes('/river-ferry.'))).toEqual([
+    '/media/models/river-ferry.glb.gz',
+  ]);
   expect(requests).toContain('/media/panoramas/river-slopes.webp');
   const { CatmullRomCurve3, Vector3 } = await import('three');
   for (const view of views) {

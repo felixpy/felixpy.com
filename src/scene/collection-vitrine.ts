@@ -111,7 +111,6 @@ export function collectionVitrine(
   const cabinetInverse = unit.matrixWorld.clone();
   deferRoomDetail(() =>
     loadDisplayModel(unit, '/media/models/vitrine-inventory.glb', manager, {
-      installed: true,
       mounted(scene) {
         scene.traverse(spots.illuminate);
         const parts = [...scene.children];

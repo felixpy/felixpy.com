@@ -5,7 +5,7 @@ import { decodeBlenderMesh } from '../src/scene/blender-mesh';
 
 test('the removable GR701 top has 108 open vents above a separate filter and a rear release', async () => {
   const holes: [number, number, number][] = JSON.parse(
-    await readFile('scripts/assets/gr701-roof-apertures.json', 'utf8'),
+    await readFile(new URL('./fixtures/gr701-roof-apertures.json', import.meta.url), 'utf8'),
   );
   const parts = await Promise.all(
     ['plate', 'frame', 'weave', 'hardware'].map(async (name) => {

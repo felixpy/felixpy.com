@@ -1,10 +1,10 @@
 import { packedBuffer } from './packed-buffer';
-import { partLibraryPath, unpackParts } from './blender-parts';
+import { partLibraryPath, unpackParts, type PartLibrary } from './blender-parts';
 
 const loaded = new Map<string, Promise<void>>();
 const parts = new Map<string, ArrayBuffer>();
 
-export function loadParts(collection: 'studio' | 'workshop') {
+export function loadParts(collection: PartLibrary) {
   const cached = loaded.get(collection);
   if (cached) return cached;
   const pending = fetch(partLibraryPath(collection))

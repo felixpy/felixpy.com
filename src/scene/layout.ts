@@ -35,6 +35,6 @@ export const deskSetup = {
   speakerZ: -0.304,
   mat: { x: display.x, z: 0.226, width: 0.9, depth: 0.4, top: 0.753 },
   inputZ: 0.237,
-  codexMicro: { x: -0.668, z: 0.06, yaw: 0.09 },
+  codexMicro: { x: -0.755, z: 0.242, yaw: 0.09 },
   lightController: { x: 0.378, z: 0.13 },
 };

@@ -10,7 +10,7 @@ import {
 } from 'react';
 import { roomLooks, type Environment, type RoomLook } from '../app/environment';
 import { local } from '../app/locale';
-import type { AppID } from '../scene/studio';
+import type { AppID } from '../scene/interaction';
 import { roomLookFilter } from '../scene/room-looks';
 import { MusicPlayer } from './apps/music/MusicPlayer';
 import type { StudioMusic } from './apps/music/useStudioMusic';
@@ -44,8 +44,12 @@ type WindowState = {
   maximized: boolean;
   closing?: boolean;
 };
+export type ComputerSession = 'locked' | 'unlocking' | 'unlocked';
+
 type Props = {
   request: { id?: AppID; sequence: number };
+  session: ComputerSession;
+  setSession: (session: ComputerSession) => void;
   compact: boolean;
   visible?: boolean;
   music: StudioMusic;
@@ -243,6 +247,8 @@ function FelixMark() {
 
 export default function Desktop({
   request,
+  session,
+  setSession,
   compact,
   visible = true,
   environment,
@@ -256,13 +262,11 @@ export default function Desktop({
   const [systemMenuOpen, setSystemMenuOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [clock, setClock] = useState(() => new Date());
-  const [session, setSession] = useState<'locked' | 'unlocking' | 'unlocked'>('locked');
   const surface = useRef<HTMLDivElement>(null);
   const systemButton = useRef<HTMLButtonElement>(null);
   const restoreKeyboardFocus = useRef(false);
   const sequence = useRef(-1);
   const pendingApp = useRef<AppID | undefined>(undefined);
-  const hasUnlocked = useRef(false);
   const drag = useRef<{
     origin: WindowState;
     x: number;
@@ -309,18 +313,11 @@ export default function Desktop({
   }, [visible]);
 
   useEffect(() => {
-    if (session !== 'unlocking') return;
-    const timer = window.setTimeout(() => setSession('unlocked'), 270);
-    return () => window.clearTimeout(timer);
-  }, [session]);
-
-  useEffect(() => {
     if (session === 'unlocked' && restoreKeyboardFocus.current)
       systemButton.current?.focus({ preventScroll: true });
   }, [session]);
 
   function unlock(keyboard: boolean) {
-    hasUnlocked.current = true;
     restoreKeyboardFocus.current = keyboard;
     setSession(reducedMotion ? 'unlocked' : 'unlocking');
   }
@@ -414,7 +411,7 @@ export default function Desktop({
       }}
     >
       <FlowWallpaper active={visible} reducedMotion={reducedMotion} lowPower={lowPower} />
-      {hasUnlocked.current && (
+      {(visible || appWindow !== null) && (
         <div className="desktop-session" hidden={!desktopVisible} inert={session !== 'unlocked'}>
           <div className="menu-bar">
             <Tooltip text={systemMenuLabel} placement="bottom-start">

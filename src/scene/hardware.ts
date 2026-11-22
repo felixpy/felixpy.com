@@ -16,7 +16,7 @@ import { blenderMesh } from './blender-mesh';
 import { caseReflections } from './case-reflections';
 import { caseComponentLights } from './case-component-lights';
 import { oledWallpaper } from './oled-wallpaper';
-import { oledLockScreen } from './oled-lock-screen';
+import { oledClock } from './oled-clock';
 
 import { display, deskSetup } from './layout';
 export { display, deskSetup } from './layout';
@@ -26,7 +26,7 @@ export function monitor(parent: T.Object3D, p: Palette, manager: T.LoadingManage
   const monitor = group(parent, 'LG OLED evo G6 · OLED48G6PCA', [x, y, z]);
   const { screenBar, codexMicro } = galleryDisplay(monitor, p, outerHeight, y, manager, parent);
   const time = { value: 0 };
-  const clock = oledLockScreen();
+  const clock = oledClock();
   const displayGlass = new T.MeshPhysicalMaterial({
     color: '#05090d',
     roughness: 0.54,

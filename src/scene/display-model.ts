@@ -4,7 +4,6 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { packedBuffer } from './packed-buffer';
 
 type ModelSetup = {
-  installed?: boolean;
   mesh?: (mesh: T.Mesh) => void;
   mounted?: (scene: T.Group) => void;
 };
@@ -37,10 +36,9 @@ export function loadDisplayModel(
 ) {
   const loader = new GLTFLoader(manager).setMeshoptDecoder(MeshoptDecoder);
   async function mount() {
-    const packed =
-      import.meta.env.PROD ||
-      (setup.installed && new URLSearchParams(location.search).get('review') !== 'authoring');
-    const response = await fetch(manager.resolveURL(packed ? path + '.gz' : path));
+    const authoring =
+      import.meta.env.DEV && new URLSearchParams(location.search).get('review') === 'authoring';
+    const response = await fetch(manager.resolveURL(authoring ? path : path + '.gz'));
     const buffer = await packedBuffer(response);
     const { scene } = await loader.parseAsync(buffer, T.LoaderUtils.extractUrlBase(path));
     scene.traverse((part) => {

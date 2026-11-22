@@ -1,18 +1,37 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { basename, join, relative, resolve } from 'node:path';
+import { cpSync, readdirSync, readFileSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import type { Plugin } from 'vite';
-import { meshStreams, partLibraryPath } from '../../src/scene/blender-parts';
-import { installedProduct, installedProducts } from './installed-product.mjs';
+import { meshStreams, partLibraryPath, type PartLibrary } from '../../src/scene/blender-parts';
+import { workshopToolParts } from '../../src/scene/workshop-tool-parts';
+import { installedProduct } from './installed-product.mjs';
 
-const root = resolve('public/media/models');
-const archives = new Map<string, { bench: boolean; version: 1 | 2 }>();
-for (const collection of ['studio', 'workshop'] as const)
-  for (const version of [1, 2] as const)
-    archives.set(partLibraryPath(collection, version), {
-      bench: collection === 'workshop',
-      version,
-    });
+const publicDirectory = resolve('public');
+const root = join(publicDirectory, 'media', 'models');
+const roomFamilies = new Set([
+  'aio',
+  'amsterdam',
+  'astral',
+  'atx',
+  'eps',
+  'gr701',
+  'pocket',
+  'princess',
+  'ryuo',
+  'strix',
+  'thor',
+  'window',
+]);
+const roomCollections = new Set([
+  'bindings',
+  'capture',
+  'fixtures',
+  'handheld',
+  'kef',
+  'ryuo-mf12c',
+  'stationery',
+]);
+const toolNames = new Set<string>(Object.values(workshopToolParts));
 
 function deltaMesh(bytes: Buffer) {
   const streams = meshStreams(bytes);
@@ -44,20 +63,42 @@ function modelFiles(extension: string) {
     .sort();
 }
 
-function pack({ bench, version }: { bench: boolean; version: 1 | 2 }) {
-  const chunks: Buffer[] = [Buffer.from('BPK' + version)];
-  const files = modelFiles('.mesh').filter(
-    (file) => basename(file).startsWith('workshop-') === bench,
-  );
+function pack(files: string[]) {
+  const chunks: Buffer[] = [Buffer.from('BPK2')];
   for (const file of files) {
     const key = Buffer.from(file.slice(0, -5));
     const data = readFileSync(join(root, file));
     const header = Buffer.alloc(5);
     header.writeUInt8(key.length);
     header.writeUInt32LE(data.length, 1);
-    chunks.push(header, key, version === 2 ? deltaMesh(data) : data);
+    chunks.push(header, key, deltaMesh(data));
   }
   return gzipSync(Buffer.concat(chunks), { level: 9 });
+}
+
+function deliveries() {
+  const build = new Map<string, () => Buffer>();
+  const libraries: Record<PartLibrary, string[]> = { studio: [], workshop: [] };
+  for (const file of modelFiles('.mesh')) {
+    const name = file.slice(0, -5);
+    if (toolNames.has(name)) libraries.workshop.push(file);
+    else if (
+      name.includes('/')
+        ? roomCollections.has(name.split('/')[0])
+        : roomFamilies.has(name.split('-')[0])
+    )
+      libraries.studio.push(file);
+    else throw new Error('Assign Blender model to a room or workshop collection: ' + file);
+  }
+  if (libraries.workshop.length !== toolNames.size) throw new Error('Missing workshop tool mesh');
+  for (const collection of ['studio', 'workshop'] as const)
+    build.set(partLibraryPath(collection), () => pack(libraries[collection]));
+  for (const file of modelFiles('.glb')) {
+    build.set('/media/models/' + file + '.gz', () =>
+      gzipSync(installedProduct(file, readFileSync(join(root, file))), { level: 9 }),
+    );
+  }
+  return build;
 }
 
 export function studioParts(): Plugin {
@@ -65,37 +106,40 @@ export function studioParts(): Plugin {
     name: 'studio-blender-parts',
     configureServer(server) {
       const cache = new Map<string, Buffer>();
+      let builds: ReturnType<typeof deliveries> | undefined;
       server.watcher.on('all', (_, file) => {
-        if (file.endsWith('.mesh')) cache.clear();
-        if (file.endsWith('.glb')) cache.delete('/media/models/' + basename(file) + '.gz');
+        if (!/\.(mesh|glb)$/.test(file)) return;
+        builds = undefined;
+        if (file.endsWith('.glb'))
+          cache.delete('/media/models/' + relative(root, file).replaceAll('\\', '/') + '.gz');
+        else {
+          cache.delete(partLibraryPath('studio'));
+          cache.delete(partLibraryPath('workshop'));
+        }
       });
       server.middlewares.use((request, response, next) => {
         const url = request.url?.split('?')[0] ?? '';
-        const product = installedProducts.find((name) => url === '/media/models/' + name + '.gz');
-        if (product) {
-          if (!cache.has(url))
-            cache.set(url, gzipSync(installedProduct(product, readFileSync(join(root, product)))));
-          response.setHeader('Content-Type', 'application/octet-stream');
-          response.end(cache.get(url));
-          return;
-        }
-        const archive = archives.get(url);
-        if (!archive) return next();
-        if (!cache.has(url)) cache.set(url, pack(archive));
+        if (!url.startsWith('/media/models/')) return next();
+        const build = (builds ??= deliveries()).get(url);
+        if (!build) return next();
+        if (!cache.has(url)) cache.set(url, build());
         response.setHeader('Content-Type', 'application/octet-stream');
         response.end(cache.get(url));
       });
     },
     generateBundle() {
-      for (const [url, archive] of archives)
-        this.emitFile({ type: 'asset', fileName: url.slice(1), source: pack(archive) });
-      for (const file of modelFiles('.glb')) {
-        this.emitFile({
-          type: 'asset',
-          fileName: 'media/models/' + file + '.gz',
-          source: gzipSync(installedProduct(file, readFileSync(join(root, file))), { level: 9 }),
-        });
-      }
+      for (const [url, build] of deliveries())
+        this.emitFile({ type: 'asset', fileName: url.slice(1), source: build() });
+    },
+    writeBundle({ dir }) {
+      if (!dir) throw new Error('The studio requires a static output directory');
+      cpSync(publicDirectory, dir, {
+        recursive: true,
+        filter: (file) =>
+          !/^media\/models\/.*\.(mesh|glb)$/.test(
+            relative(publicDirectory, file).replaceAll('\\', '/'),
+          ),
+      });
     },
   };
 }

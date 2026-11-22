@@ -95,24 +95,6 @@ export function publishedBooks(
       0.072 - h * 0.5 * Math.sin(-tilt),
     );
   }
-  function stack(level: number, keys: string[], x: number) {
-    faceOut.add(keys[keys.length - 1]);
-    registerNeighbors(keys);
-    let y = levels[level] + 0.014;
-    for (const [i, key] of keys.entries()) {
-      const {
-        object,
-        size: [, , t],
-      } = inventory.get(key)!;
-      object.rotation.set(-Math.PI / 2, Math.PI / 2 + Math.sin(i * 2.3) * 0.036, 0, 'YXZ');
-      object.position.set(
-        x + Math.sin(i * 4.1) * 0.002,
-        y + t / 2,
-        0.009 + Math.sin(i * 2.1) * 0.007,
-      );
-      y += t + 0.00015;
-    }
-  }
   standing(
     4,
     [
@@ -169,10 +151,11 @@ export function publishedBooks(
     -0.075,
   );
   display('creativity', 1, 0.156, -0.12);
-  stack(
+  standing(
     0,
     ['looking-photographs', 'weaving', 'buildings', 'photographer-eye', 'type', 'design-us'],
-    0.145,
+    0,
+    0.004,
   );
   standing(5, ['taocp-1', 'taocp-2', 'taocp-3'], 0);
   display('color', 5, -0.025, -0.08);

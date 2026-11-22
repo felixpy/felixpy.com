@@ -1,4 +1,4 @@
-import { assembleProducts, readProduct } from '../assets/static-product.mjs';
+import { assembleProducts, readProduct } from './static-product.mjs';
 
 const rules = {
   'strix-z890-a.glb': {
@@ -36,8 +36,6 @@ const rules = {
       ),
   },
 };
-
-export const installedProducts = Object.keys(rules);
 
 export function installedProduct(file, bytes) {
   const rule = rules[file];

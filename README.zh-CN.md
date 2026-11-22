@@ -59,7 +59,10 @@ npm test
 | `src/spectral/`   | Spectral 样式、共用 Shader 渲染器和片元着色器 |
 | `public/media/`   | 按用途归类的网站运行素材                      |
 | `scripts/assets/` | 字体、地图和深度图的可选构建工具              |
+| `scripts/build/`  | 静态站点构建和已验收模型的发布打包            |
 | `tests/`          | 模型和浏览器回归测试                          |
+
+网站使用已验收的导出资源构建。可编辑的 Blender 场景、参考图、导出工具和建模历史随美术工程保存。构建网站只需 Node.js。代码归属、模型分包和验收方式见[架构说明](docs/architecture.md)。
 
 ## 参与贡献
 

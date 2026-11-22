@@ -1,6 +1,48 @@
 import { expect, test } from '@playwright/test';
 import { PerspectiveCamera, Vector3 } from 'three';
 
+test('putting down a book with the on-screen control completes the animated return to its shelf @webgl', async ({
+  page,
+}) => {
+  test.setTimeout(150_000);
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.addInitScript(() =>
+    localStorage.setItem(
+      'felix-studio-v1',
+      JSON.stringify({ quality: 'low', reducedMotion: false }),
+    ),
+  );
+  await page.goto('/?review', { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    () => window.__studioReview && !document.querySelector('.studio-loading'),
+    null,
+    {
+      timeout: 120_000,
+    },
+  );
+  const room = page.locator('.studio');
+  await page.evaluate(() => window.__studioReview!.activate('bookshelf'));
+  await expect(room).toHaveAttribute('data-mode', 'bookshelf');
+  const bookPose = () => page.evaluate(() => window.__studioReview!.objectPose('book-8'));
+  const shelved = await bookPose();
+  expect(shelved).toBeDefined();
+  await page.evaluate(() => window.__studioReview!.activate('book-8'));
+  await expect(room).toHaveAttribute('data-mode', 'inspect');
+  await page.waitForFunction(
+    (home) => {
+      const current = window.__studioReview!.objectPose('book-8')!.position;
+      return Math.hypot(current[0] - home[0], current[1] - home[1], current[2] - home[2]) > 0.001;
+    },
+    shelved!.position,
+    { polling: 'raf', timeout: 30_000 },
+  );
+  await room.locator('.inspection-exit').click();
+  await expect(room).toHaveAttribute('data-mode', 'bookshelf', { timeout: 30_000 });
+  await expect.poll(bookPose).toEqual(shelved);
+  await page.keyboard.press('Escape');
+  await expect(room).toHaveAttribute('data-mode', 'room', { timeout: 30_000 });
+});
+
 test('the bookshelf can be browsed, zoomed and inspected before switching views @webgl', async ({
   page,
 }, info) => {

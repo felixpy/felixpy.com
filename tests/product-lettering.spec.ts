@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import azothLayout from '../scripts/assets/azoth-keycap-inlays.json' with { type: 'json' };
+import azothLayout from './fixtures/azoth-keycap-inlays.json' with { type: 'json' };
 import {
   Box3,
   DoubleSide,

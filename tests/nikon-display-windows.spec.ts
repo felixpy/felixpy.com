@@ -6,17 +6,14 @@ test('the three cabinet OLED covers remain visible across their recessed opening
   await page.goto('/robots.txt');
   const results = await page.evaluate(async () => {
     const three = '/node_modules/three/build/three.module.js';
-    const loaderPath = '/node_modules/three/examples/jsm/loaders/GLTFLoader.js';
-    const decoderPath = '/node_modules/three/examples/jsm/libs/meshopt_decoder.module.js';
+    const displayModel = '/src/scene/display-model.ts';
     const T = (await import(three)) as typeof import('three');
-    const { GLTFLoader } = (await import(
-      loaderPath
-    )) as typeof import('three/addons/loaders/GLTFLoader.js');
-    const { MeshoptDecoder } = await import(decoderPath);
-    const inventory = await new GLTFLoader()
-      .setMeshoptDecoder(MeshoptDecoder)
-      .loadAsync('/media/models/vitrine-inventory.glb');
-    const lenses = inventory.scene.children.filter((lens) =>
+    const { loadDisplayModel } = (await import(
+      displayModel
+    )) as typeof import('../src/scene/display-model');
+    const mount = new T.Group();
+    await loadDisplayModel(mount, '/media/models/vitrine-inventory.glb', new T.LoadingManager());
+    const lenses = mount.children[0].children.filter((lens) =>
       [0, 4, 5].includes(lens.userData.opticalVariant),
     );
     return lenses.map((lens) => {

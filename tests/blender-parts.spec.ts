@@ -1,34 +1,87 @@
 import { readdirSync, readFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join, relative } from 'node:path';
 import { expect, test } from '@playwright/test';
 import { DoubleSide, Mesh, MeshBasicMaterial, Raycaster, Vector3 } from 'three';
+import { build } from 'vite';
 import { decodeBlenderMesh } from '../src/scene/blender-mesh';
 import { partLibraryPath, unpackParts } from '../src/scene/blender-parts';
 import { packedBuffer } from '../src/scene/packed-buffer';
+import { workshopToolParts } from '../src/scene/workshop-tool-parts';
 
-test('both Blender part library formats restore every source mesh byte for byte', async ({
+test('the room and deferred workshop archives partition the Blender meshes losslessly', async ({
   request,
 }) => {
   const root = 'public/media/models';
   const files = readdirSync(root, { recursive: true }).filter((path) => path.endsWith('.mesh'));
+  const sources = new Map(files.map((file) => [file.slice(0, -5).replaceAll('\\', '/'), file]));
+  const restored = new Set<string>();
   for (const collection of ['studio', 'workshop'] as const) {
-    const sources = new Map(
-      files
-        .filter((path) => basename(path).startsWith('workshop-') === (collection === 'workshop'))
-        .map((path) => [path.replaceAll('\\', '/').slice(0, -5), readFileSync(join(root, path))]),
-    );
-    expect(sources.size).toBeGreaterThan(0);
-    for (const version of [1, 2] as const) {
-      const url = partLibraryPath(collection, version);
-      const response = await request.get(url);
-      await expect(response).toBeOK();
-      const buffer = await packedBuffer(new Response(new Uint8Array(await response.body())));
-      expect(Buffer.from(buffer, 0, 4).toString(), url).toBe('BPK' + version);
-      const parts = unpackParts(buffer);
-      expect([...parts.keys()].sort(), url).toEqual([...sources.keys()].sort());
-      for (const [name, source] of sources)
-        expect(Buffer.from(parts.get(name)!).equals(source), url + ' • ' + name).toBe(true);
+    const url = partLibraryPath(collection);
+    const response = await request.get(url);
+    await expect(response).toBeOK();
+    const buffer = await packedBuffer(new Response(new Uint8Array(await response.body())));
+    expect(Buffer.from(buffer, 0, 4).toString()).toBe('BPK2');
+    const parts = unpackParts(buffer);
+    if (collection === 'workshop')
+      expect([...parts.keys()].sort()).toEqual(Object.values(workshopToolParts).sort());
+    for (const [name, bytes] of parts) {
+      expect(restored.has(name), name).toBe(false);
+      const source = readFileSync(join(root, sources.get(name)!));
+      expect(Buffer.from(bytes).equals(source), name).toBe(true);
+      restored.add(name);
     }
+  }
+  expect([...restored].sort()).toEqual([...sources.keys()].sort());
+});
+
+test('standalone botanical and printer assemblies still load their original BPK1 geometry', async () => {
+  for (const file of ['sill-botanicals.mesh.gz', 'h3c.mesh.gz']) {
+    const buffer = await packedBuffer(
+      new Response(new Uint8Array(readFileSync(join('public/media/models', file)))),
+    );
+    expect(Buffer.from(buffer, 0, 4).toString(), file).toBe('BPK1');
+    const parts = unpackParts(buffer);
+    expect(parts.size).toBeGreaterThan(1);
+    for (const bytes of parts.values()) expect(Buffer.from(bytes, 0, 4).toString()).toBe('BMS1');
+  }
+});
+
+test('the static build serves only the model deliveries available to site visitors', async ({
+  request,
+}, testInfo) => {
+  const output = await mkdtemp(testInfo.outputPath('static-site-'));
+  try {
+    await build({ logLevel: 'silent', build: { outDir: output, reportCompressedSize: false } });
+    const html = readFileSync(join(output, 'index.html'), 'utf8');
+    const preloaded = Array.from(html.matchAll(/href="([^"]+\.bpk)"/g), (match) => match[1]);
+    expect(preloaded).toEqual([partLibraryPath('studio')]);
+    const models = 'media/models';
+    const sources = readdirSync(join('public', models), { recursive: true, withFileTypes: true });
+    const expected = [partLibraryPath('studio'), partLibraryPath('workshop')];
+    for (const file of sources) {
+      if (!file.isFile() || file.name.endsWith('.mesh')) continue;
+      const path = '/' + relative('public', join(file.parentPath, file.name)).replaceAll('\\', '/');
+      expected.push(file.name.endsWith('.glb') ? path + '.gz' : path);
+    }
+    const delivered = readdirSync(join(output, models), { recursive: true, withFileTypes: true })
+      .filter((file) => file.isFile())
+      .map(
+        (file) => '/' + relative(output, join(file.parentPath, file.name)).replaceAll('\\', '/'),
+      );
+    expect(delivered.sort()).toEqual(expected.sort());
+    for (const url of [
+      partLibraryPath('studio'),
+      partLibraryPath('workshop'),
+      '/media/models/strix-z890-a.glb.gz',
+      '/media/models/stationery/career-album.glb.gz',
+    ]) {
+      const dev = await request.get(url);
+      await expect(dev).toBeOK();
+      expect((await dev.body()).equals(readFileSync(join(output, url))), url).toBe(true);
+    }
+  } finally {
+    await rm(output, { recursive: true });
   }
 });
 

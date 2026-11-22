@@ -59,7 +59,10 @@ Run `npm ci` and `npm run build` from the repository root, then publish `dist/` 
 | `src/spectral/`   | Spectral styles, shared shader renderer, and fragment shaders   |
 | `public/media/`   | Runtime media grouped by use                                    |
 | `scripts/assets/` | Optional font, map, and depth-map build tools                   |
+| `scripts/build/`  | Static-site generation and delivery of reviewed model exports   |
 | `tests/`          | Model and browser regression checks                             |
+
+This repository builds the website from reviewed exports. The art workspace holds the editable Blender scenes, reference images, export tools and modeling history. The web build runs with Node.js alone. See the [architecture guide](docs/architecture.md) for code ownership, asset delivery and verification.
 
 ## Contribute
 

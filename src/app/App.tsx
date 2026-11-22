@@ -1,74 +1,26 @@
 import { Component, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import {
-  applyDaylightLighting,
-  initialEnvironment,
-  isRoomLook,
-  pressRemote,
-  type Environment,
-} from './environment';
-import { savedPreferences, toggleHomeLight } from './home-lights';
-import type { AppID, InspectionLink, Target } from '../scene/studio';
-import type { Mode } from '../scene/StudioView';
-import Desktop from '../desktop/Desktop';
+import { pressRemote, type Environment } from './environment';
+import { deterministicReview, loadEnvironment, saveEnvironment } from './environment-preferences';
+import { graphicsDevice } from './graphics-device';
+import { lightForTarget, toggleHomeLight, type HomeLightId } from './home-lights';
+import type { AppID, InspectionLink, Mode, StudioControls, Target } from '../scene/interaction';
+import Desktop, { type ComputerSession } from '../desktop/Desktop';
 import Profile from '../desktop/apps/Profile';
 import { useStudioMusic } from '../desktop/apps/music/useStudioMusic';
 import LoadingScreen from './ui/LoadingScreen';
 import FpsMeter from './ui/FpsMeter';
 import { useRainAudio } from './hooks/useRainAudio';
-import { localConditions, useWindowConditions } from './hooks/useWindowConditions';
+import { useWindowConditions } from './hooks/useWindowConditions';
 import { cityName, local } from './locale';
 import './studio.css';
 import { loadParts } from '../scene/blender-library';
 import '../spectral/spectral.css';
-import { releaseSpectralSurface } from '../spectral/spectral-surface';
 
 async function loadStudio() {
   const [view] = await Promise.all([import('../scene/StudioView'), loadParts('studio')]);
   return view;
 }
 type StudioModule = Awaited<ReturnType<typeof loadStudio>>;
-const storageKey = 'felix-studio-v1';
-const reviewMode = new URLSearchParams(location.search).get('review');
-const deterministicReview =
-  import.meta.env.DEV && reviewMode !== null && reviewMode !== 'live-weather';
-const windowReview = deterministicReview && reviewMode === 'window';
-
-function loadEnvironment(suggested: Environment['quality']): Environment {
-  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  try {
-    const stored = JSON.parse(
-      window.localStorage.getItem(storageKey) ?? '{}',
-    ) as Partial<Environment>;
-    const automaticQuality = stored.automaticQuality ?? !stored.quality;
-    const base = {
-      ...initialEnvironment,
-      reducedMotion,
-      ...stored,
-      roomLook: isRoomLook(stored.roomLook) ? stored.roomLook : initialEnvironment.roomLook,
-      automaticQuality,
-      quality: automaticQuality ? suggested : (stored.quality ?? suggested),
-    };
-    if (windowReview)
-      return applyDaylightLighting({
-        ...base,
-        city: '上海',
-        night: new URLSearchParams(location.search).get('time') !== 'day',
-        weather: '晴',
-        blinds: false,
-      });
-    return applyDaylightLighting(
-      deterministicReview ? base : { ...base, ...localConditions(base.city), weather: '晴' },
-    );
-  } catch {
-    return applyDaylightLighting({
-      ...initialEnvironment,
-      quality: suggested,
-      ...localConditions(initialEnvironment.city),
-      weather: '晴',
-      reducedMotion,
-    });
-  }
-}
 
 class RendererBoundary extends Component<
   { children: ReactNode; fallback: ReactNode },
@@ -80,38 +32,6 @@ class RendererBoundary extends Component<
   }
   render() {
     return this.state.failed ? this.props.fallback : this.props.children;
-  }
-}
-
-function graphicsDevice(): {
-  available: boolean;
-  quality: Environment['quality'];
-  initialLowScale: number;
-} {
-  try {
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('webgl2', {
-      powerPreference: 'high-performance',
-      alpha: false,
-      antialias: false,
-    });
-    if (!context) return { available: false, quality: 'low', initialLowScale: 1 };
-    const info = context.getExtension('WEBGL_debug_renderer_info');
-    const renderer = info ? String(context.getParameter(info.UNMASKED_RENDERER_WEBGL)) : '';
-    const software = /swiftshader|llvmpipe|microsoft basic render/i.test(renderer);
-    const integrated =
-      /\b(?:uhd|hd) graphics|iris(?:\(r\))? (?:xe|plus)|adreno[^\d]*[345]\d\d|mali-[gt][345]\d/i.test(
-        renderer,
-      );
-    const limited = context.getParameter(context.MAX_TEXTURE_SIZE) < 8192;
-    releaseSpectralSurface(canvas, context);
-    return {
-      available: true,
-      quality: software || integrated || limited ? 'low' : 'high',
-      initialLowScale: software ? 0.5 : 1,
-    };
-  } catch {
-    return { available: false, quality: 'low', initialLowScale: 1 };
   }
 }
 
@@ -147,8 +67,15 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
   const inspectionAnchor = useRef<HTMLAnchorElement>(null);
   const objectCaption = useRef<HTMLDivElement>(null);
   const [request, setRequest] = useState<{ id?: AppID; sequence: number }>({ sequence: 0 });
+  const [computerSession, setComputerSession] = useState<ComputerSession>('unlocked');
   const screen = useRef<HTMLDivElement>(null);
-  const controls = useRef<{ open: () => void }>(null);
+  const controls = useRef<StudioControls>(null);
+
+  useEffect(() => {
+    if (computerSession !== 'unlocking') return;
+    const timer = window.setTimeout(() => setComputerSession('unlocked'), 270);
+    return () => window.clearTimeout(timer);
+  }, [computerSession]);
 
   useEffect(() => {
     if (compact || !webGL) return;
@@ -202,12 +129,7 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
   }, []);
 
   useEffect(() => {
-    if (windowReview) return;
-    try {
-      window.localStorage.setItem(storageKey, JSON.stringify(savedPreferences(environment)));
-    } catch {
-      /* Browsing without local storage still works. */
-    }
+    saveEnvironment(environment);
   }, [environment]);
 
   useEffect(() => {
@@ -243,23 +165,12 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
     }
     setHoverHint(text);
   }
+  function toggleLight(id: HomeLightId) {
+    setEnvironment((current) => toggleHomeLight(current, id));
+  }
   function handlePress(target: Target) {
-    if (target.type === 'picture-lamp')
-      setEnvironment((current) => ({
-        ...current,
-        pictureLamp: !(current.pictureLamp ?? current.night),
-      }));
-    if (target.type === 'equipment-track' || target.type === 'floor-lamp') {
-      const key = target.type === 'equipment-track' ? 'wallLamp' : 'floorLamp';
-      setEnvironment((current) => ({ ...current, [key]: !(current[key] ?? current.night) }));
-    }
-    if (target.type === 'screen-bar')
-      setEnvironment((current) => ({ ...current, screenBar: !current.screenBar }));
-    if (target.type === 'lamp') setEnvironment((current) => ({ ...current, lamp: !current.lamp }));
-    if (target.type === 'bench-lamp')
-      setEnvironment((current) => ({ ...current, benchLamp: !current.benchLamp }));
-    if (target.type === 'tool-board-lamp')
-      setEnvironment((current) => ({ ...current, toolBoardLamp: !current.toolBoardLamp }));
+    const light = lightForTarget(target.type);
+    if (light) return toggleLight(light);
     if (target.type === 'key') {
       if (target.index === 1 && !environment.blinds)
         return t('Lower the blinds before tilting them', '先放下百叶再调节叶片');
@@ -296,6 +207,8 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
       <Desktop
         compact
         request={request}
+        session={computerSession}
+        setSession={setComputerSession}
         environment={environment}
         setEnvironment={updateEnvironment}
         music={music}
@@ -321,8 +234,8 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
       >
         <p id="studio-room-help" className="sr-only">
           {t(
-            'Drag or use the arrow keys to look around. Scroll to zoom. Click an object to examine it, or click the workbench or gear rack to move closer. Press Escape to put an object back or leave a view. After switching directly between views, Escape returns to the computer desk.',
-            '拖动或按方向键环顾，滚动鼠标滚轮缩放。点击物件检视，点击工作台或装备架走近查看。按 Esc 放回物件或离开当前视角。切换视角后，按 Esc 回到电脑桌。',
+            'Drag or use the arrow keys to look around. Scroll to zoom. Click an object to examine it, or click the workbench or gear rack to move closer. Press Escape to put an object back or leave the current view.',
+            '拖动或按方向键环顾，滚动鼠标滚轮缩放。点击物件检视，点击工作台或装备架走近查看。按 Esc 放回物件或离开当前视角。',
           )}
         </p>
         {!ready && <LoadingScreen progress={progress} reducedMotion={environment.reducedMotion} />}
@@ -330,11 +243,12 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
         {StudioView && (
           <StudioView
             initialLowScale={graphics?.initialLowScale ?? 1}
+            computerLocked={computerSession === 'locked'}
             mode={mode}
             environment={environment}
             onMode={handleMode}
             onPress={handlePress}
-            onToggleHomeLight={(id) => setEnvironment((current) => toggleHomeLight(current, id))}
+            onToggleHomeLight={toggleLight}
             onHint={setHint}
             onHover={handleHover}
             onReady={() => setReady(true)}
@@ -400,7 +314,7 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
           <button
             className="inspection-exit"
             type="button"
-            onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))}
+            onClick={() => controls.current?.exit()}
           >
             <kbd>Esc</kbd>
             <span>
@@ -425,12 +339,14 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
         <div ref={screen} className="screen-anchor" data-visible="false" data-interactive="false">
           <Desktop
             request={request}
+            session={computerSession}
+            setSession={setComputerSession}
             compact={false}
             visible={mode === 'computer'}
             environment={environment}
             setEnvironment={updateEnvironment}
             music={music}
-            onExit={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))}
+            onExit={() => controls.current?.exit()}
           />
         </div>
       </main>
