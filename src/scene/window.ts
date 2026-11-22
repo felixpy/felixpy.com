@@ -91,6 +91,8 @@ export function buildWindow(
   p: Palette,
   loader: T.TextureLoader,
   initial: Environment,
+  warmWaterfront?: (material: T.ShaderMaterial) => void,
+  deferWaterMotion = false,
 ) {
   const { wall: x, z0, z1, y0, y1, thickness } = windowOpening;
   const centerZ = (z0 + z1) / 2,
@@ -259,7 +261,7 @@ export function buildWindow(
   const skyDome = mesh(root, new T.SphereGeometry(60, 32, 20), sky);
   skyDome.castShadow = false;
   skyDome.renderOrder = -10;
-  const exterior = buildExterior(root, loader, wetGlass, initial);
+  const exterior = buildExterior(root, loader, wetGlass, initial, warmWaterfront, deferWaterMotion);
   const rain = rainfall(exterior.world);
   const updateSnow = snowfall(exterior.world);
   let openness = 0,
@@ -293,6 +295,7 @@ export function buildWindow(
     pane,
     unit,
     setBlinds,
+    prepareWaterMotion: exterior.prepareWaterMotion,
     remoteRest: [x + 0.079, y0 + 0.037, 0.39] satisfies XYZ,
     update(env: Environment, delta: number) {
       const immediate = env.reducedMotion ? 1 : 1 - Math.exp(-delta * 7);

@@ -44,7 +44,11 @@ export function waterfrontPoint(
   return target.set(-distance, height * distance, -horizontal * distance).add(panoramaOrigin);
 }
 
-export function panoramaMaterial(glass?: ReturnType<typeof buildRainGlass>) {
+export function panoramaMaterial(
+  glass?: ReturnType<typeof buildRainGlass>,
+  animateWater = true,
+  reuseAcrossTargets = false,
+) {
   const uniforms = {
     photoA: { value: null as T.Texture | null },
     photoB: { value: null as T.Texture | null },
@@ -79,30 +83,32 @@ export function panoramaMaterial(glass?: ReturnType<typeof buildRainGlass>) {
       glassSize: { value: new T.Vector2() },
     }),
   };
-  const material = roomEffectMaterial(
-    {
-      uniforms,
-      side: T.DoubleSide,
-      toneMapped: false,
-      vertexShader: `
+  const options: T.ShaderMaterialParameters = {
+    uniforms,
+    side: T.DoubleSide,
+    toneMapped: false,
+    vertexShader: `
       varying vec3 shellPoint;
       void main() {
         shellPoint = (modelMatrix * vec4(position, 1.0)).xyz;
         gl_Position = projectionMatrix * viewMatrix * vec4(shellPoint, 1.0);
       }
     `,
-      fragmentShader: `
+    fragmentShader: `
       varying vec3 shellPoint;
       uniform sampler2D photoA, photoB, depthA, depthB;
-      uniform sampler2D waterSlopes, ferryReflection;
       ${paneOptics}
       uniform vec2 rangeA, rangeB;
       uniform vec4 calibrationA, calibrationB;
       uniform vec2 waterlines, clearSkyFrom;
       uniform float shoreA[9], shoreB[9];
       uniform vec3 flowA, flowB;
-      uniform float blend, mist, rainAmount, riverTime, waterLevel, nightWater, windStrength;
+      uniform float blend, mist, rainAmount, waterLevel;
+      #ifdef STUDIO_ANIMATED_WATER
+      uniform sampler2D waterSlopes, ferryReflection;
+      uniform float riverTime, nightWater, windStrength;
       uniform vec4 ferryTrack;
+      #endif
       uniform bool physicalWater;
       uniform vec3 grade, captureOrigin, glassOrigin;
       uniform mat4 windowProjection;
@@ -161,6 +167,7 @@ export function panoramaMaterial(glass?: ReturnType<typeof buildRainGlass>) {
         return texture2D(photo, clamp(uv, 0.001, 0.999)).rgb;
       }
 
+      #ifdef STUDIO_ANIMATED_WATER
       vec3 riverExposure(sampler2D photo, vec2 uv, float bank, vec3 ray, vec3 flow) {
         vec3 shore = exposure(photo, uv);
         float water = 1.0 - smoothstep(bank - 0.009, bank - 0.0015, uv.y);
@@ -219,14 +226,15 @@ export function panoramaMaterial(glass?: ReturnType<typeof buildRainGlass>) {
         }
         return mix(shore, color, water);
       }
+      #endif
 
       vec3 photographedView(sampler2D photo, vec2 uv, float bank, vec3 ray, float shore[9], vec3 flow) {
-        vec3 color = vec3(0.0);
-        if (bank == 0.0)
-          color = texture2D(photo, uv).rgb;
-        else
-          color = riverExposure(photo, uv, photographedBank(uv.x, shore), ray, flow);
-        return color;
+        if (bank == 0.0) return texture2D(photo, uv).rgb;
+        #ifdef STUDIO_ANIMATED_WATER
+        return riverExposure(photo, uv, photographedBank(uv.x, shore), ray, flow);
+        #else
+        return exposure(photo, uv);
+        #endif
       }
 
       vec3 glassLens(vec3 ray) {
@@ -271,17 +279,32 @@ export function panoramaMaterial(glass?: ReturnType<typeof buildRainGlass>) {
         #include <colorspace_fragment>
       }
     `,
-    },
-    `attribute vec3 position;
+  };
+  function buildMaterial(animated: boolean) {
+    return roomEffectMaterial(
+      { ...options, defines: animated ? { STUDIO_ANIMATED_WATER: 1 } : {} },
+      `attribute vec3 position;
       uniform mat4 modelMatrix, viewMatrix, projectionMatrix;`,
-    `uniform vec3 cameraPosition;
+      `uniform vec3 cameraPosition;
       uniform mat4 viewMatrix;`,
-  );
+      reuseAcrossTargets,
+    );
+  }
+  const material = buildMaterial(animateWater);
   const setup = material.onBeforeRender;
   material.onBeforeRender = (...args) => {
     setup.apply(material, args);
     const [, , camera] = args;
     uniforms.windowProjection.value = camera.projectionMatrix;
   };
-  return { material, uniforms };
+  return {
+    material,
+    uniforms,
+    createMaterial(animated: boolean) {
+      const variant = buildMaterial(animated);
+      variant.uniforms = material.uniforms;
+      variant.onBeforeRender = material.onBeforeRender;
+      return variant;
+    },
+  };
 }

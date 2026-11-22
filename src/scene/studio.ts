@@ -90,6 +90,8 @@ export function* buildStudioSteps(
     prioritizeRear = false,
     preloadInspection = false,
     mergeFirst = true,
+    warmWaterfront = undefined as ((material: T.ShaderMaterial) => void) | undefined,
+    deferWaterMotion = false,
   } = {},
 ) {
   const root = new T.Group();
@@ -132,7 +134,7 @@ export function* buildStudioSteps(
     [0.105, -0.068, -0.208],
     detailMounted,
   );
-  const window = buildWindow(root, p, loader, initial);
+  const window = buildWindow(root, p, loader, initial, warmWaterfront, deferWaterMotion);
   radiator(interior, p);
   yield;
   const rearLoader = new T.LoadingManager();
@@ -943,6 +945,7 @@ export function* buildStudioSteps(
       await Promise.all([bench.prepareTools(), prepareRocket()]);
     },
     setBlinds: window.setBlinds,
+    prepareWaterMotion: window.prepareWaterMotion,
     rearReady: rear.ready,
     prepareRear: rear.prepare,
     targets,

@@ -4,10 +4,13 @@ export function roomEffectMaterial(
   options: T.ShaderMaterialParameters,
   vertexInputs: string,
   fragmentInputs = '',
+  reuseAcrossTargets = false,
 ) {
+  const query = typeof location === 'undefined' ? null : new URLSearchParams(location.search);
   if (
-    typeof location === 'undefined' ||
-    new URLSearchParams(location.search).get('studio-effects') !== 'stable'
+    !reuseAcrossTargets &&
+    query?.get('studio-effects') !== 'stable' &&
+    query?.get('studio-waterfront') !== 'warm'
   ) {
     return new T.ShaderMaterial(options);
   }
@@ -49,4 +52,37 @@ export function roomEffectMaterial(
       onscreen && T.ColorManagement.getTransfer(renderer.outputColorSpace) === T.SRGBTransfer;
   };
   return material;
+}
+
+export async function warmRoomEffect(
+  gl: T.WebGLRenderer,
+  material: T.Material,
+  signal: AbortSignal,
+) {
+  if (signal.aborted || gl.getContext().isContextLost()) return false;
+  const geometry = new T.PlaneGeometry(2, 2);
+  const scene = new T.Scene();
+  const camera = new T.PerspectiveCamera();
+  camera.position.z = 1;
+  scene.add(new T.Mesh(geometry, material));
+  const target = new T.WebGLRenderTarget(1, 1);
+  try {
+    const linking = gl.compileAsync(scene, camera);
+    gl.getContext().flush();
+    await linking;
+    if (signal.aborted) return false;
+    const previous = gl.getRenderTarget();
+    try {
+      gl.setRenderTarget(target);
+      gl.render(scene, camera);
+      return true;
+    } finally {
+      gl.setRenderTarget(previous);
+    }
+  } catch {
+    return false;
+  } finally {
+    geometry.dispose();
+    target.dispose();
+  }
 }

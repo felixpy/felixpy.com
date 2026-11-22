@@ -33,6 +33,7 @@ import { oledWallpaper } from './oled-wallpaper';
 import { roomCurves } from './room-looks';
 import { deskOcclusionGLSL } from './desk-occlusion';
 import { windowSunGLSL } from './window-sun';
+import { warmRoomEffect } from './room-effect-material';
 
 type Surface = MeshStandardMaterial | MeshBasicMaterial;
 const maxPreviewLights = 6;
@@ -173,6 +174,7 @@ export function roomFirstFrame({ warmPreview = false, warmBuffers = false } = {}
   let selectedLook: RoomLook = 'neutral';
   let warmed = false;
   let stopWarming: (() => void) | undefined;
+  let stopWaterfront: (() => void) | undefined;
   let upload: (() => boolean) | undefined;
   let buffersReady = !warmBuffers;
   let disposeUpload: (() => void) | undefined;
@@ -399,6 +401,16 @@ export function roomFirstFrame({ warmPreview = false, warmBuffers = false } = {}
         });
       gl.getContext().flush();
     },
+    warmWaterfront(gl: WebGLRenderer, material: Material) {
+      if (stopWaterfront || !gl.extensions.has('KHR_parallel_shader_compile')) return;
+      const controller = new AbortController();
+      stopWaterfront = () => controller.abort();
+      performance.mark('studio-waterfront-warm-start');
+      void warmRoomEffect(gl, material, controller.signal).then((ready) => {
+        stopWaterfront = undefined;
+        if (ready) performance.mark('studio-waterfront-warm-end');
+      });
+    },
     draw(gl: WebGLRenderer, scene: Scene, camera: Camera, atNight: boolean, look: RoomLook) {
       const shadows = gl.shadowMap.enabled;
       const environment = scene.environment;
@@ -481,6 +493,7 @@ export function roomFirstFrame({ warmPreview = false, warmBuffers = false } = {}
     },
     dispose() {
       stopWarming?.();
+      stopWaterfront?.();
       disposeUpload?.();
       upload = undefined;
       for (const cache of materials) {

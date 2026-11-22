@@ -451,3 +451,127 @@ test('both river cities load original plates and apply each exposure mask and sa
   }
   expect(views[0].position).not.toEqual(views[3].position);
 });
+
+test('river motion waits for its post-room warmup while the photographed window renders @webgl', async ({
+  page,
+}) => {
+  await openEmptyPage(page);
+  const result = await page.evaluate(async () => {
+    const three = '/node_modules/three/build/three.module.js';
+    const T = (await import(three)) as typeof import('three');
+    const exteriorModule = '/src/scene/exterior.ts';
+    const { buildExterior } = (await import(
+      exteriorModule
+    )) as typeof import('../src/scene/exterior');
+    const envModule = '/src/app/environment.ts';
+    const { initialEnvironment } = (await import(
+      envModule
+    )) as typeof import('../src/app/environment');
+    const rainModule = '/src/scene/rain-glass.ts';
+    const { buildRainGlass } = (await import(
+      rainModule
+    )) as typeof import('../src/scene/rain-glass');
+    const depthModule = '/src/scene/window-depth.ts';
+    const { panoramaMeshName } = (await import(
+      depthModule
+    )) as typeof import('../src/scene/window-depth');
+    const effectModule = '/src/scene/room-effect-material.ts';
+    const { warmRoomEffect } = (await import(
+      effectModule
+    )) as typeof import('../src/scene/room-effect-material');
+
+    const manager = new T.LoadingManager();
+    const front = Promise.withResolvers<void>();
+    manager.onLoad = front.resolve;
+    const controller = new AbortController();
+    const root = new T.Group();
+    const room = new T.Scene();
+    room.add(root);
+    const glass = buildRainGlass(new T.Vector3(-1.43, 0.99, 1.36), new T.Vector2(1.56, 1.27));
+    const environment = { ...initialEnvironment, weather: '晴' as const };
+    const exterior = buildExterior(
+      root,
+      new T.TextureLoader(manager),
+      glass,
+      environment,
+      undefined,
+      true,
+    );
+    const plate = root.getObjectByName(panoramaMeshName) as import('three').Mesh<
+      import('three').BufferGeometry,
+      import('three').ShaderMaterial
+    >;
+    const original = plate.material;
+    const renderer = new T.WebGLRenderer({ preserveDrawingBuffer: true });
+    renderer.setSize(33, 33, false);
+    const camera = new T.PerspectiveCamera(50, 1, 0.028, 3000);
+    camera.position.set(-1.05, 1.35, 0.63);
+    camera.rotation.y = Math.PI / 2;
+    const context = renderer.getContext();
+    const adapter = context.getExtension('WEBGL_debug_renderer_info');
+    const shaderErrors: string[] = [];
+    renderer.debug.onShaderError = (gl, _program, vertex, fragment) => {
+      shaderErrors.push(
+        gl.getShaderInfoLog(vertex) || gl.getShaderInfoLog(fragment) || 'Link failed',
+      );
+    };
+    function visiblePhoto() {
+      renderer.render(room, camera);
+      const pixels = new Uint8Array(33 * 33 * 4);
+      context.readPixels(0, 0, 33, 33, context.RGBA, context.UNSIGNED_BYTE, pixels);
+      return pixels.some((value, index) => index % 4 !== 3 && value > 15);
+    }
+
+    try {
+      await front.promise;
+      exterior.update(environment, 1 / 60);
+      const staticPhoto = visiblePhoto();
+      const initialMotion =
+        original.uniforms.waterSlopes.value !== null ||
+        Boolean(original.defines.STUDIO_ANIMATED_WATER);
+      const warming = Promise.withResolvers<void>();
+      const proceed = Promise.withResolvers<void>();
+      exterior.prepareWaterMotion!(async (material) => {
+        warming.resolve();
+        await proceed.promise;
+        return warmRoomEffect(renderer, material, controller.signal);
+      }, controller.signal);
+      exterior.update({ ...environment, reducedMotion: true }, 1 / 60);
+      const reducedMotionRequestsWaves = original.uniforms.waterSlopes.value !== null;
+      exterior.update(environment, 1 / 60);
+      await warming.promise;
+      const stillStaticDuringWarmup = plate.material === original;
+      proceed.resolve();
+      const deadline = performance.now() + 12000;
+      while (plate.material === original && performance.now() < deadline)
+        await new Promise<void>((resolve) => setTimeout(resolve, 16));
+      exterior.update(environment, 1 / 60);
+      return {
+        gpu: adapter && context.getParameter(adapter.UNMASKED_RENDERER_WEBGL),
+        shaderErrors,
+        staticPhoto,
+        initialMotion,
+        reducedMotionRequestsWaves,
+        stillStaticDuringWarmup,
+        sharedUniforms: plate.material.uniforms === original.uniforms,
+        activated: Boolean(plate.material.defines.STUDIO_ANIMATED_WATER),
+        clock: plate.material.uniforms.riverTime.value,
+        animatedPhoto: visiblePhoto(),
+      };
+    } finally {
+      controller.abort();
+      renderer.dispose();
+      renderer.forceContextLoss();
+    }
+  });
+  expect(result.gpu).toContain('SwiftShader');
+  expect(result.shaderErrors).toEqual([]);
+  expect(result.staticPhoto).toBe(true);
+  expect(result.initialMotion).toBe(false);
+  expect(result.reducedMotionRequestsWaves).toBe(false);
+  expect(result.stillStaticDuringWarmup).toBe(true);
+  expect(result.sharedUniforms).toBe(true);
+  expect(result.activated).toBe(true);
+  expect(result.clock).toBeGreaterThan(0);
+  expect(result.animatedPhoto).toBe(true);
+});

@@ -33,6 +33,8 @@ export function buildExterior(
   loader: T.TextureLoader,
   glass: ReturnType<typeof buildRainGlass>,
   initial: Environment,
+  warmWaterfront?: (material: T.ShaderMaterial) => void,
+  deferWaterMotion = false,
 ) {
   const world = group(root, 'Outdoor volume');
   world.add(glass.highlights);
@@ -88,22 +90,36 @@ export function buildExterior(
     }
     return plate;
   }
-  const { material, uniforms } = panoramaMaterial(glass);
+  const { material, uniforms, createMaterial } = panoramaMaterial(
+    glass,
+    !deferWaterMotion,
+    deferWaterMotion,
+  );
+  warmWaterfront?.(material);
+  const motionLoader = deferWaterMotion ? new T.TextureLoader() : loader;
   let ferry: ReturnType<typeof riverFerry> | undefined;
+  let waterReady: Promise<boolean> | undefined;
   function waterResources() {
-    if (uniforms.waterSlopes.value) return;
-    const slopes = loader.load('/media/panoramas/river-slopes.webp');
-    slopes.wrapS = slopes.wrapT = T.RepeatWrapping;
-    slopes.anisotropy = 8;
-    uniforms.waterSlopes.value = slopes;
+    waterReady ??= new Promise<boolean>((resolve) => {
+      const slopes = motionLoader.load(
+        '/media/panoramas/river-slopes.webp',
+        () => resolve(true),
+        undefined,
+        () => resolve(false),
+      );
+      slopes.wrapS = slopes.wrapT = T.RepeatWrapping;
+      slopes.anisotropy = 8;
+      uniforms.waterSlopes.value = slopes;
+    });
+    return waterReady;
   }
   function vesselResources() {
     if (ferry) return;
     uniforms.ferryReflection.value = loadFerryReflection();
-    ferry = riverFerry(world, loader.manager);
+    ferry = riverFerry(world, motionLoader.manager);
   }
   function loadFerryReflection() {
-    const texture = loader.load('/media/panoramas/river-ferry-reflection.png');
+    const texture = motionLoader.load('/media/panoramas/river-ferry-reflection.png');
     texture.colorSpace = T.SRGBColorSpace;
     return texture;
   }
@@ -115,15 +131,46 @@ export function buildExterior(
     target = shown,
     blend = 1,
     time = 0;
-  if (shown.scene.kind === 'river') {
-    waterResources();
+  type MotionRequest = {
+    warm: (material: T.ShaderMaterial) => Promise<boolean>;
+    signal: AbortSignal;
+  };
+  let motionEnabled = !deferWaterMotion;
+  let motionRequest: MotionRequest | undefined;
+  let attemptedMotion: MotionRequest | undefined;
+  function prepareWaterMotion(warm: MotionRequest['warm'], signal: AbortSignal) {
+    if (!motionEnabled && !signal.aborted) motionRequest = { warm, signal };
+  }
+  function startWaterMotion() {
+    const request = motionRequest;
+    if (!request || request.signal.aborted || attemptedMotion === request) return;
+    attemptedMotion = request;
+    const moving = createMaterial(true);
+    performance.mark('studio-water-motion-start');
+    void waterResources()
+      .then((loaded) => (loaded && !request.signal.aborted ? request.warm(moving) : false))
+      .catch(() => false)
+      .then((ready) => {
+        if (!ready || motionRequest !== request || request.signal.aborted) {
+          moving.dispose();
+          return;
+        }
+        plate.material = moving;
+        motionEnabled = true;
+        material.dispose();
+        performance.mark('studio-water-motion-ready');
+      });
+  }
+  if (motionEnabled && shown.scene.kind === 'river') {
+    void waterResources();
     if (shown.scene.route) vesselResources();
   }
   uniforms.physicalWater.value = true;
   return {
     world,
+    prepareWaterMotion: deferWaterMotion ? prepareWaterMotion : undefined,
     update(env: Environment, delta: number) {
-      if (!env.reducedMotion) time += delta;
+      if (!env.reducedMotion && motionEnabled) time += delta;
       const desired = view(env);
       if (desired.photo.image && desired.depth.image && desired !== target) {
         if (desired === shown) {
@@ -168,9 +215,11 @@ export function buildExterior(
         env.weather === '雨' ? 1 : 0.48,
         ease,
       );
-      if (desired.scene.kind === 'river') {
-        waterResources();
+      if (motionEnabled && desired.scene.kind === 'river') {
+        void waterResources();
         if (desired.scene.route) vesselResources();
+      } else if (!motionEnabled && !env.reducedMotion && target.scene.kind === 'river') {
+        startWaterMotion();
       }
       const route = shown.scene.kind === 'river' ? shown.scene.route : undefined;
       const nextRoute = target.scene.kind === 'river' ? target.scene.route : undefined;

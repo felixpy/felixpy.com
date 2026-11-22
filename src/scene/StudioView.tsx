@@ -19,6 +19,7 @@ import { display } from './hardware';
 import { phoneDisplay } from './development-phone';
 import { Finish, type FirstPicture } from './Finish';
 import { roomFirstFrame } from './room-first-frame';
+import { warmRoomEffect } from './room-effect-material';
 import { Minimap } from './Minimap';
 import { studioReflections } from './reflections';
 import { roomVisibility } from './room-visibility';
@@ -949,6 +950,29 @@ function CameraRig(props: RigProps & Assembly & { earlyRear: boolean }) {
   }, [model, props.earlyRear, props.roomVisible, shaded]);
 
   useEffect(() => {
+    const prepare = model.prepareWaterMotion;
+    if (!prepare || !props.roomVisible || !shaded) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    let cancel = () => {};
+    void model.rearReady.then(() => {
+      if (signal.aborted) return;
+      const enable = () => prepare((material) => warmRoomEffect(gl, material, signal), signal);
+      if (typeof window.requestIdleCallback === 'function') {
+        const idle = window.requestIdleCallback(enable, { timeout: 1500 });
+        cancel = () => window.cancelIdleCallback(idle);
+      } else {
+        const timer = window.setTimeout(enable, 32);
+        cancel = () => window.clearTimeout(timer);
+      }
+    });
+    return () => {
+      controller.abort();
+      cancel();
+    };
+  }, [gl, model, props.roomVisible, shaded]);
+
+  useEffect(() => {
     if (props.roomVisible)
       reflections.current?.select(props.environment.night, props.environment.quality);
   }, [props.environment.night, props.environment.quality, props.roomVisible]);
@@ -1384,6 +1408,11 @@ function StudioRoom({
         prioritizeRear: rearMode === 'priority' || rearMode === 'early',
         preloadInspection: query.get('studio-details') === 'preload',
         mergeFirst: query.get('studio-batching') !== 'transform-first',
+        deferWaterMotion: query.get('studio-water-motion') !== 'eager',
+        warmWaterfront:
+          query.get('studio-waterfront') === 'warm'
+            ? (material: T.ShaderMaterial) => firstFrame.warmWaterfront(gl, material)
+            : undefined,
       },
     };
   });

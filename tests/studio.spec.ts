@@ -2072,8 +2072,10 @@ test('the waterfront continues to move in 3D while the view is still @webgl', as
       { timeout: 12_000 },
     )
     .toBeLessThan(0.025);
-  const initial = await page.evaluate(() => window.__studioReview!.project('Passing river ferry'));
-  expect(initial).not.toBeNull();
+  const projectFerry = () =>
+    page.evaluate(() => window.__studioReview!.project('Passing river ferry'));
+  await expect.poll(projectFerry, { timeout: 20_000 }).not.toBeNull();
+  const initial = await projectFerry();
   await expect
     .poll(
       async () => {
