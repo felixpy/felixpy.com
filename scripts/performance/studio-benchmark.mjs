@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { chromium } from '@playwright/test';
@@ -133,6 +134,7 @@ Add --route=workbench or --route=cabinet to turn toward that area on the first d
 Combine --loader-profile and --startup to profile through the first ten seconds after the drag.
 Add --full-room to wait for rear asset readiness on builds that report it.
 Set --input-delay-ms=<milliseconds> to wait before the first drag.
+Set --input-duration-ms=<milliseconds> with --startup to send a paced browser mouse drag.
 Add --page-timed-input to dispatch the first move from a page timer after a real press.
 Use --screenshot to save a full-viewport image after sampling.
 Use --slow-draws to attribute individual draw calls taking longer than 50 ms.
@@ -176,6 +178,11 @@ function options(args) {
   const delayArgument = [...captured].find((arg) => arg.startsWith('--input-delay-ms='));
   captured.delete(delayArgument);
   const inputDelayMs = delayArgument ? Number(delayArgument.slice('--input-delay-ms='.length)) : 0;
+  const durationArgument = [...captured].find((arg) => arg.startsWith('--input-duration-ms='));
+  captured.delete(durationArgument);
+  const inputDurationMs = durationArgument
+    ? Number(durationArgument.slice('--input-duration-ms='.length))
+    : 0;
   const pageTimedInput = captured.delete('--page-timed-input');
   const screenshot = captured.delete('--screenshot');
   const slowDraws = captured.delete('--slow-draws');
@@ -204,6 +211,11 @@ function options(args) {
     ((fullRoom || delayArgument || startupSpans) && !startup) ||
     !Number.isSafeInteger(inputDelayMs) ||
     inputDelayMs < 0 ||
+    (durationArgument &&
+      (!startup ||
+        pageTimedInput ||
+        !Number.isSafeInteger(inputDurationMs) ||
+        inputDurationMs < 1)) ||
     (pageTimedInput && (!startup || !inputDelayMs)) ||
     (captureProfile && screenshot) ||
     (gpuTiming && (captureProfile || steadyProfile || startup || loaderTrace || slowDraws)) ||
@@ -271,6 +283,7 @@ function options(args) {
     warmupWork,
     fullRoom,
     inputDelayMs,
+    inputDurationMs,
     pageTimedInput,
     screenshot,
     slowDraws,
@@ -1308,7 +1321,11 @@ function waitForShading(page) {
   );
 }
 
-async function sampleStartup(page, profile, { inputDelayMs, pageTimedInput, route: routeName }) {
+async function sampleStartup(
+  page,
+  profile,
+  { inputDelayMs, inputDurationMs, pageTimedInput, route: routeName },
+) {
   const route = roomRoutes[routeName];
   await page.waitForFunction(
     (delay) => {
@@ -1326,6 +1343,7 @@ async function sampleStartup(page, profile, { inputDelayMs, pageTimedInput, rout
   const pressed = performance.now();
   const moveX = x + (route?.turn ?? 96);
   const moveY = y + (route?.pitch ?? 0);
+  const moveCount = Math.ceil((inputDurationMs * 60) / 1000);
   let timer;
   if (pageTimedInput) {
     timer = await page.evaluate(
@@ -1371,6 +1389,13 @@ async function sampleStartup(page, profile, { inputDelayMs, pageTimedInput, rout
       throw new Error(
         `The ${routeName} page-timed move was not measured: ${JSON.stringify(timer)}`,
       );
+  } else if (moveCount) {
+    const intervalMs = Math.ceil(inputDurationMs / moveCount);
+    for (let index = 1; index <= moveCount; index++) {
+      const progress = index / moveCount;
+      await delay(intervalMs);
+      await page.mouse.move(x + (moveX - x) * progress, y + (moveY - y) * progress);
+    }
   } else await page.mouse.move(moveX, moveY);
   const moved = performance.now();
   await page.mouse.up();
@@ -1404,6 +1429,7 @@ async function sampleStartup(page, profile, { inputDelayMs, pageTimedInput, rout
     press: rounded(pressed - positioned),
     move: rounded(moved - pressed),
     release: rounded(released - moved),
+    ...(moveCount && { moveCount }),
     ...(arrival && { arrival }),
     ...(timer && { timer }),
   };
@@ -1697,6 +1723,7 @@ async function measure({ base, directory, head, name, run, settings }) {
     warmupWork,
     fullRoom,
     inputDelayMs,
+    inputDurationMs,
     pageTimedInput,
     screenshot,
     slowDraws,
@@ -1911,6 +1938,7 @@ async function measure({ base, directory, head, name, run, settings }) {
       route,
       weather,
       ...(startup && { requestedInputDelayMs: inputDelayMs }),
+      ...(inputDurationMs && { requestedInputDurationMs: inputDurationMs }),
       observedWeather: raw.weather,
       night: raw.night,
       mode: raw.mode,
@@ -1974,6 +2002,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         cabinetEntryTiming && 'cabinet-entry-timing',
         warmupWork && 'warmup-work',
         inputDelayMs > 0 && `input-delay-${inputDelayMs}ms`,
+        inputDurationMs && `input-duration-${inputDurationMs}ms`,
         slowDraws && 'slow-draws',
         textureUploads && 'texture-uploads',
         checkShaders && 'check-shaders',
