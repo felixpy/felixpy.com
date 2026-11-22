@@ -99,6 +99,7 @@ Use --gpu-timing to sample main-color GPU work during the final steady route, in
 Add --gpu-panorama to alternate whole-room queries with queries around the panorama draw.
 Add --gpu-downstream to also time GTAO and final output on the high-quality path.
 Add --gpu-depth-prepass to alternate inclusive and split depth/color samples on the low-quality path.
+Add --gpu-color-passes to alternate inclusive and opaque/translucent draw samples on the low-quality path.
 Use --opaque-near-first to measure a front-to-back opaque draw order in the replay.
 Use --draw-calls to record WebGL indexed and multi-draw calls during the final steady route.
 Use --repeat-desk to prime the shaders and geometry with one matched desk turn before sampling.
@@ -116,6 +117,7 @@ Set --input-delay-ms=<milliseconds> to wait before the first drag.
 Use --screenshot to save a full-viewport image after sampling.
 Use --slow-draws to attribute individual draw calls taking longer than 50 ms.
 Use --texture-uploads to record uploads of at least 10 ms without timing every draw.
+Use --check-shaders to report shader compilation errors in production builds.
 Use --warm to prime the origin in the same browser context before measuring a reload.
 Use --dist=<directory> to serve an alternate production build.
 Experiment switches: ${Object.keys(experiments).join(', ')}.
@@ -135,6 +137,7 @@ function options(args) {
   const gpuPanorama = captured.delete('--gpu-panorama');
   const gpuDownstream = captured.delete('--gpu-downstream');
   const gpuDepthPrepass = captured.delete('--gpu-depth-prepass');
+  const gpuColorPasses = captured.delete('--gpu-color-passes');
   const opaqueNearFirst = captured.delete('--opaque-near-first');
   const drawCalls = captured.delete('--draw-calls');
   const loaderTrace = captured.delete('--loader-trace');
@@ -147,6 +150,7 @@ function options(args) {
   const screenshot = captured.delete('--screenshot');
   const slowDraws = captured.delete('--slow-draws');
   const textureUploads = captured.delete('--texture-uploads');
+  const checkShaders = captured.delete('--check-shaders');
   const warm = captured.delete('--warm');
   const repeatDesk = captured.delete('--repeat-desk');
   const day = captured.delete('--day');
@@ -177,6 +181,11 @@ function options(args) {
       (!gpuTiming || gpuPanorama || names.some((name) => profiles[name]?.quality !== 'high'))) ||
     (gpuDepthPrepass &&
       (!gpuTiming || gpuPanorama || names.some((name) => profiles[name]?.quality !== 'low'))) ||
+    (gpuColorPasses &&
+      (!gpuTiming ||
+        gpuPanorama ||
+        gpuDepthPrepass ||
+        names.some((name) => profiles[name]?.quality !== 'low'))) ||
     (drawCalls && (captureProfile || steadyProfile || startup || loaderTrace)) ||
     (loaderTrace && (captureProfile || startup || screenshot || slowDraws)) ||
     (steadyProfile && (captureProfile || loaderTrace || startup || slowDraws)) ||
@@ -204,6 +213,7 @@ function options(args) {
     gpuPanorama,
     gpuDownstream,
     gpuDepthPrepass,
+    gpuColorPasses,
     opaqueNearFirst,
     drawCalls,
     loaderTrace,
@@ -214,6 +224,7 @@ function options(args) {
     screenshot,
     slowDraws,
     textureUploads,
+    checkShaders,
     warm,
     repeatDesk,
     day,
@@ -256,10 +267,12 @@ function installProbe({
   startupSpans,
   slowDraws,
   textureUploads,
+  checkShaders,
   gpuTiming,
   gpuPanorama,
   gpuDownstream,
   gpuDepthPrepass,
+  gpuColorPasses,
   opaqueNearFirst,
   day,
   weather,
@@ -332,6 +345,10 @@ function installProbe({
       timings.depth = sample.depthOnlyGpu = makeTiming();
       timings.color = sample.colorAfterDepthGpu = makeTiming();
     }
+    if (gpuColorPasses) {
+      timings.opaque = sample.opaqueColorGpu = makeTiming();
+      timings.translucent = sample.translucentColorGpu = makeTiming();
+    }
     let active = false;
     let openQuery;
 
@@ -363,6 +380,7 @@ function installProbe({
     const splitFrame = () => active && sample.roomFrames.length % 34 === 17;
     const panoramaFrame = () => Boolean(timings.panorama) && splitFrame();
     const splitDepthFrame = () => Boolean(timings.depth) && splitFrame();
+    const colorPassFrame = () => Boolean(timings.opaque) && splitFrame();
     function end(query, discard = false) {
       if (openQuery !== query) return;
       gl.endQuery(timer.TIME_ELAPSED_EXT);
@@ -375,12 +393,15 @@ function installProbe({
     return {
       panoramaFrame,
       splitDepthFrame,
+      colorPassFrame,
       begin(stage = 'main') {
         const result = timings[stage];
         const selected =
           stage === 'downstream' ||
           (sample.roomFrames.length % 17 === 0 &&
-            (stage === 'main' ? !panoramaFrame() && !splitDepthFrame() : splitFrame()));
+            (stage === 'main'
+              ? !panoramaFrame() && !splitDepthFrame() && !colorPassFrame()
+              : splitFrame()));
         if (!active || !result || openQuery || !selected) return null;
         poll();
         const query = gl.createQuery();
@@ -533,6 +554,29 @@ function installProbe({
       };
     }
     const gpu = gpuTiming ? attachGpuTiming(renderer) : undefined;
+    let colorWork;
+    if (gpu && gpuColorPasses) {
+      const renderBuffer = renderer.renderBufferDirect;
+      renderer.renderBufferDirect = function (...args) {
+        if (colorWork) {
+          const material = args[3];
+          if (renderer.getRenderTarget()) colorWork.offscreen++;
+          else {
+            const translucent = material.transparent || material.transmission > 0;
+            const stage =
+              translucent || colorWork.stage === 'translucent' ? 'translucent' : 'opaque';
+            if (colorWork.stage === 'translucent' && !translucent) colorWork.lateOpaque++;
+            if (colorWork.stage !== stage) {
+              if (colorWork.query) gpu.end(colorWork.query);
+              colorWork.query = gpu.begin(stage);
+              colorWork.stage = stage;
+            }
+            colorWork[stage]++;
+          }
+        }
+        return renderBuffer.apply(this, args);
+      };
+    }
     let renderPanorama = false;
     if (gpu && gpuPanorama) {
       const renderBuffer = renderer.renderBufferDirect;
@@ -585,6 +629,8 @@ function installProbe({
     };
     const render = renderer.render;
     renderer.render = function (scene, camera) {
+      if (checkShaders && !renderer.debug.checkShaderErrors)
+        renderer.debug.checkShaderErrors = true;
       if (
         !world &&
         scene.isScene &&
@@ -626,6 +672,8 @@ function installProbe({
       if (primary && drawCalls) drawSample = { indexed: 0, multi: 0, multiSubdraws: 0 };
       if (gpuPanorama) renderPanorama = primary && gpu?.panoramaFrame();
       if (renderPanorama) sample.panoramaFrames = (sample.panoramaFrames ?? 0) + 1;
+      if (primary && gpu?.colorPassFrame())
+        colorWork = { opaque: 0, translucent: 0, offscreen: 0, lateOpaque: 0 };
       let result;
       let complete = false;
       try {
@@ -654,6 +702,12 @@ function installProbe({
         if (downstreamOutput) {
           gpu.end(downstreamQuery, !complete);
           downstreamQuery = undefined;
+        }
+        if (primary && colorWork) {
+          const { query, stage, ...work } = colorWork;
+          if (query) gpu.end(query, !complete);
+          if (complete) (sample.colorPassWork ??= []).push(work);
+          colorWork = undefined;
         }
       }
       if (drag && room) {
@@ -1035,6 +1089,7 @@ async function measure({ base, directory, head, name, run, settings }) {
     gpuPanorama,
     gpuDownstream,
     gpuDepthPrepass,
+    gpuColorPasses,
     opaqueNearFirst,
     drawCalls,
     loaderTrace,
@@ -1045,6 +1100,7 @@ async function measure({ base, directory, head, name, run, settings }) {
     screenshot,
     slowDraws,
     textureUploads,
+    checkShaders,
     selected,
     dist,
     warm,
@@ -1132,10 +1188,12 @@ async function measure({ base, directory, head, name, run, settings }) {
       startupSpans,
       slowDraws,
       textureUploads,
+      checkShaders,
       gpuTiming,
       gpuPanorama,
       gpuDownstream,
       gpuDepthPrepass,
+      gpuColorPasses,
       opaqueNearFirst,
       drawCalls,
       day,
@@ -1250,6 +1308,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         gpuPanorama && 'gpu-panorama',
         gpuDownstream && 'gpu-downstream',
         gpuDepthPrepass && 'gpu-depth-prepass',
+        gpuColorPasses && 'gpu-color-passes',
         opaqueNearFirst && 'opaque-near-first',
         drawCalls && 'draw-calls',
         loaderTrace && 'loader-trace',
@@ -1258,6 +1317,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         inputDelayMs > 0 && `input-delay-${inputDelayMs}ms`,
         slowDraws && 'slow-draws',
         textureUploads && 'texture-uploads',
+        checkShaders && 'check-shaders',
         warm && 'warm',
         repeatDesk && 'repeat-desk',
         seconds !== 12 && `${seconds}s`,
@@ -1312,16 +1372,27 @@ async function measure({ base, directory, head, name, run, settings }) {
       const { samples, p50, p95, p99, max } = stats(durations);
       summary.downstreamGpuMs = { samples, p50, p95, p99, max, discarded };
     }
-    if (gpuDepthPrepass) {
-      for (const [key, rawTiming] of [
-        ['depthOnlyGpuMs', raw.depthOnlyGpu],
-        ['colorAfterDepthGpuMs', raw.colorAfterDepthGpu],
-      ]) {
-        if (rawTiming.durations.length < 5)
-          throw new Error('Insufficient valid split depth queries.');
-        const { samples, p50, p95, p99, max } = stats(rawTiming.durations);
-        summary[key] = { samples, p50, p95, p99, max, discarded: rawTiming.discarded };
-      }
+    for (const [enabled, key, rawTiming] of [
+      [gpuDepthPrepass, 'depthOnlyGpuMs', raw.depthOnlyGpu],
+      [gpuDepthPrepass, 'colorAfterDepthGpuMs', raw.colorAfterDepthGpu],
+      [gpuColorPasses, 'opaqueColorGpuMs', raw.opaqueColorGpu],
+      [gpuColorPasses, 'translucentColorGpuMs', raw.translucentColorGpu],
+    ]) {
+      if (!enabled) continue;
+      if (rawTiming.durations.length < 5)
+        throw new Error('Insufficient valid GPU timing queries for ' + key);
+      const { samples, p50, p95, p99, max } = stats(rawTiming.durations);
+      summary[key] = { samples, p50, p95, p99, max, discarded: rawTiming.discarded };
+    }
+    if (gpuColorPasses) {
+      const work = raw.colorPassWork;
+      summary.colorPassWork = {
+        frames: work.length,
+        medianOpaqueDraws: stats(work.map(({ opaque }) => opaque)).p50,
+        medianTranslucentDraws: stats(work.map(({ translucent }) => translucent)).p50,
+        offscreenDraws: work.reduce((sum, { offscreen }) => sum + offscreen, 0),
+        lateOpaqueDraws: work.reduce((sum, { lateOpaque }) => sum + lateOpaque, 0),
+      };
     }
     if (raw.depthPrefillWork?.length) {
       summary.depthPrefillWork = {
