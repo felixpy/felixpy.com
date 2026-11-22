@@ -1,4 +1,5 @@
 import * as T from 'three';
+import type { DeferRoomAsset } from './rear-loading';
 import { group } from './geometry';
 import type { Palette } from './materials';
 import { campKitchen } from './camp-kitchen';
@@ -8,7 +9,7 @@ export function outdoorRail(
   wall: T.Group,
   _palette: Palette,
   manager: T.LoadingManager,
-  deferRoomDetail: (load: () => void) => void,
+  deferRoomDetail: DeferRoomAsset,
 ) {
   const zone = group(wall, 'Camp kitchen and boot bench', [-0.71, 0, 0]);
   const bag = group(

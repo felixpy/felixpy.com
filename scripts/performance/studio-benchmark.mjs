@@ -19,28 +19,75 @@ const adapterNames = {
   3060: /NVIDIA.*RTX 3060\s*\(/i,
   intel: /Intel.*770/i,
 };
-const usage = `Usage: node scripts/performance/studio-benchmark.mjs [profiles] [run IDs] [--loader-profile]
+const experiments = {
+  '--deferred-books': ['studio-startup', 'deferred-books'],
+  '--warm-preview': ['studio-preview', 'warm'],
+  '--warm-buffers': ['studio-buffers', 'warm'],
+  '--worker-parts': ['studio-parts', 'worker'],
+  '--worker-meshopt': ['studio-meshopt', 'worker'],
+  '--priority-rear': ['studio-rear', 'priority'],
+  '--native-low': ['studio-low', 'native'],
+  '--sliced-build': ['studio-build', 'sliced'],
+  '--photo-fasteners': ['studio-photo-fasteners', 'instanced'],
+  '--preload-details': ['studio-details', 'preload'],
+  '--simple-low': ['studio-low-shading', 'simple'],
+  '--fused-output': ['studio-output', 'fused'],
+  '--legacy-output': ['studio-output', 'legacy'],
+  '--stable-effects': ['studio-effects', 'stable'],
+};
+const usage = `Usage: node scripts/performance/studio-benchmark.mjs [profiles] [run IDs] [options]
 
 Profiles: 4k (default), 1440p, 3060, uhd-adaptive, uhd-native
 List profiles or positive run IDs with commas. Run ID defaults to 1.
 Example: node scripts/performance/studio-benchmark.mjs 4k,uhd-adaptive 1,2,3
-Use --loader-profile to capture startup CPU samples instead of the desk route.
+Use --loader-profile to profile startup CPU work through loader removal.
+Use --startup to exercise the first desk drag as soon as the loader disappears.
+Combine both to extend CPU profiling through the first ten seconds after the drag.
+Use --screenshot to save a full-viewport image after sampling.
+Use --slow-draws to attribute individual draw calls taking longer than 50 ms.
+Use --warm to prime the origin in the same browser context before measuring a reload.
+Use --dist=<directory> to serve an alternate production build.
+Experiment switches: ${Object.keys(experiments).join(', ')}.
 Build first with npm run build. Use installed Chrome on Windows, with ANGLE D3D11.
 Results go to .review/performance/<short commit>/. Matching run IDs are replaced.`;
 
 function options(args) {
-  const positional = args.filter((arg) => arg !== '--loader-profile');
+  const captured = new Set(args.filter((arg) => arg.startsWith('--')));
+  const positional = args.filter((arg) => !captured.has(arg));
   const names = (positional[0] ?? '4k').split(',');
   const ids = (positional[1] ?? '1').split(',');
+  const captureProfile = captured.delete('--loader-profile');
+  const startup = captured.delete('--startup');
+  const screenshot = captured.delete('--screenshot');
+  const slowDraws = captured.delete('--slow-draws');
+  const warm = captured.delete('--warm');
+  const selected = Object.keys(experiments).filter((flag) => captured.delete(flag));
+  const distArgument = [...captured].find((arg) => arg.startsWith('--dist='));
+  captured.delete(distArgument);
+  const dist = distArgument ? distArgument.slice('--dist='.length) : 'dist';
   if (
     positional.length > 2 ||
+    captured.size ||
+    !dist ||
+    (captureProfile && screenshot) ||
     names.some((name) => !Object.hasOwn(profiles, name)) ||
     ids.some((id) => !/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id))) ||
     new Set(names).size !== names.length ||
-    new Set(ids).size !== ids.length
+    new Set(ids).size !== ids.length ||
+    new Set(selected.map((flag) => experiments[flag][0])).size !== selected.length
   )
     throw new Error(usage);
-  return { names, runs: ids.map(Number), captureProfile: args.includes('--loader-profile') };
+  return {
+    names,
+    runs: ids.map(Number),
+    captureProfile,
+    startup,
+    screenshot,
+    slowDraws,
+    warm,
+    selected,
+    dist,
+  };
 }
 
 function browserArgs(adapter) {
@@ -63,7 +110,8 @@ function browserArgs(adapter) {
   return args;
 }
 
-function installProbe({ quality, forceNative }) {
+function installProbe({ quality, forceNative, startup, slowDraws }) {
+  performance.setResourceTimingBufferSize(1000);
   localStorage.setItem(
     'felix-studio-v1',
     JSON.stringify({
@@ -81,6 +129,8 @@ function installProbe({ quality, forceNative }) {
     loaderFrames: [],
     resolutions: {},
     longTasks: [],
+    ...(startup && { firstDrag: { frames: [] } }),
+    ...(slowDraws && { slowDraws: [] }),
     recording: false,
     visible: document.visibilityState,
     visibilityChanged: false,
@@ -111,10 +161,80 @@ function installProbe({ quality, forceNative }) {
   window.__THREE_DEVTOOLS__.addEventListener('observe', ({ detail: renderer }) => {
     if (!renderer.isWebGLRenderer) return;
     sample.renderer = renderer;
+    const drag = sample.firstDrag;
+    let yaw;
+    if (drag) {
+      renderer.domElement.addEventListener(
+        'pointerdown',
+        (event) => {
+          drag.press = event.timeStamp;
+          drag.pressDispatch = performance.now();
+          drag.yawBefore = yaw;
+        },
+        { capture: true, once: true },
+      );
+      renderer.domElement.addEventListener(
+        'pointermove',
+        (event) => {
+          if (drag.press == null || drag.move != null || !(event.buttons & 1)) return;
+          drag.move = event.timeStamp;
+          drag.moveDispatch = performance.now();
+        },
+        { capture: true },
+      );
+    }
     if (forceNative) {
       const setRatio = renderer.setPixelRatio.bind(renderer);
       renderer.setPixelRatio = () => setRatio(1);
       setRatio(1);
+    }
+    if (slowDraws) {
+      const renderBufferDirect = renderer.renderBufferDirect;
+      renderer.renderBufferDirect = function (camera, scene, geometry, material, object, group) {
+        const start = performance.now();
+        const result = renderBufferDirect.call(
+          this,
+          camera,
+          scene,
+          geometry,
+          material,
+          object,
+          group,
+        );
+        const duration = performance.now() - start;
+        if (duration > 50) {
+          const target = renderer.getRenderTarget();
+          const gl = renderer.getContext();
+          const program = renderer.properties.get(material).currentProgram;
+          const ancestry = [];
+          for (let node = object; node && ancestry.length < 6; node = node.parent)
+            ancestry.push({ id: node.id, name: node.name, type: node.type });
+          sample.slowDraws.push({
+            start,
+            duration,
+            ancestry,
+            material: {
+              id: material.id,
+              name: material.name,
+              type: material.type,
+              defines: Object.keys(material.defines ?? {}),
+              uniforms: Object.keys(material.uniforms ?? {}),
+            },
+            geometry: {
+              id: geometry.id,
+              name: geometry.name,
+              type: geometry.type,
+              attributes: Object.keys(geometry.attributes),
+              vertices: geometry.getAttribute('position')?.count,
+              indices: geometry.index?.count,
+            },
+            target: target && [target.width, target.height, target.samples],
+            drawingBuffer: [gl.drawingBufferWidth, gl.drawingBufferHeight],
+            program: program && { id: program.id, name: program.name, type: program.type },
+          });
+        }
+        return result;
+      };
     }
     let world;
     const render = renderer.render;
@@ -127,15 +247,21 @@ function installProbe({ quality, forceNative }) {
       )
         world = scene;
       const frame = document.timeline.currentTime;
+      const room = world === scene && camera.isPerspectiveCamera && !camera.parent?.isCubeCamera;
       const primary =
-        sample.recording &&
-        world === scene &&
-        camera.isPerspectiveCamera &&
-        !camera.parent?.isCubeCamera &&
-        !scene.overrideMaterial &&
-        sample.roomFrames.at(-1) !== frame;
+        sample.recording && room && !scene.overrideMaterial && sample.roomFrames.at(-1) !== frame;
       const start = primary ? performance.now() : 0;
       const result = render.call(this, scene, camera);
+      if (drag && room) {
+        yaw = camera.quaternion.y;
+        if (drag.move != null) {
+          const submitted = performance.now();
+          drag.nextSubmit ??= submitted;
+          if (Math.abs(yaw - drag.yawBefore) > 0.00001) drag.changedSubmit ??= submitted;
+          if (submitted < drag.move + 10000 && drag.frames.at(-1) !== frame)
+            drag.frames.push(frame);
+        }
+      }
       if (primary) {
         sample.roomFrames.push(frame);
         sample.submissions.push(performance.now() - start);
@@ -162,9 +288,24 @@ function readSamples() {
   const { renderer, rotations, recording, ...raw } = window.studioBench;
   const gl = renderer.getContext();
   const info = gl.getExtension('WEBGL_debug_renderer_info');
+  const resources = performance
+    .getEntriesByType('resource')
+    .filter((entry) => new URL(entry.name).origin === location.origin)
+    .map(({ name, initiatorType, startTime, responseEnd, transferSize, encodedBodySize }) => ({
+      path: new URL(name).pathname,
+      initiatorType,
+      startTime,
+      responseEnd,
+      transferSize,
+      encodedBodySize,
+    }));
   return {
     ...raw,
     gpu: info && gl.getParameter(info.UNMASKED_RENDERER_WEBGL),
+    viewport: [innerWidth, innerHeight],
+    devicePixelRatio,
+    drawingBuffer: [gl.drawingBufferWidth, gl.drawingBufferHeight],
+    defaultFramebufferAntialias: gl.getContextAttributes()?.antialias ?? null,
     motion: rotations.length ? Math.max(...rotations) - Math.min(...rotations) : 0,
     marks: Object.fromEntries(
       performance
@@ -172,21 +313,63 @@ function readSamples() {
         .filter((e) => e.name.startsWith('studio'))
         .map((e) => [e.name, e.startTime]),
     ),
-    chunk: performance
-      .getEntriesByType('resource')
-      .map((e) => new URL(e.name).pathname)
-      .find((path) => path.startsWith('/assets/StudioView-') && path.endsWith('.js')),
+    measures: Object.fromEntries(
+      performance
+        .getEntriesByType('measure')
+        .filter((e) => e.name.startsWith('studio'))
+        .map((e) => [e.name, { start: e.startTime, duration: e.duration }]),
+    ),
+    resources,
+    chunk: resources.find(
+      ({ path }) => path.startsWith('/assets/StudioView-') && path.endsWith('.js'),
+    )?.path,
   };
 }
 
-async function sampleDesk(page, { width, height }) {
-  await page.waitForFunction(
+const deskOrigin = ({ width, height }) => ({
+  x: Math.round(width * 0.48),
+  y: Math.round(height * 0.36),
+});
+
+function waitForShading(page) {
+  return page.waitForFunction(
     () => performance.getEntriesByName('studio-room-shaded').length > 0,
     null,
     { timeout: 120000 },
   );
+}
+
+async function sampleStartup(page, profile) {
+  await page.waitForFunction(() => window.studioBench?.loaderEnd > 0, null, {
+    timeout: 120000,
+  });
+  const { x, y } = deskOrigin(profile);
+  const start = performance.now();
+  await page.mouse.move(x, y);
+  const positioned = performance.now();
+  await page.mouse.down();
+  const pressed = performance.now();
+  await page.mouse.move(x + 96, y);
+  const moved = performance.now();
+  await page.mouse.up();
+  const released = performance.now();
+  await page.waitForFunction(
+    () => performance.now() >= window.studioBench?.firstDrag?.move + 10000,
+    null,
+    { timeout: 20000 },
+  );
+  return {
+    position: rounded(positioned - start),
+    press: rounded(pressed - positioned),
+    move: rounded(moved - pressed),
+    release: rounded(released - moved),
+  };
+}
+
+async function sampleDesk(page, profile) {
+  await waitForShading(page);
   await page.waitForTimeout(5000);
-  const origin = { x: Math.round(width * 0.48), y: Math.round(height * 0.36) };
+  const origin = deskOrigin(profile);
   await page.mouse.move(origin.x, origin.y);
   await page.mouse.down();
   await page.evaluate(
@@ -219,7 +402,7 @@ async function sampleDesk(page, { width, height }) {
   await page.mouse.up();
 }
 
-function checkSamples(raw, profile, captureProfile) {
+function checkSamples(raw, profile, { captureProfile, startup }) {
   if (
     !adapterNames[profile.adapter].test(raw.gpu) ||
     raw.visible !== 'visible' ||
@@ -230,6 +413,19 @@ function checkSamples(raw, profile, captureProfile) {
     );
   if (!raw.chunk || !raw.loaderFrames.length || !(raw.loaderEnd > raw.loaderStart))
     throw new Error('The production room chunk or loader samples are missing.');
+  if (startup) {
+    if (!raw.firstDrag?.changedSubmit || raw.firstDrag.frames.length < 2)
+      throw new Error(
+        'The first desk drag produced no measurable change in submitted room frames.',
+      );
+    const [width, height] = raw.drawingBuffer;
+    if (
+      (profile.quality === 'high' || profile.forceNative) &&
+      (width !== profile.width || height !== profile.height)
+    )
+      throw new Error('Unexpected native drawing-buffer dimensions: ' + raw.drawingBuffer);
+    return;
+  }
   if (captureProfile) return;
   if (!raw.motion || raw.roomFrames.length < 2)
     throw new Error(
@@ -264,8 +460,37 @@ function stats(values) {
   };
 }
 
-async function measure({ base, directory, head, name, run, captureProfile }) {
+function startupSummary(raw, automationCommandMs) {
+  const { press, pressDispatch, move, moveDispatch, nextSubmit, changedSubmit, frames } =
+    raw.firstDrag;
+  const accepted = raw.marks['studio-input-accepted'];
+  const longTasks = raw.longTasks.filter(
+    ([start, duration]) => start < move + 10000 && start + duration > move,
+  );
+  const resources = raw.resources.filter(({ responseEnd }) => responseEnd <= (accepted ?? move));
+  return {
+    loaderEndToPressMs: rounded(press - raw.loaderEnd),
+    loaderEndToMoveMs: rounded(move - raw.loaderEnd),
+    loaderEndToChangedRoomSubmitMs: rounded(changedSubmit - raw.loaderEnd),
+    pressDispatchMs: rounded(pressDispatch - press),
+    inputDispatchMs: rounded(moveDispatch - move),
+    inputToNextRoomSubmitMs: rounded(nextSubmit - move),
+    inputToChangedRoomSubmitMs: rounded(changedSubmit - move),
+    acceptedInputToChangedRoomSubmitMs: accepted == null ? null : rounded(changedSubmit - accepted),
+    afterFirstInput: stats(intervals(frames)),
+    afterFirstInputLongTaskCount: longTasks.length,
+    afterFirstInputLongTaskMax: Math.max(0, ...longTasks.map(([, duration]) => duration)),
+    finishedResourcesBeforeInput: resources.length,
+    transferBytesBeforeInput: resources.reduce((total, entry) => total + entry.transferSize, 0),
+    automationCommandMs,
+  };
+}
+
+async function measure({ base, directory, head, name, run, settings }) {
+  const { captureProfile, startup, screenshot, slowDraws, selected, dist, warm } = settings;
   const profile = profiles[name];
+  const url = new URL(base);
+  for (const flag of selected) url.searchParams.set(...experiments[flag]);
   const args = browserArgs(profile.adapter);
   const browser = await chromium.launch({ channel: 'chrome', headless: true, args });
   try {
@@ -277,41 +502,94 @@ async function measure({ base, directory, head, name, run, captureProfile }) {
     });
     const issues = [];
     page.on('pageerror', (error) => issues.push(String(error)));
+    page.on('console', (message) => {
+      if (message.type() === 'error') issues.push(message.text());
+    });
+    page.on('console', (message) => {
+      if (
+        message.type() === 'error' &&
+        /WebGLProgram|shader (error|compilation|link)/i.test(message.text())
+      )
+        issues.push(message.text());
+    });
     page.on('response', (response) => {
       if (response.status() >= 400) issues.push(response.status() + ' ' + response.url());
     });
     page.on('requestfailed', (request) =>
       issues.push(request.failure()?.errorText + ' ' + request.url()),
     );
-    await page.route(/^https:\/\//, (route) => {
-      if (new URL(route.request().url()).hostname === 'api.open-meteo.com')
-        return route.fulfill({ json: { current: { weather_code: 0, is_day: 0 } } });
-      return route.abort();
-    });
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Network.enable');
-    await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
-    await page.addInitScript(installProbe, profile);
+    await cdp.send('Network.setCacheDisabled', { cacheDisabled: !warm });
+    const cachedRequests = new Set();
+    const revalidatedRequests = new Set();
+    cdp.on('Network.requestServedFromCache', ({ requestId }) => cachedRequests.add(requestId));
+    cdp.on('Network.responseReceived', ({ requestId, response }) => {
+      if (response.fromDiskCache) cachedRequests.add(requestId);
+    });
+    cdp.on('Network.responseReceivedExtraInfo', ({ requestId, statusCode }) => {
+      if (statusCode === 304) revalidatedRequests.add(requestId);
+    });
+    const weather = { current: { weather_code: 0, is_day: 0 } };
+    if (warm) {
+      cdp.on('Fetch.requestPaused', ({ requestId, request }) => {
+        const meteorology = new URL(request.url).hostname === 'api.open-meteo.com';
+        const response = meteorology
+          ? {
+              requestId,
+              responseCode: 200,
+              responseHeaders: [
+                { name: 'Content-Type', value: 'application/json' },
+                { name: 'Access-Control-Allow-Origin', value: '*' },
+              ],
+              body: Buffer.from(JSON.stringify(weather)).toString('base64'),
+            }
+          : { requestId, responseCode: 204 };
+        void cdp.send('Fetch.fulfillRequest', response).catch((error) => {
+          issues.push(String(error));
+        });
+      });
+      await cdp.send('Fetch.enable', { patterns: [{ urlPattern: 'https://*' }] });
+    } else {
+      await page.route(/^https:\/\//, (route) => {
+        if (new URL(route.request().url()).hostname === 'api.open-meteo.com')
+          return route.fulfill({ json: weather });
+        return route.abort();
+      });
+    }
+    await page.addInitScript(installProbe, { ...profile, startup, slowDraws });
+    if (warm) {
+      await page.goto(url.href, { waitUntil: 'domcontentloaded' });
+      await waitForShading(page);
+      await page.waitForLoadState('networkidle', { timeout: 120000 });
+      cachedRequests.clear();
+      revalidatedRequests.clear();
+    }
     if (captureProfile) {
       await cdp.send('Performance.enable');
       await cdp.send('Profiler.enable');
       await cdp.send('Profiler.setSamplingInterval', { interval: 1000 });
       await cdp.send('Profiler.start');
     }
-    await page.goto(base, { waitUntil: 'domcontentloaded' });
-    let cpuProfile, navigationStart;
+    if (warm) await page.reload({ waitUntil: 'domcontentloaded' });
+    else await page.goto(url.href, { waitUntil: 'domcontentloaded' });
+    let cpuProfile, navigationStart, automationCommandMs;
+    if (startup) automationCommandMs = await sampleStartup(page, profile);
     if (captureProfile) {
-      await page.waitForFunction(() => window.studioBench?.loaderEnd > 0, null, {
-        timeout: 120000,
-      });
+      if (!startup)
+        await page.waitForFunction(() => window.studioBench?.loaderEnd > 0, null, {
+          timeout: 120000,
+        });
       cpuProfile = (await cdp.send('Profiler.stop')).profile;
       const { metrics } = await cdp.send('Performance.getMetrics');
       navigationStart = metrics.find((m) => m.name === 'NavigationStart')?.value;
       if (!cpuProfile.samples.length || !navigationStart)
         throw new Error('Startup CPU samples or navigation clock unavailable.');
-    } else await sampleDesk(page, profile);
+    }
+    if (startup) await waitForShading(page);
+    else if (!captureProfile) await sampleDesk(page, profile);
     const raw = await page.evaluate(readSamples);
-    checkSamples(raw, profile, captureProfile);
+    checkSamples(raw, profile, settings);
     const summary = {
       variant: name,
       run,
@@ -322,18 +600,43 @@ async function measure({ base, directory, head, name, run, captureProfile }) {
       os: os.release(),
       cpu: os.cpus()[0]?.model,
       gpu: raw.gpu,
+      viewport: raw.viewport,
+      devicePixelRatio: raw.devicePixelRatio,
+      drawingBuffer: raw.drawingBuffer,
+      defaultFramebufferAntialias: raw.defaultFramebufferAntialias,
       chunk: raw.chunk,
       chunkSHA256: createHash('sha256')
-        .update(readFileSync(join('dist', raw.chunk)))
+        .update(readFileSync(join(dist, raw.chunk)))
         .digest('hex'),
       visible: raw.visible,
       visibilityChanged: raw.visibilityChanged,
       issues,
+      cache: {
+        policy: warm ? 'warm' : 'cold',
+        hits: cachedRequests.size,
+        revalidated: revalidatedRequests.size,
+      },
       args,
       profile,
+      experiments: Object.fromEntries(url.searchParams),
+      ...(slowDraws && { slowDraws: raw.slowDraws.length }),
     };
-    const stem = join(directory, (captureProfile ? 'loader-profile-' : '') + name + '-' + run);
+    const stem = join(
+      directory,
+      [
+        captureProfile && 'loader-profile',
+        startup && 'startup',
+        slowDraws && 'slow-draws',
+        warm && 'warm',
+        name,
+        ...selected.map((flag) => flag.slice(2)),
+        run,
+      ]
+        .filter(Boolean)
+        .join('-'),
+    );
     if (captureProfile) {
+      if (startup) Object.assign(summary, startupSummary(raw, automationCommandMs));
       writeFileSync(stem + '.cpuprofile.gz', gzipSync(JSON.stringify(cpuProfile)));
       writeFileSync(
         stem + '.meta.json',
@@ -353,22 +656,30 @@ async function measure({ base, directory, head, name, run, captureProfile }) {
         ([start, duration]) => start < raw.loaderEnd && start + duration > raw.loaderStart,
       );
       Object.assign(summary, {
-        resolutions: raw.resolutions,
-        room: stats(intervals(raw.roomFrames)),
-        primarySubmitP95: stats(raw.submissions).p95,
-        draws: raw.draws,
-        tris: raw.tris,
-        motion: raw.motion,
         loader: stats(intervals([raw.loaderStart, ...raw.loaderFrames, raw.loaderEnd])),
         loaderStart: rounded(raw.loaderStart),
         loaderEnd: rounded(raw.loaderEnd),
         loaderLongTaskMax: Math.max(0, ...loaderTasks.map(([, duration]) => duration)),
         marks: raw.marks,
+        measures: raw.measures,
       });
+      if (startup) Object.assign(summary, startupSummary(raw, automationCommandMs));
+      else
+        Object.assign(summary, {
+          resolutions: raw.resolutions,
+          room: stats(intervals(raw.roomFrames)),
+          primarySubmitP95: stats(raw.submissions).p95,
+          draws: raw.draws,
+          tris: raw.tris,
+          motion: raw.motion,
+        });
       writeFileSync(stem + '.json', JSON.stringify({ summary, raw }, null, 2));
+      if (screenshot) await page.screenshot({ path: stem + '.png', timeout: 60000 });
     }
     console.log(stem, JSON.stringify(summary));
     if (issues.length) throw new Error('Browser issues were recorded in the measurement output.');
+    if (warm && !cachedRequests.size && !revalidatedRequests.size)
+      throw new Error('The warm reload observed no HTTP cache hits or revalidations.');
   } finally {
     await browser.close();
   }
@@ -377,17 +688,22 @@ async function measure({ base, directory, head, name, run, captureProfile }) {
 async function main() {
   const args = process.argv.slice(2);
   if (args.includes('--help') || args.includes('-h')) return console.log(usage);
-  const { names, runs, captureProfile } = options(args);
-  if (!existsSync('dist/index.html'))
+  const settings = options(args);
+  const { names, runs, dist } = settings;
+  if (!existsSync(join(dist, 'index.html')))
     throw new Error('Run npm run build from the website root first.');
   const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const directory = join('.review', 'performance', head.slice(0, 7));
   mkdirSync(directory, { recursive: true });
-  const server = await preview({ configFile: false, preview: { host: '127.0.0.1', port: 0 } });
+  const server = await preview({
+    configFile: false,
+    build: { outDir: dist },
+    preview: { host: '127.0.0.1', port: 0 },
+  });
   const base = 'http://127.0.0.1:' + server.httpServer.address().port;
   try {
     for (const run of runs)
-      for (const name of names) await measure({ base, directory, head, name, run, captureProfile });
+      for (const name of names) await measure({ base, directory, head, name, run, settings });
   } finally {
     await server.close();
   }

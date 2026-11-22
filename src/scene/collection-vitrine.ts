@@ -1,4 +1,5 @@
 import * as T from 'three';
+import type { DeferRoomAsset } from './rear-loading';
 import { cabinetSpots } from './cabinet-spots';
 import { loadDisplayModel } from './display-model';
 import { coatingLayers, coatingTints, nikkorCoating } from './nikkor-coating';
@@ -11,7 +12,7 @@ export function collectionVitrine(
   wall: T.Group,
   p: Palette,
   manager: T.LoadingManager,
-  deferRoomDetail: (load: () => void) => void,
+  deferRoomDetail: DeferRoomAsset,
 ) {
   const unit = group(wall, 'Low-iron glass collection cabinet', [0.599, 0, 0]);
   const lenses = [

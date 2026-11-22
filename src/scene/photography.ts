@@ -1,4 +1,5 @@
 import * as T from 'three';
+import type { DeferRoomAsset } from './rear-loading';
 import { canvasTexture, group, mesh, random, type XYZ } from './geometry';
 import type { Palette } from './materials';
 import type { Locale } from '../app/locale';
@@ -59,13 +60,13 @@ export function photoPrinter(
   sample: T.Texture,
   position: XYZ,
   manager: T.LoadingManager,
-  defer: (load: () => void) => void,
+  defer: DeferRoomAsset,
 ) {
   const printer = group(parent, 'Canon SELPHY CP1500', position);
   printer.rotation.y = -Math.PI / 2;
   const output = group(printer, 'Belém Tower postcard proof');
-  defer(() => {
-    void loadDisplayModel(printer, '/media/models/selphy-cp1500.glb', manager, {
+  defer(() =>
+    loadDisplayModel(printer, '/media/models/selphy-cp1500.glb', manager, {
       mesh(part) {
         const material = part.material;
         if (!(material instanceof T.MeshStandardMaterial)) return;
@@ -85,8 +86,8 @@ export function photoPrinter(
         sheet.quaternion.identity();
         output.add(sheet);
       },
-    });
-  });
+    }),
+  );
   return output;
 }
 

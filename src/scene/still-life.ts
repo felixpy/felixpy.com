@@ -1,4 +1,5 @@
 import * as T from 'three';
+import type { DeferRoomAsset } from './rear-loading';
 import { cable, canvasTexture, group, mesh, random, surface, type XYZ } from './geometry';
 import { loadDisplayModel } from './display-model';
 import lunaSections from './kinto-luna-sections.json';
@@ -160,7 +161,7 @@ export function skogDiffuser(
   parent: T.Object3D,
   position: XYZ,
   manager: T.LoadingManager,
-  defer: (load: () => void) => void,
+  defer: DeferRoomAsset,
 ) {
   const pivotHeight = 0.112;
   const bottle = group(parent, 'Skandinavisk SKOG · forest scent', [

@@ -1,6 +1,6 @@
 import * as T from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { displayMeshoptDecoder } from './display-meshopt';
 import { packedBuffer } from './packed-buffer';
 
 type ModelSetup = {
@@ -34,7 +34,7 @@ export function loadDisplayModel(
   manager: T.LoadingManager,
   setup: ModelSetup = {},
 ) {
-  const loader = new GLTFLoader(manager).setMeshoptDecoder(MeshoptDecoder);
+  const loader = new GLTFLoader(manager).setMeshoptDecoder(displayMeshoptDecoder());
   async function mount() {
     const authoring =
       import.meta.env.DEV && new URLSearchParams(location.search).get('review') === 'authoring';

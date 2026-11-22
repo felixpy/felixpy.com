@@ -132,7 +132,7 @@ function fasten(wall: T.Group, p: Palette, card: T.Object3D, height: number, ind
     mesh(mount, strip, tape, [-0.004, height / 2, 0]).castShadow = false;
   } else {
     const y = height / 2 - 0.004;
-    tube(mount, [0, y, -0.004], [0, y, 0.0014], 0.00053, p.steel);
+    const shank = tube(mount, [0, y, -0.004], [0, y, 0.0014], 0.00053, p.steel);
     const dome = mesh(
       mount,
       new T.SphereGeometry(0.0024, 14, 9),
@@ -140,6 +140,48 @@ function fasten(wall: T.Group, p: Palette, card: T.Object3D, height: number, ind
       [0, y, 0.00135],
     );
     dome.scale.z = 0.49;
+    return { mount, shank, dome };
+  }
+}
+
+type PrintPin = NonNullable<ReturnType<typeof fasten>>;
+
+function instancePrintPins(board: T.Group, pins: PrintPin[]) {
+  function addBatch(parts: PrintPin['shank'][], name: string) {
+    if (parts.length < 2) return;
+    const [first] = parts;
+    const batch = new T.InstancedMesh(first.geometry, first.material, parts.length);
+    batch.name = name;
+    batch.castShadow = first.castShadow;
+    batch.receiveShadow = first.receiveShadow;
+    batch.userData.exportInstalledInstances = true;
+    const transform = new T.Matrix4();
+    for (const [index, part] of parts.entries()) {
+      const mount = part.parent!;
+      mount.updateMatrix();
+      part.updateMatrix();
+      batch.setMatrixAt(index, transform.multiplyMatrices(mount.matrix, part.matrix));
+      part.removeFromParent();
+      if (!mount.children.length) mount.removeFromParent();
+      if (part.geometry !== first.geometry) part.geometry.dispose();
+    }
+    batch.computeBoundingSphere();
+    board.add(batch);
+  }
+
+  for (const left of [true, false]) {
+    const side = pins.filter(({ mount }) => mount.position.x < 0 === left);
+    addBatch(
+      side.map(({ shank }) => shank),
+      'Print pin shanks',
+    );
+    const heads = new Map<T.Material, PrintPin['dome'][]>();
+    for (const { dome } of side) {
+      const group = heads.get(dome.material) ?? [];
+      group.push(dome);
+      heads.set(dome.material, group);
+    }
+    for (const parts of heads.values()) addBatch(parts, 'Print pin heads');
   }
 }
 
@@ -150,6 +192,14 @@ export function personalArchive(
   load: (url: string) => T.Texture,
 ) {
   const board = group(root, 'Travel photographs and instant film', [-0.183, 1.864, -0.537]);
+  const instanced =
+    typeof location !== 'undefined' &&
+    new URLSearchParams(location.search).get('studio-photo-fasteners') === 'instanced';
+  const pins: PrintPin[] | undefined = instanced ? [] : undefined;
+  function mountPrint(card: T.Object3D, height: number, index: number) {
+    const pin = fasten(board, p, card, height, index);
+    if (pin) pins?.push(pin);
+  }
   box(board, [0.91, 0.523, 0.018], [0, 0, -0.011], p.woodDark, 0.002);
   const color = load('/media/materials/cork-board.webp');
   const normal = load('/media/materials/cork-grain.webp');
@@ -174,7 +224,7 @@ export function personalArchive(
       corkFace + printThickness / 2 + 0.000025,
     ]);
     photo.card.rotation.z = turn;
-    fasten(board, p, photo.card, 0.1524, i);
+    mountPrint(photo.card, 0.1524, i);
     return {
       id: 'print-' + id,
       object: photo.card,
@@ -195,9 +245,10 @@ export function personalArchive(
     const backing = overlaidFilm.has(key) ? printThickness + printCurl + 0.000025 : 0;
     photo.position.set(x, y, corkFace + backing + filmThickness / 2 + 0.000025);
     photo.rotation.z = turn;
-    fasten(board, p, photo, 0.086, i + original.length);
+    mountPrint(photo, 0.086, i + original.length);
     return { id: 'instant-' + key, object: photo, size: 0.086, en, zh };
   });
+  if (pins) instancePrintPins(board, pins);
   const prints = [...original, ...instant];
   return {
     board,

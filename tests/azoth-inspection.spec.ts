@@ -1,10 +1,33 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import type { InstancedMesh, Material, Scene } from 'three';
 
 type SwitchState = {
   visible: boolean;
   parts: { id: string; count: number; material: string; roomLighting: boolean; clear: boolean }[];
 };
+
+async function pickUpKeyboard(page: Page) {
+  const hint = page
+    .locator('.world-cue')
+    .getByText('Inspect the mechanical keyboard', { exact: true });
+  const key = async () => {
+    const point = await page.evaluate(() => window.__studioReview!.project('keyboard'));
+    return { x: point!.x + 20, y: point!.y - 8 };
+  };
+  await expect
+    .poll(
+      async () => {
+        const { x, y } = await key();
+        await page.mouse.move(x, y);
+        return hint.isVisible();
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+  const { x, y } = await key();
+  await page.mouse.click(x, y);
+  await expect(page.locator('.studio')).toHaveAttribute('data-mode', 'inspect');
+}
 
 test('a late Azoth switch delivery stays on the desk until the next inspection @webgl', async ({
   page,
@@ -64,35 +87,13 @@ test('a late Azoth switch delivery stays on the desk until the next inspection @
         !document.querySelector('.studio-loading'),
     );
     const room = page.locator('.studio');
-    const pickup = async () => {
-      const hint = page
-        .locator('.world-cue')
-        .getByText('Inspect the mechanical keyboard', { exact: true });
-      const key = async () => {
-        const point = await page.evaluate(() => window.__studioReview!.project('keyboard'));
-        return { x: point!.x + 20, y: point!.y - 8 };
-      };
-      await expect
-        .poll(
-          async () => {
-            const { x, y } = await key();
-            await page.mouse.move(x, y);
-            return hint.isVisible();
-          },
-          { timeout: 20_000 },
-        )
-        .toBe(true);
-      const { x, y } = await key();
-      await page.mouse.click(x, y);
-      await expect(room).toHaveAttribute('data-mode', 'inspect');
-    };
     const putBack = async () => {
       await page.keyboard.press('Escape');
       await expect(room).toHaveAttribute('data-mode', 'room');
     };
     expect(await read()).toEqual({ visible: false, parts: [] });
     expect(requests).toBe(0);
-    await pickup();
+    await pickUpKeyboard(page);
     await expect.poll(() => requests).toBe(1);
     expect(await read()).toEqual({ visible: true, parts: [] });
     await putBack();
@@ -118,7 +119,7 @@ test('a late Azoth switch delivery stays on the desk until the next inspection @
       ['Azoth · clear switch lid', 81, true, false],
       ['Azoth · snow-white POM stem', 81, false, true],
     ]);
-    await pickup();
+    await pickUpKeyboard(page);
     expect(await read()).toEqual({ ...delivered, visible: true });
     await putBack();
     expect(await read()).toEqual(delivered);
@@ -126,4 +127,46 @@ test('a late Azoth switch delivery stays on the desk until the next inspection @
   } finally {
     hold.resolve();
   }
+});
+
+test('inspection preload waits for both the installed keyboard and its switch assembly @webgl', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'felix-studio-v1',
+      JSON.stringify({ reducedMotion: true, quality: 'low' }),
+    );
+  });
+  const holdBase = Promise.withResolvers<void>();
+  const holdSwitches = Promise.withResolvers<void>();
+  let requests = 0;
+  await page.route('**/rog-azoth-extreme.glb*', async (route) => {
+    await holdBase.promise;
+    await route.continue();
+  });
+  await page.route('**/rog-azoth-extreme-switches.glb*', async (route) => {
+    requests++;
+    await holdSwitches.promise;
+    await route.continue();
+  });
+  try {
+    await page.goto('/?review&studio-details=preload', { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => requests, { timeout: 20_000 }).toBe(1);
+    await expect(page.locator('.studio-loading')).toBeVisible();
+    holdSwitches.resolve();
+    await page.waitForFunction(() => window.__studioReview?.objectPose('Installed_switches'));
+    await expect(page.locator('.studio-loading')).toBeVisible();
+  } finally {
+    holdBase.resolve();
+    holdSwitches.resolve();
+  }
+  await page.waitForFunction(
+    () =>
+      window.__studioReview?.objectPose('Installed_switches') &&
+      window.__studioReview?.objectPose('ROG_Azoth_Extreme') &&
+      !document.querySelector('.studio-loading'),
+  );
+  await pickUpKeyboard(page);
+  expect(requests).toBe(1);
 });

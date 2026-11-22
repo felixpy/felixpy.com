@@ -26,7 +26,7 @@ import { roomDetail } from './room-detail';
 import { roomPicking } from './room-picking';
 import { surfaceFinish } from './surface-finish';
 import { screenProjection } from './screen-projection';
-import { buildStudio } from './studio';
+import { buildStudio, buildStudioSteps, type StudioModel } from './studio';
 import {
   opensStudioView,
   atWindow,
@@ -95,27 +95,39 @@ type Inspection = {
 };
 const lookKeys = new Set(['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight']);
 
-function CameraRig(
-  props: Props & {
-    mapMarker: RefObject<SVGGElement | null>;
-    firstPicture: RefObject<FirstPicture>;
-    firstFrame: ReturnType<typeof roomFirstFrame>;
-    detailRevision: RefObject<number>;
-    phonePanel: RefObject<HTMLDivElement | null>;
-    setPhoneHeld: (held: boolean) => void;
-  },
-) {
+type RigProps = Props & {
+  mapMarker: RefObject<SVGGElement | null>;
+  firstPicture: RefObject<FirstPicture>;
+  detailRevision: RefObject<number>;
+  phonePanel: RefObject<HTMLDivElement | null>;
+  setPhoneHeld: (held: boolean) => void;
+  nativeLow: boolean;
+};
+
+type Assembly = {
+  model: StudioModel;
+  assets: { loaded: number; total: number };
+  frontReady: () => Promise<void>;
+};
+
+function assemblyLoading() {
+  const assets = { loaded: 0, total: 0 };
+  const manager = new T.LoadingManager();
+  manager.onStart = manager.onProgress = (_, loaded, total) =>
+    Object.assign(assets, { loaded, total });
+  function frontReady() {
+    if (assets.loaded === assets.total) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      manager.onLoad = resolve;
+    });
+  }
+  return { assets, manager, frontReady };
+}
+
+function CameraRig(props: RigProps & Assembly) {
   const { camera: baseCamera, gl, scene } = useThree();
   const camera = baseCamera as T.PerspectiveCamera;
-  const [{ model, assets }] = useState(() => {
-    props.firstFrame.warm(gl);
-    const assets = { loaded: 0, total: 0 };
-    const manager = new T.LoadingManager();
-    manager.onProgress = (_, loaded, total) => Object.assign(assets, { loaded, total });
-    const model = buildStudio(manager, props.environment);
-    props.firstFrame.windowSlats.value = model.slats;
-    return { model, assets };
-  });
+  const { model, assets } = props;
   const live = useRef(props);
   live.current = props;
   const loading = useRef({ reported: -1, complete: false });
@@ -154,6 +166,7 @@ function CameraRig(
     ...initialOrbit(towerOrbit),
     hardwareId: 'case',
     center: new T.Vector3(),
+    object: undefined as T.Object3D | undefined,
   });
   const returningFromTower = useRef(false);
   const wallFocus = useRef<WallFocus | null>(null);
@@ -408,7 +421,7 @@ function CameraRig(
     function moveToStation(next: Station) {
       station.current = next;
       if (next === 'bench') {
-        void model.prepareRear();
+        void model.prepareRear('bench');
         looks.current.bench = { yaw: benchEye.yaw, pitch: benchEye.pitch };
         void model
           .prepareWorkshop()
@@ -517,12 +530,9 @@ function CameraRig(
         live.current.onHint('');
         return;
       }
-      if (
-        target.type === 'gear' ||
-        target.id === 'collection-cabinet' ||
-        target.id === 'filament-printer'
-      )
-        void model.prepareRear();
+      if (target.type === 'gear') void model.prepareRear('gear');
+      else if (target.id === 'collection-cabinet') void model.prepareRear('cabinet');
+      else if (target.id === 'filament-printer') void model.prepareRear('bench');
       if (isWallView(target.type)) {
         const bounds = localBounds(target.object);
         const center = target.object.localToWorld(bounds.getCenter(new T.Vector3()));
@@ -562,6 +572,7 @@ function CameraRig(
           ...initialOrbit(orbit),
           hardwareId: target.id,
           center: target.object.localToWorld(new T.Vector3(...orbit.center)),
+          object: target.object,
         };
         setMode('case');
         if (live.current.environment.reducedMotion) {
@@ -637,6 +648,7 @@ function CameraRig(
     }
 
     const computer = model.targets.find((target) => target.id === 'computer');
+    let measuredFirstTurn = false;
     live.current.controls.current = {
       open: () => open(computer),
       exit,
@@ -693,6 +705,10 @@ function CameraRig(
       drag.moved = true;
       if (canLookAround(mode.current)) {
         turnView(mode.current, -dx * 0.0035, -dy * 0.0028);
+        if (!measuredFirstTurn && live.current.roomVisible) {
+          measuredFirstTurn = true;
+          performance.mark('studio-input-accepted', { detail: { eventTime: event.timeStamp } });
+        }
         drag.x = event.clientX;
         drag.y = event.clientY;
         element.style.cursor = 'grabbing';
@@ -918,6 +934,11 @@ function CameraRig(
 
   useEffect(() => {
     if (!props.roomVisible || !shaded) return;
+    return model.prepareBookBacks();
+  }, [model, props.roomVisible, shaded]);
+
+  useEffect(() => {
+    if (!props.roomVisible || !shaded) return;
     if (typeof window.requestIdleCallback === 'function') {
       const idle = window.requestIdleCallback(() => void model.prepareRear(), { timeout: 240 });
       return () => window.cancelIdleCallback(idle);
@@ -948,8 +969,10 @@ function CameraRig(
     if (!load.complete && assets.total) {
       const ratio = assets.loaded / assets.total;
       if (ratio === 1 && props.roomVisible && props.firstPicture.current === 'interactive') {
+        performance.mark('studio-room-material-prep-start');
         roomMaterials.current?.prepareMaterials();
         finishNormals.current?.();
+        performance.mark('studio-room-material-prep-end');
         props.firstPicture.current = 'preparing';
       }
       if (ratio !== load.reported) {
@@ -978,16 +1001,23 @@ function CameraRig(
         if (ancestor === null) visibleArrival = true;
       }
       model.mountedDetails.length = 0;
+      if (props.nativeLow) roomMeshes.current?.refresh();
       if (visibleArrival) {
         props.detailRevision.current++;
         shadowWarmup.current = 2;
       }
     }
-    roomMeshes.current?.select(
-      load.complete &&
-        env.quality === 'low' &&
-        (isStation(current) || atWindow(current) || current === 'computer'),
-    );
+    const low = load.complete && env.quality === 'low';
+    if (props.nativeLow && low) {
+      const detail =
+        inspection.current?.target.object ??
+        (current === 'case' ? caseView.current.object : undefined);
+      roomMeshes.current?.select(true, detail);
+    } else {
+      roomMeshes.current?.select(
+        low && (isStation(current) || atWindow(current) || current === 'computer'),
+      );
+    }
     const cached = scratch.current;
     const ease = env.reducedMotion ? 1 : 1 - Math.exp(-delta * 10.5);
     const windowOcclusion = env.blinds ? (env.angle + 1) / 3 : 0;
@@ -1320,6 +1350,7 @@ function CameraRig(
       live.current.musicPlaying,
       current === 'bench' || (atBench && current === 'inspect'),
       camera,
+      props.nativeLow,
     );
     if (shadowWarmup.current > 0 || current === 'returning' || geometryMoving) {
       shadowWarmup.current = Math.max(0, shadowWarmup.current - 1);
@@ -1329,34 +1360,178 @@ function CameraRig(
   return <primitive object={model.root} />;
 }
 
+function StudioRoom({
+  firstFrame,
+  nativeLow,
+  setLowScale,
+  ...props
+}: RigProps & {
+  firstFrame: ReturnType<typeof roomFirstFrame>;
+  setLowScale: (scale: number) => void;
+}) {
+  const gl = useThree((state) => state.gl);
+  const [startup] = useState(() => {
+    const query = new URLSearchParams(location.search);
+    return {
+      environment: props.environment,
+      sliced: query.get('studio-build') === 'sliced',
+      simpleLow: query.get('studio-low-shading') === 'simple',
+      options: {
+        deferBookBacks: query.get('studio-startup') === 'deferred-books',
+        prioritizeRear: query.get('studio-rear') === 'priority',
+        preloadInspection: query.get('studio-details') === 'preload',
+      },
+    };
+  });
+  const [assembly, setAssembly] = useState<Assembly | null>(() => {
+    if (startup.sliced) return null;
+    firstFrame.warm(gl);
+    const { assets, manager, frontReady } = assemblyLoading();
+    performance.mark('studio-room-build-start');
+    const model = buildStudio(manager, startup.environment, startup.options);
+    performance.mark('studio-room-built');
+    firstFrame.windowSlats.value = model.slats;
+    return { model, assets, frontReady };
+  });
+  const [failure, setFailure] = useState<{ error: unknown }>();
+  const readiness = useRef<Promise<void> | null>(null);
+
+  useEffect(() => {
+    if (!startup.sliced) return;
+    firstFrame.warm(gl);
+    const { assets, manager, frontReady } = assemblyLoading();
+    const steps = buildStudioSteps(manager, startup.environment, startup.options);
+    let frame = requestAnimationFrame(advance);
+    let started = false;
+    let complete = false;
+
+    function advance() {
+      try {
+        if (!started) {
+          started = true;
+          performance.mark('studio-room-build-start');
+        }
+        const deadline = performance.now() + 5;
+        do {
+          const step = steps.next();
+          if (!step.done) continue;
+          const model = step.value;
+          complete = true;
+          performance.mark('studio-room-built');
+          firstFrame.windowSlats.value = model.slats;
+          setAssembly({ model, assets, frontReady });
+          return;
+        } while (performance.now() < deadline);
+        frame = requestAnimationFrame(advance);
+      } catch (error) {
+        setFailure({ error });
+      }
+    }
+
+    return () => {
+      cancelAnimationFrame(frame);
+      if (!complete) firstFrame.dispose();
+    };
+  }, [firstFrame, gl, startup]);
+
+  useLayoutEffect(() => {
+    if (!startup.options.preloadInspection || !assembly) return;
+    performance.mark('studio-inspection-preload-start');
+    readiness.current = Promise.allSettled([
+      assembly.frontReady(),
+      assembly.model.prepareRear(),
+    ]).then(() => {
+      performance.mark('studio-inspection-preload-end');
+    });
+    return () => {
+      readiness.current = null;
+    };
+  }, [assembly, startup.options.preloadInspection]);
+
+  function showRoom() {
+    const pending = readiness.current;
+    if (!pending) {
+      props.onReady();
+      return;
+    }
+    void pending.then(() => {
+      if (readiness.current === pending) props.onReady();
+    });
+  }
+
+  if (failure) throw failure.error;
+  if (!assembly) return null;
+  return (
+    <>
+      <CameraRig {...props} {...assembly} nativeLow={nativeLow} />
+      <Finish
+        firstFrame={firstFrame}
+        night={props.environment.night}
+        onInteractive={showRoom}
+        look={props.environment.roomLook}
+        roomVisible={props.roomVisible}
+        firstPicture={props.firstPicture}
+        detailRevision={props.detailRevision}
+        setLowScale={setLowScale}
+        nativeLow={nativeLow}
+        simpleLow={startup.simpleLow}
+        screen={props.screen}
+        enabled={props.environment.quality === 'high'}
+      />
+    </>
+  );
+}
+
 export default function StudioView(props: Props) {
   const mapMarker = useRef<SVGGElement>(null);
   const phonePanel = useRef<HTMLDivElement>(null);
   const [phoneHeld, setPhoneHeld] = useState(false);
   const firstPicture = useRef<FirstPicture>('loading');
-  const [firstFrame] = useState(roomFirstFrame);
+  const [firstFrame] = useState(() => {
+    const options = new URLSearchParams(location.search);
+    return roomFirstFrame({
+      warmPreview: options.get('studio-preview') === 'warm',
+      warmBuffers: options.get('studio-buffers') === 'warm',
+    });
+  });
+  const [nativeLow] = useState(
+    () => new URLSearchParams(location.search).get('studio-low') === 'native',
+  );
   const detailRevision = useRef(0);
   const [lowScale, setLowScale] = useState(props.initialLowScale);
+  useLayoutEffect(() => {
+    if (props.roomVisible) performance.mark('studio-input-ready');
+  }, [props.roomVisible]);
   return (
     <>
       <Canvas
         className="studio-canvas"
         shadows={props.environment.quality === 'high'}
-        dpr={props.environment.quality === 'high' ? [1, 1.5] : lowScale}
+        dpr={
+          props.environment.quality === 'high'
+            ? [1, 1.5]
+            : nativeLow
+              ? window.devicePixelRatio
+              : lowScale
+        }
         camera={{
           fov: roomFov,
           near: 0.028,
           far: waterfrontFarClip,
           position: [eye.x, eye.y, eye.defaultZ],
         }}
-        gl={{ antialias: true, powerPreference: 'high-performance', alpha: false }}
+        gl={{
+          antialias: !nativeLow || props.environment.quality === 'high',
+          powerPreference: 'high-performance',
+          alpha: false,
+        }}
         onCreated={({ gl }) => {
           gl.debug.checkShaderErrors = import.meta.env.DEV;
           gl.toneMapping = T.ACESFilmicToneMapping;
           gl.toneMappingExposure = 1.04;
         }}
       >
-        <CameraRig
+        <StudioRoom
           firstFrame={firstFrame}
           {...props}
           mapMarker={mapMarker}
@@ -1364,18 +1539,8 @@ export default function StudioView(props: Props) {
           detailRevision={detailRevision}
           phonePanel={phonePanel}
           setPhoneHeld={setPhoneHeld}
-        />
-        <Finish
-          firstFrame={firstFrame}
-          night={props.environment.night}
-          onInteractive={props.onReady}
-          look={props.environment.roomLook}
-          roomVisible={props.roomVisible}
-          firstPicture={firstPicture}
-          detailRevision={detailRevision}
           setLowScale={setLowScale}
-          screen={props.screen}
-          enabled={props.environment.quality === 'high'}
+          nativeLow={nativeLow}
         />
       </Canvas>
       {phoneHeld && (

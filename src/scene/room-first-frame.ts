@@ -1,14 +1,17 @@
 import {
+  BufferGeometry,
   Camera,
   Color,
   DataTexture,
   DirectionalLight,
   DoubleSide,
+  Frustum,
   Group,
   InstancedMesh,
   Light,
   Material,
   Matrix3,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
   GLSL3,
@@ -22,6 +25,7 @@ import {
   Vector2,
   Vector3,
   Vector4,
+  WebGLRenderTarget,
   WebGLRenderer,
 } from 'three';
 import type { RoomLook } from '../app/environment';
@@ -32,6 +36,8 @@ import { windowSunGLSL } from './window-sun';
 
 type Surface = MeshStandardMaterial | MeshBasicMaterial;
 const maxPreviewLights = 6;
+const previewBufferMinimum = 128 * 1024;
+const previewUploadBudget = 3;
 
 const vertex = `
 precision highp float;
@@ -135,7 +141,7 @@ void main() {
   pixel = vec4(mix(vec3(dot(graded,vec3(.213,.715,.072))),graded,saturation),a);
 }`;
 
-export function roomFirstFrame() {
+export function roomFirstFrame({ warmPreview = false, warmBuffers = false } = {}) {
   const materials = [new Map<Surface, RawShaderMaterial>(), new Map<Surface, RawShaderMaterial>()];
   const meshes: Mesh[] = [];
   const originals: (Material | Material[])[] = [];
@@ -166,6 +172,10 @@ export function roomFirstFrame() {
     direction = new Vector3();
   let selectedLook: RoomLook = 'neutral';
   let warmed = false;
+  let stopWarming: (() => void) | undefined;
+  let upload: (() => boolean) | undefined;
+  let buffersReady = !warmBuffers;
+  let disposeUpload: (() => void) | undefined;
 
   function surface(source: Material, instanced = false) {
     if (!(source instanceof MeshStandardMaterial || source instanceof MeshBasicMaterial))
@@ -247,8 +257,124 @@ export function roomFirstFrame() {
         .multiplyScalar(Math.min(2, source.emissiveIntensity));
     return material;
   }
+
+  function warmPreviewShaders(gl: WebGLRenderer, geometry: PlaneGeometry, group: Group) {
+    const clock = Object.assign(new MeshBasicMaterial(), {
+      oledTime: { value: 0 },
+      oledClock: white,
+    });
+    group.add(new Mesh(geometry, surface(clock)));
+    clock.dispose();
+    const probe = new Scene();
+    const camera = new PerspectiveCamera();
+    camera.position.z = 1;
+    const target = new WebGLRenderTarget(1, 1);
+    let active = true;
+    const timeout = window.setTimeout(finish, 1200);
+    stopWarming = finish;
+    performance.mark('studio-preview-warm-start');
+
+    function finish() {
+      if (!active) return;
+      active = false;
+      stopWarming = undefined;
+      window.clearTimeout(timeout);
+      target.dispose();
+      geometry.dispose();
+      for (const node of group.children) if (node instanceof InstancedMesh) node.dispose();
+      performance.mark('studio-preview-warm-end');
+    }
+
+    async function drawVariants() {
+      await gl.compileAsync(group, camera, probe);
+      for (const node of group.children) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        if (!active) return;
+        const previous = gl.getRenderTarget();
+        probe.children.push(node);
+        try {
+          gl.setRenderTarget(target);
+          gl.render(probe, camera);
+        } finally {
+          probe.children.length = 0;
+          gl.setRenderTarget(previous);
+        }
+      }
+    }
+
+    void drawVariants().then(finish, finish);
+    gl.getContext().flush();
+  }
+
+  function prepareBuffers(gl: WebGLRenderer, scene: Scene, camera: Camera) {
+    performance.mark('studio-preview-buffers-start');
+    const frustum = new Frustum().setFromProjectionMatrix(
+      new Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse),
+    );
+    const geometries = new Set<BufferGeometry>();
+    scene.updateMatrixWorld();
+    scene.traverseVisible((node) => {
+      if (!(node instanceof Mesh) || !node.layers.test(camera.layers)) return;
+      const geometry = node.geometry;
+      const position = geometry.getAttribute('position');
+      if (
+        position &&
+        position.count * 32 >= previewBufferMinimum &&
+        (!node.frustumCulled || frustum.intersectsObject(node))
+      ) {
+        geometries.add(geometry);
+      }
+    });
+    const probe = new Scene();
+    const target = new WebGLRenderTarget(1, 1);
+    const source = new MeshBasicMaterial();
+    const dummyGeometry = new BufferGeometry();
+    const mesh = new Mesh(dummyGeometry, surface(source));
+    source.dispose();
+    mesh.frustumCulled = false;
+    probe.add(mesh);
+    disposeUpload = () => {
+      disposeUpload = undefined;
+      target.dispose();
+      dummyGeometry.dispose();
+    };
+    return () => {
+      const previous = gl.getRenderTarget();
+      const deadline = performance.now() + previewUploadBudget;
+      try {
+        gl.setRenderTarget(target);
+        for (const geometry of geometries) {
+          geometries.delete(geometry);
+          mesh.geometry = geometry;
+          const { start, count } = geometry.drawRange;
+          geometry.setDrawRange(0, 0);
+          try {
+            gl.render(probe, camera);
+          } finally {
+            geometry.setDrawRange(start, count);
+          }
+          if (performance.now() >= deadline) break;
+        }
+      } finally {
+        gl.setRenderTarget(previous);
+      }
+      if (geometries.size) return false;
+      disposeUpload?.();
+      performance.mark('studio-preview-buffers-end');
+      return true;
+    };
+  }
+
   return {
     windowSlats,
+    preparing(gl: WebGLRenderer, scene: Scene, camera: Camera) {
+      if (stopWarming) return true;
+      if (buffersReady) return false;
+      upload ??= prepareBuffers(gl, scene, camera);
+      buffersReady = upload();
+      if (buffersReady) upload = undefined;
+      return !buffersReady;
+    },
     warm(gl: WebGLRenderer) {
       if (warmed || !gl.extensions.has('KHR_parallel_shader_compile')) return;
       warmed = true;
@@ -260,6 +386,10 @@ export function roomFirstFrame() {
         new InstancedMesh(geometry, surface(source, true), 1),
       );
       source.dispose();
+      if (warmPreview) {
+        warmPreviewShaders(gl, geometry, group);
+        return;
+      }
       void gl
         .compileAsync(group, new PerspectiveCamera(), new Scene())
         .catch(() => {})
@@ -350,6 +480,9 @@ export function roomFirstFrame() {
       }
     },
     dispose() {
+      stopWarming?.();
+      disposeUpload?.();
+      upload = undefined;
       for (const cache of materials) {
         for (const material of cache.values()) material.dispose();
         cache.clear();

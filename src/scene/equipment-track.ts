@@ -1,13 +1,10 @@
 import * as T from 'three';
+import type { DeferRoomAsset } from './rear-loading';
 import { loadDisplayModel } from './display-model';
 import layout from './equipment-track-layout.json';
 import { group } from './geometry';
 
-export function equipmentTrack(
-  zone: T.Group,
-  manager: T.LoadingManager,
-  defer: (load: () => void) => void,
-) {
+export function equipmentTrack(zone: T.Group, manager: T.LoadingManager, defer: DeferRoomAsset) {
   const fixture = group(zone, 'ERCO Parscan 48V · Minirail');
   fixture.position.fromArray(layout.mount);
   const spots = layout.heads.map(({ x, aim, station, beamDegrees }) => {

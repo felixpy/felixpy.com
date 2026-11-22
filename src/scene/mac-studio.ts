@@ -1,5 +1,5 @@
 import * as T from 'three';
-import { filterPrintedArtwork, loadDisplayModel } from './display-model';
+import { deferredDisplayModel, filterPrintedArtwork, loadDisplayModel } from './display-model';
 import { group } from './geometry';
 
 function ventFinish(material: T.Material | T.Material[]) {
@@ -69,7 +69,6 @@ export function macStudio(
   const room = group(mac, 'Mac Studio at desk distance');
   const close = group(mac, 'Mac Studio inspection detail');
   let requested = authoring;
-  let loading: Promise<void> | undefined;
   let ready = false;
 
   function sync() {
@@ -77,28 +76,24 @@ export function macStudio(
     room.visible = !close.visible;
   }
 
-  function loadDetail(loadManager: T.LoadingManager) {
-    loading = loadDisplayModel(close, base + '.glb', loadManager, {
-      mesh: (mesh) => filterMacSurfaces(mesh, true),
-      mounted(scene) {
-        if (authoring) {
-          const coverage: T.Mesh[] = [];
-          scene.traverse((part) => {
-            if (part instanceof T.Mesh && ventFinish(part.material)) coverage.push(part);
-          });
-          for (const part of coverage) part.removeFromParent();
-        }
-        ready = true;
-        sync();
-        detailMounted(scene);
-      },
-    }).catch(() => {
-      loading = undefined;
-    });
-  }
+  const prepareDetail = deferredDisplayModel(close, base + '.glb', {
+    mesh: (mesh) => filterMacSurfaces(mesh, true),
+    mounted(scene) {
+      if (authoring) {
+        const coverage: T.Mesh[] = [];
+        scene.traverse((part) => {
+          if (part instanceof T.Mesh && ventFinish(part.material)) coverage.push(part);
+        });
+        for (const part of coverage) part.removeFromParent();
+      }
+      ready = true;
+      sync();
+      detailMounted(scene);
+    },
+  });
 
   sync();
-  if (authoring) loadDetail(manager);
+  if (authoring) void prepareDetail(manager);
   else
     loadDisplayModel(room, base + '-room.glb', manager, {
       mesh: (mesh) => filterMacSurfaces(mesh, false),
@@ -109,10 +104,11 @@ export function macStudio(
   return {
     mac,
     reader,
+    prepareDetail,
     selectDetail(inspecting: boolean) {
       if (authoring || requested === inspecting) return;
       requested = inspecting;
-      if (requested && !loading) loadDetail(new T.LoadingManager());
+      if (requested && !ready) void prepareDetail(new T.LoadingManager());
       sync();
     },
   };

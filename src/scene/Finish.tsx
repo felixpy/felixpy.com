@@ -1,7 +1,7 @@
 import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import { DepthTexture, HalfFloatType, WebGLRenderTarget } from 'three';
-import type { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import type { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import type { RoomLook } from '../app/environment';
 import { roomColorGrade } from './room-color-grade';
@@ -19,6 +19,8 @@ export function Finish({
   firstPicture,
   detailRevision,
   setLowScale,
+  nativeLow,
+  simpleLow,
   onInteractive,
   night,
   firstFrame,
@@ -30,6 +32,8 @@ export function Finish({
   firstPicture: RefObject<FirstPicture>;
   detailRevision: RefObject<number>;
   setLowScale: (scale: number) => void;
+  nativeLow: boolean;
+  simpleLow: boolean;
   onInteractive: () => void;
   night: boolean;
   firstFrame: ReturnType<typeof roomFirstFrame>;
@@ -40,7 +44,7 @@ export function Finish({
   useEffect(() => () => grade.dispose(), [grade]);
   const pipeline = useRef<{
     beauty: WebGLRenderTarget;
-    composite: WebGLRenderTarget;
+    composite?: WebGLRenderTarget;
     occlusion: GTAOPass;
     output: OutputPass;
   } | null>(null);
@@ -52,15 +56,21 @@ export function Finish({
 
   useEffect(() => {
     if (!enabled || !gl.extensions.has('EXT_color_buffer_float')) return;
+    const fusedOutput = new URLSearchParams(location.search).get('studio-output') !== 'legacy';
     const depth = new DepthTexture(1, 1);
     const beauty = new WebGLRenderTarget(1, 1, {
       type: HalfFloatType,
       samples: Math.min(4, gl.capabilities.maxSamples),
       depthTexture: depth,
     });
-    const composite = new WebGLRenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false });
+    const composite = fusedOutput
+      ? undefined
+      : new WebGLRenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false });
     const occlusion = roomOcclusion(scene, camera, depth);
-    const output = grade.outputPass();
+    if (fusedOutput) occlusion.output = GTAOPass.OUTPUT.Off;
+    const output = grade.outputPass(
+      fusedOutput ? { map: occlusion.gtaoMap, intensity: occlusion.blendIntensity } : undefined,
+    );
     pipeline.current = { beauty, composite, occlusion, output };
     return () => {
       pipeline.current = null;
@@ -69,7 +79,7 @@ export function Finish({
       occlusion.blendMaterial.dispose();
       output.dispose();
       beauty.dispose();
-      composite.dispose();
+      composite?.dispose();
     };
   }, [camera, enabled, gl, grade, scene]);
 
@@ -79,15 +89,21 @@ export function Finish({
     const width = Math.max(1, Math.floor(size.width * viewport.dpr));
     const height = Math.max(1, Math.floor(size.height * viewport.dpr));
     active.beauty.setSize(width, height);
-    active.composite.setSize(width, height);
+    active.composite?.setSize(width, height);
     active.occlusion.setSize(Math.ceil(width / 2), Math.ceil(height / 2));
   }, [camera, enabled, gl, scene, size.width, size.height, viewport.dpr]);
 
   useFrame(({ clock }, delta) => {
     if (firstPicture.current === 'interactive' && !roomVisible) return;
     if (firstPicture.current === 'loading' || firstPicture.current === 'interactive') {
+      if (firstFrame.preparing(gl, scene, camera)) return;
+      const initial = firstPicture.current === 'loading';
+      if (initial) performance.mark('studio-room-preview-start');
       firstFrame.draw(gl, scene, camera, night, look);
-      if (firstPicture.current === 'loading') onInteractive();
+      if (initial) {
+        performance.mark('studio-room-preview-drawn');
+        onInteractive();
+      }
       firstPicture.current = 'interactive';
       return;
     }
@@ -96,7 +112,13 @@ export function Finish({
     const inComputer = screen.current?.dataset.interactive === 'true';
     if (inComputer && now - lastRoomFrame.current < 0.16) return;
     lastRoomFrame.current = now;
-    if (!enabled && firstPicture.current === 'drawn' && !inComputer && !document.hidden) {
+    if (
+      !enabled &&
+      !nativeLow &&
+      firstPicture.current === 'drawn' &&
+      !inComputer &&
+      !document.hidden
+    ) {
       const timing = sample.current;
       timing.elapsed += delta;
       if (delta > 1 / 42) timing.slowFrames++;
@@ -125,6 +147,14 @@ export function Finish({
         sample.current.headroom =
           0;
     }
+    if (simpleLow && !enabled) {
+      firstFrame.draw(gl, scene, camera, night, look);
+      if (firstPicture.current === 'preparing') {
+        firstPicture.current = 'drawn';
+        performance.mark('studio-room-shaded');
+      }
+      return;
+    }
     const active = pipeline.current;
     if (preparation.current && firstPicture.current === 'drawn') {
       if (scannedRevision.current !== detailRevision.current) {
@@ -144,32 +174,32 @@ export function Finish({
         const pending = roomWarmup(gl, scene, camera);
         preparation.current = pending;
         scannedRevision.current = detailRevision.current;
-        void pending.front(active?.beauty ?? null).then(
-          () => {
-            shaders.current = 'ready';
-          },
-          () => {
-            shaders.current = 'ready';
-          },
-        );
+        performance.mark('studio-room-shader-warm-start');
+        const finish = () => {
+          shaders.current = 'ready';
+          performance.mark('studio-room-shader-warm-end');
+        };
+        void pending.front(active?.beauty ?? null).then(finish, finish);
         return;
       }
       shaders.current = 'ready';
     }
+    if (firstPicture.current === 'preparing') performance.mark('studio-room-full-draw-start');
     grade.select(look);
     if (!active) {
       gl.render(scene, camera);
       grade.gradeScreen(gl);
     } else {
       const { beauty, composite, occlusion, output } = active;
+      const color = composite ?? beauty;
       gl.setRenderTarget(beauty);
       gl.render(scene, camera);
-      occlusion.render(gl, composite, beauty, delta, false);
-      output.render(gl, beauty, composite, delta, false);
+      occlusion.render(gl, color, beauty, delta, false);
+      output.render(gl, beauty, color, delta, false);
     }
     if (firstPicture.current === 'preparing') {
       firstPicture.current = 'drawn';
-      firstFrame.dispose();
+      if (!simpleLow) firstFrame.dispose();
       performance.mark('studio-room-shaded');
     }
   }, 1);

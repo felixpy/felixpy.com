@@ -3,6 +3,7 @@ import { random } from './geometry';
 import type { Environment } from '../app/environment';
 import { windowOpening } from './layout';
 import { windowSunGLSL } from './window-sun';
+import { roomEffectMaterial } from './room-effect-material';
 
 export function airborneDust(
   parent: T.Object3D,
@@ -39,13 +40,14 @@ export function airborneDust(
     lamp: { value: readingLight.position.clone() },
     slats: { value: slats },
   };
-  const material = new T.ShaderMaterial({
-    uniforms,
-    transparent: true,
-    depthTest: true,
-    depthWrite: false,
-    blending: T.AdditiveBlending,
-    vertexShader: `
+  const material = roomEffectMaterial(
+    {
+      uniforms,
+      transparent: true,
+      depthTest: true,
+      depthWrite: false,
+      blending: T.AdditiveBlending,
+      vertexShader: `
       attribute vec3 variation;
       uniform float elapsed,daylight,lamplight,pixelRatio;
       uniform vec3 beam,lamp;
@@ -70,14 +72,18 @@ export function airborneDust(
         gl_Position=projectionMatrix*mv;
         gl_PointSize=pixelRatio*clamp((.46+variation.y*.76)/max(.4,-mv.z),.84,2.40);
       }`,
-    fragmentShader: `varying vec3 radiance; varying float brightness;
+      fragmentShader: `varying vec3 radiance; varying float brightness;
       void main(){vec2 p=gl_PointCoord*2.-1.;float r=dot(p,p);
         if(r>=1.)discard;
         gl_FragColor=vec4(radiance,brightness*exp(-3.0*r)*(1.-r));
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`,
-  });
+    },
+    `attribute vec3 position;
+      uniform mat4 modelViewMatrix, projectionMatrix;
+      uniform vec3 cameraPosition;`,
+  );
   const grains = new T.Points(geometry, material);
   grains.name = 'Dust in transmitted and task light';
   grains.renderOrder = 3;

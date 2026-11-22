@@ -1,11 +1,12 @@
 import type * as T from 'three';
+import type { DeferRoomAsset } from './rear-loading';
 import { loadDisplayModel } from './display-model';
 import { group } from './geometry';
 
 export function snowMiner(
   rack: T.Group,
   manager: T.LoadingManager,
-  deferRoomDetail: (load: () => void) => void,
+  deferRoomDetail: DeferRoomAsset,
 ) {
   const pitch = 0.0254;
   const hook = group(rack, 'Snow Peak SnowMiner ES-020', [-3 * pitch, 1.572 + 21 * pitch, 0.052]);

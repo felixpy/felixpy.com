@@ -33,6 +33,7 @@ import { nikonZ8 } from './nikon';
 import { notebookSignature, projectNotebook } from './notebook';
 import { deskPhotoFrame, photoPrinter, photoTile } from './photography';
 import { deskObjects, remote } from './props';
+import { rearLoading } from './rear-loading';
 import { rocketModel } from './rocket';
 import { wallAtlas } from './travel-map';
 import { buildWindow } from './window';
@@ -62,7 +63,11 @@ const windowButtons = [
   'Switch day or night',
 ];
 
-export function buildStudio(manager: T.LoadingManager, initial = initialEnvironment) {
+export function* buildStudioSteps(
+  manager: T.LoadingManager,
+  initial = initialEnvironment,
+  { deferBookBacks = false, prioritizeRear = false, preloadInspection = false } = {},
+) {
   const root = new T.Group();
   root.name = 'Felix Studio';
   const interior = group(root, 'Interior');
@@ -91,6 +96,7 @@ export function buildStudio(manager: T.LoadingManager, initial = initialEnvironm
   );
   const bridgePrint = photo('/media/photography/dalian-xinghai-bay.webp');
   const architectureParts = architecture(interior, p, bridgePrint);
+  yield;
   const { drawers, drawerInteriors, drive } = deskFurniture(interior, p, loader);
   const { card: memoryCard, prepare: prepareCard } = cardStorage(
     drawerInteriors[3],
@@ -100,20 +106,23 @@ export function buildStudio(manager: T.LoadingManager, initial = initialEnvironm
   );
   const window = buildWindow(root, p, loader, initial);
   radiator(interior, p);
+  yield;
   const rearLoader = new T.LoadingManager();
-  rearLoader.itemStart('deferred-room-detail');
-  const rearAssets: (() => void)[] = [];
-  const deferRoomDetail = (load: () => void) => rearAssets.push(load);
+  const rear = rearLoading(rearLoader, prioritizeRear || preloadInspection);
+  const deferDesk = rear.defer('desk');
+  const deferBench = rear.defer('bench');
   const {
     unit: bookcase,
     books: booksInRoom,
     prepareBook,
+    prepareBookBacks,
     prepareBookExport,
     awards,
     lamps: shelfLamps,
     accent: shelfAccent,
-  } = bookshelf(interior, p, loader, new T.TextureLoader(rearLoader));
-  const bench = workshop(interior, p, loader, rearLoader, deferRoomDetail);
+  } = bookshelf(interior, p, loader, new T.TextureLoader(rearLoader), deferBookBacks);
+  yield;
+  const bench = workshop(interior, p, loader, rearLoader, deferBench);
   const rearWall = group(interior, 'Field gear and private collection', [
     0,
     0,
@@ -126,22 +135,21 @@ export function buildStudio(manager: T.LoadingManager, initial = initialEnvironm
   async function prepareDrawerMedia() {
     await Promise.all([prepareDrive(), prepareCard()]);
   }
-  deferRoomDetail(() => {
+  deferBench(() => {
     const tools = 'workshop-precision-tools';
     rearLoader.itemStart(tools);
-    void bench
+    return bench
       .prepareTools()
       .catch(() => rearLoader.itemError(tools))
       .finally(() => rearLoader.itemEnd(tools));
   });
-  const rearReady = new Promise<void>((resolve) => {
-    rearLoader.onLoad = resolve;
-  });
-  const fieldGear = outdoorRail(rearWall, p, rearLoader, deferRoomDetail);
-  const vitrine = collectionVitrine(rearWall, p, rearLoader, deferRoomDetail);
+  yield;
+  const fieldGear = outdoorRail(rearWall, p, rearLoader, rear.defer('gear'));
+  const vitrine = collectionVitrine(rearWall, p, rearLoader, rear.defer('cabinet'));
   const floorLamp = cabinetFloorLight(interior, p);
-  const printer = filamentPrinter(interior, p, rearLoader, deferRoomDetail);
-  taskChair(interior, p, rearLoader, deferRoomDetail);
+  const printer = filamentPrinter(interior, p, rearLoader, deferBench);
+  taskChair(interior, p, rearLoader, deferDesk);
+  yield;
 
   const shadows = new T.MeshBasicMaterial({
     map: contactTexture(),
@@ -176,9 +184,11 @@ export function buildStudio(manager: T.LoadingManager, initial = initialEnvironm
   const mat = group(interior, 'Desk mat', [pad.x, pad.top - 0.0015, pad.z]);
   void deskPad(mat, manager);
   const { screen, updateDisplay, screenBar, codexMicro } = monitor(interior, p, manager);
+  yield;
   const {
     mac,
     reader,
+    prepareDetail: prepareMacDetail,
     selectDetail: selectMacDetail,
   } = macStudio(interior, manager, detailMounted);
   const { phone, update: updatePhone } = developmentPhone(
@@ -187,8 +197,9 @@ export function buildStudio(manager: T.LoadingManager, initial = initialEnvironm
     photo('/media/graphics/white-dunes.webp'),
   );
   const microphone = wirelessMicrophone(interior, manager);
-  const skog = skogDiffuser(interior, [-1.085, 1.31, 2.951], rearLoader, deferRoomDetail);
+  const skog = skogDiffuser(interior, [-1.085, 1.31, 2.951], rearLoader, deferDesk);
   const proof = flightProof(interior, p);
+  yield;
   const {
     unit: pc,
     updateLightGuide,
@@ -198,6 +209,7 @@ export function buildStudio(manager: T.LoadingManager, initial = initialEnvironm
     fanGuides,
     reflections,
   } = tower(interior, p, aura, manager);
+  yield;
   const channelHues = [0.926, 0.815, 0.727, 0.669, 0.614, 0.558, 0.526];
   const fans: T.Object3D[] = [];
   pc.traverse((node) => {
@@ -207,15 +219,20 @@ export function buildStudio(manager: T.LoadingManager, initial = initialEnvironm
     unit: keys,
     legendMaterials: keyLegends,
     badge: keyBadge,
+    prepareSwitches,
     selectDetail: selectKeySwitches,
   } = keyboard(interior, manager, keyLight, detailMounted);
+  if (preloadInspection) {
+    deferDesk(() => prepareMacDetail(rearLoader));
+    deferDesk(() => prepareSwitches(rearLoader));
+    deferDesk(() => prepareDrive(rearLoader));
+    deferDesk(() => prepareCard(rearLoader));
+  }
   const { unit: pointer, badge: mouseBadge } = mouse(interior, manager, mouseLight);
   const task = deskFixture(interior, p, [-0.981, 0.75, 0.01], loader);
   const control = remote(interior, manager, window.remoteRest);
   const { model: rocket, prepare: prepareRocket } = rocketModel(bench.unit, p, detailMounted);
-  deferRoomDetail(() => {
-    void prepareRocket(rearLoader);
-  });
+  deferBench(() => prepareRocket(rearLoader));
   const groupPhoto = deskPhotoFrame(
     interior,
     manager,
@@ -226,22 +243,24 @@ export function buildStudio(manager: T.LoadingManager, initial = initialEnvironm
   pencil.rotation.y = Math.PI / 2 - 0.18;
   loadDisplayModel(pencil, '/media/models/mitsubishi-9850.glb', manager);
   const deskCamera = nikonZ8(interior, p, bridgePrint, manager);
+  yield;
   const samplePrint = photoPrinter(
     bench.unit,
     places[2],
     [0.049, 0.75, -0.33],
     rearLoader,
-    deferRoomDetail,
+    deferBench,
   );
   const mapPreview = photo('/media/graphics/world-atlas-room.webp');
   const atlasFrame = wallAtlas(interior, p, mapPreview);
-  deferRoomDetail(() => {
-    new T.TextureLoader(rearLoader).load('/media/graphics/world-atlas.webp', (detail) => {
-      detail.colorSpace = mapPreview.colorSpace;
-      detail.anisotropy = mapPreview.anisotropy;
-      atlasFrame.ink.map = detail;
-      mapPreview.dispose();
-    });
+  deferDesk(async () => {
+    const detail = await new T.TextureLoader(rearLoader).loadAsync(
+      '/media/graphics/world-atlas.webp',
+    );
+    detail.colorSpace = mapPreview.colorSpace;
+    detail.anisotropy = mapPreview.anisotropy;
+    atlasFrame.ink.map = detail;
+    mapPreview.dispose();
   });
   const { board, prints, setLocale: setBoardLocale } = personalArchive(interior, p, places, photo);
   const notes = projectNotebook(interior, p);
@@ -776,7 +795,9 @@ export function buildStudio(manager: T.LoadingManager, initial = initialEnvironm
     },
   ];
   const byObject = new Map(targets.map((target) => [target.object, target]));
+  yield;
   batchMeshes(interior, new Set([...byObject.keys(), bench.top]));
+  yield;
   const hemisphere = new T.HemisphereLight('#dce7f0', '#a89883', 0.18);
   const { wall, z0, z1, y0, y1 } = windowOpening;
   const aperture = new T.RectAreaLight('#c6dfef', 2, z1 - z0 - 0.074, y1 - y0 - 0.073);
@@ -883,19 +904,14 @@ export function buildStudio(manager: T.LoadingManager, initial = initialEnvironm
     pickRoots: [interior, window.unit],
     mountedDetails,
     prepareDrawerMedia,
+    prepareBookBacks,
     prepareBookExport,
     prepareWorkshop: async () => {
       await Promise.all([bench.prepareTools(), prepareRocket()]);
     },
     setBlinds: window.setBlinds,
-    rearReady,
-    prepareRear() {
-      if (rearAssets.length) {
-        for (const load of rearAssets.splice(0)) load();
-        rearLoader.itemEnd('deferred-room-detail');
-      }
-      return rearReady;
-    },
+    rearReady: rear.ready,
+    prepareRear: rear.prepare,
     targets,
     byObject,
     inspectionFill,
@@ -989,11 +1005,14 @@ export function buildStudio(manager: T.LoadingManager, initial = initialEnvironm
       musicPlaying = false,
       atWorkbench = false,
       camera?: T.PerspectiveCamera,
+      fullInspection = false,
     ) {
       selectTowerDetail(inspectedHardware === 'case');
       fieldGear.updateLanternPort();
       fieldGear.bottleClosure.update();
-      selectMacDetail(inspectedHardware === 'mac-studio' && env.quality === 'high');
+      selectMacDetail(
+        inspectedHardware === 'mac-studio' && (env.quality === 'high' || fullInspection),
+      );
       printer.update(delta, env.reducedMotion, env.locale, camera);
       if (env.locale !== printLocale) {
         printLocale = env.locale;
@@ -1143,4 +1162,11 @@ export function buildStudio(manager: T.LoadingManager, initial = initialEnvironm
     },
   };
 }
+export function buildStudio(...args: Parameters<typeof buildStudioSteps>) {
+  const steps = buildStudioSteps(...args);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
+}
+
 export type StudioModel = ReturnType<typeof buildStudio>;

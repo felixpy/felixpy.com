@@ -10,6 +10,7 @@ export function publishedBooks(
   loader: T.TextureLoader,
   levels: number[],
   detailLoader: T.TextureLoader,
+  deferBookBacks: boolean,
 ) {
   const stocks = pageStocks();
   const prints = new Map<string, { url: string; paint: PaintCover }>();
@@ -19,18 +20,8 @@ export function publishedBooks(
   const rearNeighbors = new Map<string, T.Group>();
   const fullSize = new Set<string>();
   const inFlight = new Map<string, Promise<void>>();
-  const books = editions.map((edition) =>
-    bindEdition(
-      unit,
-      edition,
-      {
-        load(url, paint) {
-          prints.set(edition.key, { url, paint });
-        },
-      },
-      stocks,
-    ),
-  );
+  const backPrints = new Map<string, () => void>();
+  const books = editions.map((book) => group(unit, `${book.en} (${book.imprint}, ${book.year})`));
   const inventory = new Map(
     editions.map((edition, i) => [edition.key, { object: books[i], size: edition.size }]),
   );
@@ -159,6 +150,48 @@ export function publishedBooks(
   );
   standing(5, ['taocp-1', 'taocp-2', 'taocp-3'], 0);
   display('color', 5, -0.025, -0.08);
+  editions.forEach((book, index) => {
+    const paintBack = bindEdition(
+      books[index],
+      book,
+      {
+        load(url, paint) {
+          prints.set(book.key, { url, paint });
+        },
+      },
+      stocks,
+      deferBookBacks && !faceOut.has(book.key) && !rowEnds.has(book.key),
+    );
+    if (paintBack) backPrints.set(book.key, paintBack);
+  });
+
+  function prepareBack(key: string) {
+    const paint = backPrints.get(key);
+    if (!paint) return;
+    paint();
+    backPrints.delete(key);
+  }
+
+  function prepareBookBacks() {
+    if (!backPrints.size) return;
+    const idle = typeof window.requestIdleCallback === 'function';
+    let scheduled = 0;
+    function schedule() {
+      scheduled = idle ? window.requestIdleCallback(paintNext) : window.setTimeout(paintNext, 32);
+    }
+    function paintNext() {
+      const next = backPrints.keys().next();
+      if (next.done) return;
+      prepareBack(next.value);
+      if (backPrints.size) schedule();
+    }
+    schedule();
+    return () => {
+      if (idle) window.cancelIdleCallback(scheduled);
+      else window.clearTimeout(scheduled);
+    };
+  }
+
   function loadFull(key: string, source: T.TextureLoader) {
     const current = inFlight.get(key);
     if (current) return current;
@@ -221,7 +254,9 @@ export function publishedBooks(
     enableClosePrint(unit, editions[index], rearNeighbors.get(editions[index].key)),
   );
   function prepareBook(key: string) {
-    const missing = (neighbors.get(key) ?? [key]).filter((book) => !fullSize.has(book));
+    const related = neighbors.get(key) ?? [key];
+    related.forEach(prepareBack);
+    const missing = related.filter((book) => !fullSize.has(book));
     if (missing.length)
       return Promise.allSettled(missing.map((book) => loadFull(book, detailLoader))).then(() => {});
   }
@@ -231,9 +266,12 @@ export function publishedBooks(
     source.traverseAncestors((parent) => included.add(parent));
     await Promise.all(
       [...inventory]
-        .filter(([key, { object }]) => included.has(object) && !fullSize.has(key))
-        .map(([key]) => loadFull(key, detailLoader)),
+        .filter(([, { object }]) => included.has(object))
+        .map(([key]) => {
+          prepareBack(key);
+          if (!fullSize.has(key)) return loadFull(key, detailLoader);
+        }),
     );
   }
-  return { books, prepareBook, prepareBookExport };
+  return { books, prepareBook, prepareBookBacks, prepareBookExport };
 }

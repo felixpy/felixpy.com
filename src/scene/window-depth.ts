@@ -1,5 +1,6 @@
 import * as T from 'three';
 import { paneOptics, rainUniforms, type buildRainGlass } from './rain-glass';
+import { roomEffectMaterial } from './room-effect-material';
 
 const radians = T.MathUtils.degToRad;
 const yaw = { start: radians(-58), span: radians(167) };
@@ -78,18 +79,19 @@ export function panoramaMaterial(glass?: ReturnType<typeof buildRainGlass>) {
       glassSize: { value: new T.Vector2() },
     }),
   };
-  const material = new T.ShaderMaterial({
-    uniforms,
-    side: T.DoubleSide,
-    toneMapped: false,
-    vertexShader: `
+  const material = roomEffectMaterial(
+    {
+      uniforms,
+      side: T.DoubleSide,
+      toneMapped: false,
+      vertexShader: `
       varying vec3 shellPoint;
       void main() {
         shellPoint = (modelMatrix * vec4(position, 1.0)).xyz;
         gl_Position = projectionMatrix * viewMatrix * vec4(shellPoint, 1.0);
       }
     `,
-    fragmentShader: `
+      fragmentShader: `
       varying vec3 shellPoint;
       uniform sampler2D photoA, photoB, depthA, depthB;
       uniform sampler2D waterSlopes, ferryReflection;
@@ -269,8 +271,16 @@ export function panoramaMaterial(glass?: ReturnType<typeof buildRainGlass>) {
         #include <colorspace_fragment>
       }
     `,
-  });
-  material.onBeforeRender = (_renderer, _scene, camera) => {
+    },
+    `attribute vec3 position;
+      uniform mat4 modelMatrix, viewMatrix, projectionMatrix;`,
+    `uniform vec3 cameraPosition;
+      uniform mat4 viewMatrix;`,
+  );
+  const setup = material.onBeforeRender;
+  material.onBeforeRender = (...args) => {
+    setup.apply(material, args);
+    const [, , camera] = args;
     uniforms.windowProjection.value = camera.projectionMatrix;
   };
   return { material, uniforms };

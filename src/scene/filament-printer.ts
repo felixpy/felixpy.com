@@ -1,4 +1,5 @@
 import * as T from 'three';
+import type { DeferRoomAsset } from './rear-loading';
 import { box, canvasTexture, group, mesh, surface } from './geometry';
 import { loadBlenderPack } from './blender-pack';
 import { whaleTailPrint } from './whale-tail-print';
@@ -179,7 +180,7 @@ export function filamentPrinter(
   root: T.Group,
   p: Palette,
   manager: T.LoadingManager,
-  deferRoomDetail: (load: () => void) => void,
+  deferRoomDetail: DeferRoomAsset,
 ) {
   const stand = group(root, 'Fabrication cabinet', [printerStand.x, 0, printerStand.z]);
   stand.rotation.y = printerStand.yaw;
@@ -231,24 +232,24 @@ export function filamentPrinter(
   bedFace.emissive.set('#756044');
   bedFace.emissiveIntensity = 0.21;
   const assemblies: Record<string, T.Group> = { frame: unit, bed, gantry, head };
-  deferRoomDetail(
-    () =>
-      void Promise.all([
-        print.load(),
-        loadBlenderPack(manager, '/media/models/h3c.mesh.gz', (name, geometry) => {
-          const [part, finish] = name.split('-');
-          const material =
-            ['gantry', 'head', 'bed'].includes(part) && finish === 'graphite'
-              ? chamberAlloy
-              : fills[finish];
-          const item = mesh(assemblies[part], geometry, material);
-          item.name = 'H3C ' + name;
-          item.castShadow = !['glass', 'smoke', 'canopy', 'white'].includes(finish);
-        }),
-      ]).then(() => {
-        update(0, true, 'en');
-        unit.visible = true;
+  deferRoomDetail(() =>
+    Promise.allSettled([
+      print.load(),
+      loadBlenderPack(manager, '/media/models/h3c.mesh.gz', (name, geometry) => {
+        const [part, finish] = name.split('-');
+        const material =
+          ['gantry', 'head', 'bed'].includes(part) && finish === 'graphite'
+            ? chamberAlloy
+            : fills[finish];
+        const item = mesh(assemblies[part], geometry, material);
+        item.name = 'H3C ' + name;
+        item.castShadow = !['glass', 'smoke', 'canopy', 'white'].includes(finish);
       }),
+    ]).then((results) => {
+      if (results.some((result) => result.status === 'rejected')) return;
+      update(0, true, 'en');
+      unit.visible = true;
+    }),
   );
   const badge = canvasTexture(640, 96, (ctx) => {
     ctx.fillStyle = '#272d2f';

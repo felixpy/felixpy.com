@@ -1,4 +1,5 @@
 import * as T from 'three';
+import type { DeferRoomAsset } from './rear-loading';
 import { blenderMesh } from './blender-mesh';
 import { publishedBooks } from './published-books';
 import {
@@ -237,6 +238,7 @@ export function bookshelf(
   p: Palette,
   loader: T.TextureLoader,
   detailLoader: T.TextureLoader,
+  deferBookBacks: boolean,
 ) {
   const { x: center, z, width, height, side, depth } = bookcase;
   const unit = group(root, 'Oiled ash bookcase', [center, 0, z]);
@@ -290,7 +292,7 @@ export function bookshelf(
         );
     }
   }
-  const books = publishedBooks(unit, p, loader, levels, detailLoader);
+  const books = publishedBooks(unit, p, loader, levels, detailLoader, deferBookBacks);
   const caseMat = p.linen.clone();
   caseMat.color.set('#9a7b54');
   const archive = group(unit, 'Cloth-bound film archive', [-0.147, 0.18, -0.002]);
@@ -318,7 +320,7 @@ export function workshop(
   p: Palette,
   loader: T.TextureLoader,
   detailManager: T.LoadingManager,
-  deferRoomDetail: (load: () => void) => void,
+  deferRoomDetail: DeferRoomAsset,
 ) {
   const width = 0.606,
     { depth, height } = bookcase;
@@ -346,7 +348,7 @@ export function workshop(
 
   const unit = group(root, 'Workbench', [workshopLayout.x, 0, workshopLayout.z]);
   const boardLight = workbenchBoardLight(unit, detailManager);
-  deferRoomDetail(() => void boardLight.load());
+  deferRoomDetail(boardLight.load);
   const top = box(
     unit,
     [0.626, 0.038, workshopLayout.length],
@@ -461,9 +463,7 @@ export function workshop(
   taskLamp.unit.rotation.y = 1.92;
   taskLamp.emitter.emissiveIntensity = 0.52;
   const stool = group(root, 'Artek Stool 60', [1.61, parquetSurfaceY, workshopLayout.z]);
-  deferRoomDetail(
-    () => void loadDisplayModel(stool, '/media/models/artek-stool-60.glb', detailManager),
-  );
+  deferRoomDetail(() => loadDisplayModel(stool, '/media/models/artek-stool-60.glb', detailManager));
   const electronics = group(unit, 'Electronics work mat', [-0.035, 0.7565, -0.012]);
   electronics.rotation.y = -Math.PI / 2;
   const meter = group(electronics, 'Fluke 115 on tilt stand', [-0.083, 0.005608, -0.042]);

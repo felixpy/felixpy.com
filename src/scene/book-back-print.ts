@@ -494,7 +494,12 @@ function pictorialDetails(ctx: CanvasRenderingContext2D, key: string) {
   ctx.restore();
 }
 
-function measuredBack(ctx: CanvasRenderingContext2D, book: BookEdition, layout: RearLayout) {
+function measuredBack(
+  ctx: CanvasRenderingContext2D,
+  book: BookEdition,
+  layout: RearLayout,
+  includeParagraphs: boolean,
+) {
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, 0, 288, 512);
@@ -521,16 +526,18 @@ function measuredBack(ctx: CanvasRenderingContext2D, book: BookEdition, layout: 
   }
   const paragraphs = rearNotes[book.key] ?? [];
   const glyphScale = (288 * book.size[1]) / (512 * book.size[0]);
-  for (const [i, block] of layout.blocks.entries()) {
-    paragraph(
-      ctx,
-      block,
-      layout.ink,
-      Boolean(layout.serif),
-      paragraphs[i],
-      glyphScale,
-      layout.boldText,
-    );
+  if (includeParagraphs) {
+    for (const [i, block] of layout.blocks.entries()) {
+      paragraph(
+        ctx,
+        block,
+        layout.ink,
+        Boolean(layout.serif),
+        paragraphs[i],
+        glyphScale,
+        layout.boldText,
+      );
+    }
   }
   pictorialDetails(ctx, book.key);
   ctx.save();
@@ -900,12 +907,16 @@ function humboldtSpine(ctx: CanvasRenderingContext2D) {
   ctx.restore();
 }
 
-export function drawEditionBack(ctx: CanvasRenderingContext2D, book: BookEdition) {
+export function drawEditionBack(
+  ctx: CanvasRenderingContext2D,
+  book: BookEdition,
+  includeParagraphs: boolean,
+) {
   if (book.key === 'moby') mobyBinding(ctx, book);
   if (book.key === 'creative-act') rubinBack(ctx, book);
   if (book.key === 'c-language') cLanguageBack(ctx, book);
   const layout = rearLayouts[book.key];
-  if (layout) measuredBack(ctx, book, layout);
+  if (layout) measuredBack(ctx, book, layout, includeParagraphs);
   if (book.key === 'sicp') sicpBinding(ctx, book.en);
   if (book.key === 'walden') {
     ctx.save();

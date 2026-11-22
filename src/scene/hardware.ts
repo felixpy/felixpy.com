@@ -240,6 +240,7 @@ export function keyboard(
     unit,
     legendMaterials,
     badge,
+    prepareSwitches,
     selectDetail(inspecting: boolean) {
       details.select(inspecting);
       if (inspecting) void prepareSwitches();

@@ -6,13 +6,26 @@ import { surfaceKey } from './surface-finish';
 export function roomDetail(interior: T.Object3D, signal: AbortSignal) {
   const indices = new Map<string, T.BufferAttribute>();
   const counts = new Set<number>();
-  const changed = new Map<T.BufferGeometry, T.BufferAttribute | null>();
+  const changed = new Map<
+    T.BufferGeometry,
+    { full: T.BufferAttribute | null; room: T.BufferAttribute }
+  >();
   const checked = new WeakSet<T.BufferGeometry>();
+  const fullDetail = new Set<T.BufferGeometry>();
+  let focused: T.Object3D | undefined;
   let reduced = false;
   let loading: Promise<void> | undefined;
 
   function apply() {
     if (!reduced || !indices.size || signal.aborted) return;
+    fullDetail.clear();
+    focused?.traverse((object) => {
+      if (object instanceof T.Mesh) fullDetail.add(object.geometry);
+    });
+    for (const [geometry, pair] of changed) {
+      const index = fullDetail.has(geometry) ? pair.full : pair.room;
+      if (geometry.index !== index) geometry.setIndex(index);
+    }
     interior.traverse((object) => {
       if (!(object instanceof T.Mesh) || Array.isArray(object.material)) return;
       const geometry = object.geometry as T.BufferGeometry;
@@ -22,8 +35,8 @@ export function roomDetail(interior: T.Object3D, signal: AbortSignal) {
         return;
       const matching = indices.get(surfaceKey(geometry));
       if (!matching) return;
-      changed.set(geometry, geometry.index);
-      geometry.setIndex(matching);
+      changed.set(geometry, { full: geometry.index, room: matching });
+      if (!fullDetail.has(geometry)) geometry.setIndex(matching);
     });
   }
 
@@ -58,15 +71,17 @@ export function roomDetail(interior: T.Object3D, signal: AbortSignal) {
   }
   return {
     refresh: apply,
-    select(low: boolean) {
-      if (low === reduced) return;
+    select(low: boolean, focus?: T.Object3D) {
+      if (low === reduced && focus === focused) return;
       reduced = low;
+      focused = focus;
       if (!low) {
-        for (const [geometry, index] of changed) {
-          geometry.setIndex(index);
+        for (const [geometry, { full }] of changed) {
+          geometry.setIndex(full);
           checked.delete(geometry);
         }
         changed.clear();
+        fullDetail.clear();
       } else {
         if (!loading)
           loading = load().catch(() => {

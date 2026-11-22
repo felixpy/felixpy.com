@@ -1,4 +1,11 @@
-import { FramebufferTexture, RawShaderMaterial, Vector2, Vector3, type WebGLRenderer } from 'three';
+import {
+  FramebufferTexture,
+  RawShaderMaterial,
+  Vector2,
+  Vector3,
+  type Texture,
+  type WebGLRenderer,
+} from 'three';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { OutputShader } from 'three/addons/shaders/OutputShader.js';
@@ -37,9 +44,25 @@ export function roomColorGrade() {
     uniforms.roomSaturation.value = preset?.saturation ?? 1;
   }
 
-  function outputPass() {
+  function outputPass(occlusion?: { map: Texture; intensity: number }) {
     const output = new OutputPass();
-    const source = output.material.fragmentShader.replace('void main()', 'void outputRoom()');
+    let source = output.material.fragmentShader.replace('void main()', 'void outputRoom()');
+    if (occlusion) {
+      source = source
+        .replace(
+          'uniform sampler2D tDiffuse;',
+          'uniform sampler2D tDiffuse;\nuniform sampler2D roomOcclusion;\nuniform float roomOcclusionIntensity;',
+        )
+        .replace(
+          'gl_FragColor = texture2D( tDiffuse, vUv );',
+          `vec4 ao = texture2D(roomOcclusion, vUv);
+          gl_FragColor = texture2D(tDiffuse, vUv) * vec4(mix(vec3(1.), ao.rgb, roomOcclusionIntensity), ao.a);`,
+        );
+      Object.assign(output.uniforms, {
+        roomOcclusion: { value: occlusion.map },
+        roomOcclusionIntensity: { value: occlusion.intensity },
+      });
+    }
     output.material.fragmentShader =
       source +
       shader +

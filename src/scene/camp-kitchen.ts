@@ -1,4 +1,5 @@
 import * as T from 'three';
+import type { DeferRoomAsset } from './rear-loading';
 import { auroraBottle } from './aurora-bottle';
 import { group } from './geometry';
 import { loadDisplayModel } from './display-model';
@@ -9,7 +10,7 @@ import { snowMiner } from './snow-miner';
 export function campKitchen(
   zone: T.Group,
   manager: T.LoadingManager,
-  deferRoomDetail: (load: () => void) => void,
+  deferRoomDetail: DeferRoomAsset,
 ) {
   deferRoomDetail(() => loadDisplayModel(zone, '/media/models/camp-rack.glb', manager));
   snowMiner(zone, manager, deferRoomDetail);

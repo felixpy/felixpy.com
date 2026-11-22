@@ -1,6 +1,7 @@
 import * as T from 'three';
+import { rearLayouts } from '../content/book-rear-layouts';
 import type { BookEdition } from '../content/books';
-import { canvasTexture, group, mesh, random } from './geometry';
+import { canvasTexture, mesh, random } from './geometry';
 import { blenderMesh } from './blender-mesh';
 import { drawEditionBack, printedBars } from './book-back-print';
 
@@ -281,82 +282,99 @@ function knuthSpine(ctx: CanvasRenderingContext2D, book: BookEdition) {
   ctx.textAlign = 'left';
 }
 
-function bindingPrint(book: BookEdition, age: number, seed: number, resolution: number) {
+function paintBinding(
+  ctx: CanvasRenderingContext2D,
+  book: BookEdition,
+  age: number,
+  seed: number,
+  resolution: number,
+  includeParagraphs: boolean,
+) {
   const rng = random(seed);
-  return canvasTexture(384 * resolution, 512 * resolution, (ctx) => {
-    ctx.scale(resolution, resolution);
-    ctx.fillStyle = book.cloth;
-    ctx.fillRect(0, 0, 384, 512);
-    const fade = ctx.createLinearGradient(0, 0, 0, 512);
-    fade.addColorStop(0, `rgba(226,207,170,${0.04 + age * 0.25})`);
-    fade.addColorStop(0.63, `rgba(218,199,168,${age * 0.08})`);
-    fade.addColorStop(1, 'rgba(12,10,9,0.05)');
-    ctx.fillStyle = fade;
-    ctx.fillRect(288, 0, 96, 512);
-    if (book.binding === 'board') {
-      for (let i = 0; i < 512; i += 2) {
-        ctx.fillStyle = `rgba(38,30,24,${rng() * 0.044})`;
-        ctx.fillRect(0, i, 384, 0.6);
-      }
-      for (let i = 0; i < 384; i += 2) {
-        ctx.fillStyle = `rgba(248,242,220,${rng() * 0.05})`;
-        ctx.fillRect(i, 0, 0.7, 512);
-      }
+  ctx.scale(resolution, resolution);
+  ctx.fillStyle = book.cloth;
+  ctx.fillRect(0, 0, 384, 512);
+  const fade = ctx.createLinearGradient(0, 0, 0, 512);
+  fade.addColorStop(0, `rgba(226,207,170,${0.04 + age * 0.25})`);
+  fade.addColorStop(0.63, `rgba(218,199,168,${age * 0.08})`);
+  fade.addColorStop(1, 'rgba(12,10,9,0.05)');
+  ctx.fillStyle = fade;
+  ctx.fillRect(288, 0, 96, 512);
+  if (book.binding === 'board') {
+    for (let i = 0; i < 512; i += 2) {
+      ctx.fillStyle = `rgba(38,30,24,${rng() * 0.044})`;
+      ctx.fillRect(0, i, 384, 0.6);
     }
+    for (let i = 0; i < 384; i += 2) {
+      ctx.fillStyle = `rgba(248,242,220,${rng() * 0.05})`;
+      ctx.fillRect(i, 0, 0.7, 512);
+    }
+  }
+  ctx.fillStyle = book.ink;
+  ctx.font = '600 12px Arial,sans-serif';
+  ctx.fillText(book.imprint.toUpperCase(), 20, 47, 243);
+  ctx.fillRect(20, 62, 60, 1);
+  ctx.font = '16px Georgia,serif';
+  ctx.fillText(book.author, 20, 94, 241);
+  barcode(ctx, book.identifier);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(288, 0, 96, 512);
+  ctx.clip();
+  const tech = /Press|Pearson|Addison|Prentice|O’Reilly/.test(book.imprint);
+  if (book.imprint === 'Penguin Classics') {
+    ctx.fillStyle = '#e6ddc6';
+    ctx.fillRect(288, 0, 96, 52);
+    ctx.font = '600 11px Georgia,serif';
+    ctx.fillStyle = '#343028';
+    ctx.fillText('PENGUIN', 305, 24);
+    ctx.fillText('CLASSICS', 304, 39);
+  } else if (book.imprint === 'O’Reilly' || book.key.startsWith('taocp-')) {
     ctx.fillStyle = book.ink;
-    ctx.font = '600 12px Arial,sans-serif';
-    ctx.fillText(book.imprint.toUpperCase(), 20, 47, 243);
-    ctx.fillRect(20, 62, 60, 1);
-    ctx.font = '16px Georgia,serif';
-    ctx.fillText(book.author, 20, 94, 241);
-    barcode(ctx, book.identifier);
-    ctx.save();
+    ctx.fillRect(291, 9, 89, 4);
+    ctx.fillRect(291, 487, 89, 3);
+  }
+  ctx.fillStyle = book.ink;
+  ctx.translate(336, 0);
+  ctx.rotate(Math.PI / 2);
+  const long = book.en.length > 27;
+  const offset = book.imprint === 'Penguin Classics' ? 66 : 18;
+  ctx.font = `600 ${long ? 31 : 43}px ${tech ? 'Arial,sans-serif' : 'Georgia,serif'}`;
+  ctx.fillText(book.en, offset, book.size[2] < 0.018 ? 2 : -2, 407 - offset);
+  ctx.font = `500 ${book.size[2] < 0.018 ? 15 : 17}px Arial,sans-serif`;
+  ctx.fillText(book.author.split(' · ')[0], offset + 1, 23, 367 - offset);
+  ctx.textAlign = 'right';
+  ctx.font = '600 15px Arial,sans-serif';
+  ctx.fillText(book.imprint, 498, 4, 83);
+  ctx.restore();
+  if (book.key.startsWith('taocp-')) knuthSpine(ctx, book);
+  if (book.key === 'sound-and-fury') faulknerJacket(ctx);
+  drawEditionBack(ctx, book, includeParagraphs);
+  for (let i = 0; i < 2 + Math.floor(age * 5); i++) {
+    const x = 290 + rng() ** 2 * 91,
+      hi = 24 + rng() * 80,
+      lo = 450 + rng() * 55;
+    ctx.strokeStyle = `rgba(226,211,177,${age * (0.1 + rng() * 0.21)})`;
+    ctx.lineWidth = 0.45 + rng();
     ctx.beginPath();
-    ctx.rect(288, 0, 96, 512);
-    ctx.clip();
-    const tech = /Press|Pearson|Addison|Prentice|O’Reilly/.test(book.imprint);
-    if (book.imprint === 'Penguin Classics') {
-      ctx.fillStyle = '#e6ddc6';
-      ctx.fillRect(288, 0, 96, 52);
-      ctx.font = '600 11px Georgia,serif';
-      ctx.fillStyle = '#343028';
-      ctx.fillText('PENGUIN', 305, 24);
-      ctx.fillText('CLASSICS', 304, 39);
-    } else if (book.imprint === 'O’Reilly' || book.key.startsWith('taocp-')) {
-      ctx.fillStyle = book.ink;
-      ctx.fillRect(291, 9, 89, 4);
-      ctx.fillRect(291, 487, 89, 3);
-    }
-    ctx.fillStyle = book.ink;
-    ctx.translate(336, 0);
-    ctx.rotate(Math.PI / 2);
-    const long = book.en.length > 27;
-    const offset = book.imprint === 'Penguin Classics' ? 66 : 18;
-    ctx.font = `600 ${long ? 31 : 43}px ${tech ? 'Arial,sans-serif' : 'Georgia,serif'}`;
-    ctx.fillText(book.en, offset, book.size[2] < 0.018 ? 2 : -2, 407 - offset);
-    ctx.font = `500 ${book.size[2] < 0.018 ? 15 : 17}px Arial,sans-serif`;
-    ctx.fillText(book.author.split(' · ')[0], offset + 1, 23, 367 - offset);
-    ctx.textAlign = 'right';
-    ctx.font = '600 15px Arial,sans-serif';
-    ctx.fillText(book.imprint, 498, 4, 83);
-    ctx.restore();
-    if (book.key.startsWith('taocp-')) knuthSpine(ctx, book);
-    if (book.key === 'sound-and-fury') faulknerJacket(ctx);
-    drawEditionBack(ctx, book);
-    for (let i = 0; i < 2 + Math.floor(age * 5); i++) {
-      const x = 290 + rng() ** 2 * 91,
-        hi = 24 + rng() * 80,
-        lo = 450 + rng() * 55;
-      ctx.strokeStyle = `rgba(226,211,177,${age * (0.1 + rng() * 0.21)})`;
-      ctx.lineWidth = 0.45 + rng();
-      ctx.beginPath();
-      ctx.moveTo(x, hi);
-      ctx.bezierCurveTo(x - 1.2, 180, x + 1.4, 358, x + 0.4, lo);
-      ctx.stroke();
-    }
-    scuff(ctx, 384, 512, age, seed + 52);
-    ctx.fillStyle = book.binding === 'board' ? '#ac987b' : '#d9ccb2';
-    ctx.fillRect(0, 0, 3, 3);
+    ctx.moveTo(x, hi);
+    ctx.bezierCurveTo(x - 1.2, 180, x + 1.4, 358, x + 0.4, lo);
+    ctx.stroke();
+  }
+  scuff(ctx, 384, 512, age, seed + 52);
+  ctx.fillStyle = book.binding === 'board' ? '#ac987b' : '#d9ccb2';
+  ctx.fillRect(0, 0, 3, 3);
+}
+
+function bindingPrint(
+  book: BookEdition,
+  age: number,
+  seed: number,
+  resolution: number,
+  includeParagraphs = true,
+) {
+  return canvasTexture(384 * resolution, 512 * resolution, (ctx) => {
+    paintBinding(ctx, book, age, seed, resolution, includeParagraphs);
   });
 }
 
@@ -444,25 +462,6 @@ function printWear(book: BookEdition) {
   return { age, seed };
 }
 
-export function editionMaterials(
-  book: BookEdition,
-  loader: CoverLoader,
-  stock: ReturnType<typeof pageStocks>,
-  proofResolution = 1,
-) {
-  const { age, seed } = printWear(book);
-  const resolution = book.key === 'creative-act' || book.key === 'c-language' ? 3 : proofResolution;
-  const map = bindingPrint(book, age, seed, resolution);
-  return {
-    front: frontPrint(loader, book, age, seed, map),
-    wrapper: new T.MeshStandardMaterial({
-      map,
-      roughness: book.jacket ? 0.65 : book.binding === 'board' ? 0.86 : 0.7,
-    }),
-    leaves: stock(book, age),
-  };
-}
-
 export function enableClosePrint(unit: T.Group, book: BookEdition, rearNeighbor?: T.Group) {
   if (!book.rearReference) return;
   const panel = unit.children.find((object) => object.name.endsWith(' · wrapper')) as T.Mesh<
@@ -512,18 +511,39 @@ export function enableClosePrint(unit: T.Group, book: BookEdition, rearNeighbor?
 }
 
 export function bindEdition(
-  parent: T.Group,
+  unit: T.Group,
   book: BookEdition,
   loader: CoverLoader,
   stock: ReturnType<typeof pageStocks>,
+  deferBack: boolean,
 ) {
-  const unit = group(parent, `${book.en} (${book.imprint}, ${book.year})`);
   unit.userData.ISBN = book.identifier;
   const kind = book.jacket ? 'jacket' : book.binding;
-  for (const [surface, material] of Object.entries(editionMaterials(book, loader, stock))) {
+  const { age, seed } = printWear(book);
+  const resolution = book.key === 'creative-act' || book.key === 'c-language' ? 3 : 1;
+  const deferred = deferBack && !backUsesCover(book.key) && !!rearLayouts[book.key]?.blocks.length;
+  const map = bindingPrint(book, age, seed, resolution, !deferred);
+  const front = frontPrint(loader, book, age, seed, map);
+  const materials = {
+    front,
+    wrapper: new T.MeshStandardMaterial({
+      map,
+      roughness: book.jacket ? 0.65 : book.binding === 'board' ? 0.86 : 0.7,
+    }),
+    leaves: stock(book, age),
+  };
+  for (const [surface, material] of Object.entries(materials)) {
     const panel = mesh(unit, form(kind, surface), material);
     panel.scale.set(...book.size);
     panel.name = `${kind} · ${surface}`;
   }
-  return unit;
+  if (!deferred) return;
+  return () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 384 * resolution;
+    canvas.height = 512 * resolution;
+    paintBinding(canvas.getContext('2d')!, book, age, seed, resolution, true);
+    map.image = canvas;
+    map.needsUpdate = true;
+  };
 }

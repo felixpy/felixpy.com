@@ -1,4 +1,5 @@
 import * as T from 'three';
+import type { DeferRoomAsset } from './rear-loading';
 import { loadDisplayModel } from './display-model';
 import { box, canvasTexture, group, mesh, surface, tube, type XYZ } from './geometry';
 import { display } from './hardware';
@@ -500,7 +501,7 @@ export function taskChair(
   parent: T.Object3D,
   p: Palette,
   manager: T.LoadingManager,
-  deferRoomDetail: (load: () => void) => void,
+  deferRoomDetail: DeferRoomAsset,
 ) {
   const placement = group(parent, 'Desk task chair', [chairPosition.x, 0.0045, chairPosition.z]);
   const chair = group(placement, 'Herman Miller Aeron Remastered · Size B / Graphite');
