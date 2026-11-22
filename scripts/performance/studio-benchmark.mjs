@@ -133,6 +133,7 @@ Add --route=workbench or --route=cabinet to turn toward that area on the first d
 Combine --loader-profile and --startup to profile through the first ten seconds after the drag.
 Add --full-room to wait for rear asset readiness on builds that report it.
 Set --input-delay-ms=<milliseconds> to wait before the first drag.
+Add --page-timed-input to dispatch the first move from a page timer after a real press.
 Use --screenshot to save a full-viewport image after sampling.
 Use --slow-draws to attribute individual draw calls taking longer than 50 ms.
 Use --texture-uploads to record uploads of at least 10 ms without timing every draw.
@@ -175,6 +176,7 @@ function options(args) {
   const delayArgument = [...captured].find((arg) => arg.startsWith('--input-delay-ms='));
   captured.delete(delayArgument);
   const inputDelayMs = delayArgument ? Number(delayArgument.slice('--input-delay-ms='.length)) : 0;
+  const pageTimedInput = captured.delete('--page-timed-input');
   const screenshot = captured.delete('--screenshot');
   const slowDraws = captured.delete('--slow-draws');
   const textureUploads = captured.delete('--texture-uploads');
@@ -202,6 +204,7 @@ function options(args) {
     ((fullRoom || delayArgument || startupSpans) && !startup) ||
     !Number.isSafeInteger(inputDelayMs) ||
     inputDelayMs < 0 ||
+    (pageTimedInput && (!startup || !inputDelayMs)) ||
     (captureProfile && screenshot) ||
     (gpuTiming && (captureProfile || steadyProfile || startup || loaderTrace || slowDraws)) ||
     (gpuPanorama && !gpuTiming) ||
@@ -268,6 +271,7 @@ function options(args) {
     warmupWork,
     fullRoom,
     inputDelayMs,
+    pageTimedInput,
     screenshot,
     slowDraws,
     textureUploads,
@@ -716,6 +720,7 @@ function installProbe({
         (event) => {
           drag.press = event.timeStamp;
           drag.pressDispatch = performance.now();
+          drag.pointerId = event.pointerId;
           drag.yawBefore = yaw;
         },
         { capture: true, once: true },
@@ -1303,13 +1308,14 @@ function waitForShading(page) {
   );
 }
 
-async function sampleStartup(page, profile, inputDelayMs, route) {
+async function sampleStartup(page, profile, { inputDelayMs, pageTimedInput, route: routeName }) {
+  const route = roomRoutes[routeName];
   await page.waitForFunction(
     (delay) => {
       const end = window.studioBench?.loaderEnd;
       return end > 0 && performance.now() >= end + delay;
     },
-    inputDelayMs,
+    pageTimedInput ? 0 : inputDelayMs,
     { timeout: 120000 + inputDelayMs },
   );
   const { x, y } = deskOrigin(profile);
@@ -1318,15 +1324,69 @@ async function sampleStartup(page, profile, inputDelayMs, route) {
   const positioned = performance.now();
   await page.mouse.down();
   const pressed = performance.now();
-  await page.mouse.move(x + (route?.turn ?? 96), y + (route?.pitch ?? 0));
+  const moveX = x + (route?.turn ?? 96);
+  const moveY = y + (route?.pitch ?? 0);
+  let timer;
+  if (pageTimedInput) {
+    timer = await page.evaluate(
+      ({ x, y, delay }) => {
+        const sample = window.studioBench;
+        const drag = sample.firstDrag;
+        const pointerId = drag.pointerId;
+        if (pointerId == null) throw new Error('The timed move has no preceding pointer press.');
+        const deadline = sample.loaderEnd + delay;
+        const armed = performance.now();
+        return new Promise((resolve) => {
+          setTimeout(
+            () => {
+              const wake = performance.now();
+              const event = new PointerEvent('pointermove', {
+                pointerId,
+                pointerType: 'mouse',
+                buttons: 1,
+                bubbles: true,
+                clientX: x,
+                clientY: y,
+              });
+              sample.renderer.domElement.dispatchEvent(event);
+              resolve({
+                deadline,
+                armed,
+                wake,
+                pointerId,
+                eventTime: event.timeStamp,
+                move: drag.move ?? null,
+                moveDispatch: drag.moveDispatch ?? null,
+                accepted:
+                  performance.getEntriesByName('studio-input-accepted')[0]?.startTime ?? null,
+              });
+            },
+            Math.max(0, deadline - armed),
+          );
+        });
+      },
+      { x: moveX, y: moveY, delay: inputDelayMs },
+    );
+    if (timer.move !== timer.eventTime || timer.moveDispatch == null)
+      throw new Error(
+        `The ${routeName} page-timed move was not measured: ${JSON.stringify(timer)}`,
+      );
+  } else await page.mouse.move(moveX, moveY);
   const moved = performance.now();
   await page.mouse.up();
   const released = performance.now();
-  await page.waitForFunction(
-    () => performance.now() >= window.studioBench?.firstDrag?.move + 10000,
-    null,
-    { timeout: 20000 },
-  );
+  try {
+    await page.waitForFunction(
+      () => performance.now() >= window.studioBench?.firstDrag?.move + 10000,
+      null,
+      { polling: 250, timeout: 60000 },
+    );
+  } catch (error) {
+    const input = timer ? ` Page-timed input: ${JSON.stringify(timer)}` : '';
+    throw new Error(`The ${routeName} post-move sampling window did not finish.${input}`, {
+      cause: error,
+    });
+  }
   const arrival = route
     ? await page.evaluate((target) => window.studioBench.project(target), route.target)
     : undefined;
@@ -1345,6 +1405,7 @@ async function sampleStartup(page, profile, inputDelayMs, route) {
     move: rounded(moved - pressed),
     release: rounded(released - moved),
     ...(arrival && { arrival }),
+    ...(timer && { timer }),
   };
 }
 
@@ -1553,6 +1614,20 @@ function startupSummary(raw, automationCommandMs) {
   const { press, pressDispatch, move, moveDispatch, nextSubmit, changedSubmit, frames } =
     raw.firstDrag;
   const accepted = raw.marks['studio-input-accepted'];
+  const timer = automationCommandMs.timer;
+  const roomReady = Math.max(
+    raw.marks['studio-room-material-prep-end'],
+    raw.marks['studio-room-rear-ready'],
+    raw.marks['studio-room-shaded'],
+  );
+  const animationGaps = [];
+  const callbacks = raw.startupAnimationFrames ?? [];
+  for (let index = 1; index < callbacks.length; index++) {
+    const previous = callbacks[index - 1][1];
+    const current = callbacks[index][1];
+    if (previous >= move + 10000) break;
+    if (current > roomReady) animationGaps.push(current - previous);
+  }
   const longTasks = raw.longTasks.filter(
     ([start, duration]) => start < move + 10000 && start + duration > move,
   );
@@ -1579,6 +1654,17 @@ function startupSummary(raw, automationCommandMs) {
     inputToNextRoomSubmitMs: rounded(nextSubmit - move),
     inputToChangedRoomSubmitMs: rounded(changedSubmit - move),
     acceptedInputToChangedRoomSubmitMs: accepted == null ? null : rounded(changedSubmit - accepted),
+    ...(timer && {
+      pageTimedInput: {
+        deadlineMs: rounded(timer.deadline),
+        armedMs: rounded(timer.armed),
+        wakeMs: rounded(timer.wake),
+        armedLeadMs: rounded(timer.deadline - timer.armed),
+        wakeDelayMs: rounded(timer.wake - timer.deadline),
+        deadlineToChangedRoomSubmitMs: rounded(changedSubmit - timer.deadline),
+      },
+    }),
+    ...(animationGaps.length && { postReadyAnimation: stats(animationGaps) }),
     afterFirstInput: stats(intervals(frames)),
     afterFirstInputLongTaskCount: longTasks.length,
     afterFirstInputLongTaskMax: Math.max(0, ...longTasks.map(([, duration]) => duration)),
@@ -1611,6 +1697,7 @@ async function measure({ base, directory, head, name, run, settings }) {
     warmupWork,
     fullRoom,
     inputDelayMs,
+    pageTimedInput,
     screenshot,
     slowDraws,
     textureUploads,
@@ -1739,8 +1826,7 @@ async function measure({ base, directory, head, name, run, settings }) {
     if (warm) await page.reload({ waitUntil: 'domcontentloaded' });
     else await page.goto(url.href, { waitUntil: 'domcontentloaded' });
     let cpuProfile, compositorTrace, navigationStart, automationCommandMs, firstTurn;
-    if (startup)
-      automationCommandMs = await sampleStartup(page, profile, inputDelayMs, roomRoutes[route]);
+    if (startup) automationCommandMs = await sampleStartup(page, profile, settings);
     if (stopTrace) {
       await page.waitForFunction(() => window.studioBench?.loaderEnd > 0, null, {
         timeout: 120000,
@@ -1884,6 +1970,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         loaderTrace && 'loader-trace',
         startup && 'startup',
         startupSpans && 'startup-spans',
+        pageTimedInput && 'page-timed-input',
         cabinetEntryTiming && 'cabinet-entry-timing',
         warmupWork && 'warmup-work',
         inputDelayMs > 0 && `input-delay-${inputDelayMs}ms`,
