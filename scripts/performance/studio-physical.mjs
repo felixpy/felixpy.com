@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   closeSync,
   existsSync,
@@ -27,12 +28,14 @@ import {
 const usage = `Usage:
   node scripts/performance/studio-physical.mjs --dry-run --display='\\\\.\\DISPLAY1' --witness=EXE [options]
   node scripts/performance/studio-physical.mjs --capture --display='\\\\.\\DISPLAY1' --witness=EXE [options]
+  node scripts/performance/studio-physical.mjs --measure --display='\\\\.\\DISPLAY1' --witness=EXE [options]
 
 Options: --dist=DIR --presentmon=EXE
-Capture opens a private foreground Chrome kiosk on the single active 4K 144 Hz display.
-Keep the display clear for the warmup and capture. PresentMon may need additional OS permissions.
+Capture and measurement open a private foreground Chrome kiosk on the single active 4K 144 Hz
+display. Keep it clear for warmup and capture. PresentMon may need additional OS permissions.
 The witness records marker metadata from a 160×4 native pixel ROI. No desktop images are saved.
-The output is a calibration trial. Confirm swap chain attribution before measuring release cadence.`;
+Use --capture for calibration with PresentMon. Use --measure to report a 60-second observed
+scene cadence lower bound from DXGI without PresentMon. Neither mode certifies release cadence.`;
 
 const root = resolve(import.meta.dirname, '../..');
 const profile = profiles['4k'];
@@ -150,6 +153,7 @@ function settings(args) {
       help: { type: 'boolean', short: 'h' },
       'dry-run': { type: 'boolean' },
       capture: { type: 'boolean' },
+      measure: { type: 'boolean' },
       display: { type: 'string' },
       dist: { type: 'string', default: join(root, 'dist') },
       presentmon: { type: 'string' },
@@ -158,26 +162,30 @@ function settings(args) {
   });
   if (!args.length || values.help) return;
   if (
-    Boolean(values['dry-run']) === Boolean(values.capture) ||
+    [values['dry-run'], values.capture, values.measure].filter(Boolean).length !== 1 ||
     !/^\\\\\.\\DISPLAY[1-9]\d*$/i.test(values.display ?? '')
   )
-    throw new Error('Select --dry-run or --capture and explicitly name the display.\n' + usage);
-  if (process.platform !== 'win32') throw new Error('Physical calibration requires Windows.');
-  const presentMon =
-    values.presentmon ??
-    [process.env.ProgramW6432, process.env.ProgramFiles]
-      .filter(Boolean)
-      .map((directory) => join(directory, 'NVIDIA Corporation/FrameViewSDK/bin/PresentMon_x64.exe'))
-      .find(existsSync);
+    throw new Error('Select one mode and explicitly name the display.\n' + usage);
+  if (process.platform !== 'win32') throw new Error('Physical capture requires Windows.');
+  let presentMon;
+  if (!values.measure)
+    presentMon =
+      values.presentmon ??
+      [process.env.ProgramW6432, process.env.ProgramFiles]
+        .filter(Boolean)
+        .map((directory) =>
+          join(directory, 'NVIDIA Corporation/FrameViewSDK/bin/PresentMon_x64.exe'),
+        )
+        .find(existsSync);
   if (!values.witness)
     throw new Error('Pass --witness=EXE with a compatible DXGI witness executable.');
   const witness = resolve(values.witness);
   const dist = resolve(values.dist);
-  for (const path of [presentMon, witness, join(dist, 'index.html')])
+  const inputs = [witness, join(dist, 'index.html')];
+  if (!values.measure) inputs.push(presentMon);
+  for (const path of inputs)
     if (!path || !existsSync(path) || !statSync(path).isFile())
-      throw new Error(
-        'Missing calibration input: ' + (path ?? 'PresentMon. Supply --presentmon=EXE.'),
-      );
+      throw new Error('Missing capture input: ' + (path ?? 'PresentMon. Supply --presentmon=EXE.'));
   const assets = join(dist, 'assets');
   const buildHasHold =
     existsSync(assets) &&
@@ -186,10 +194,8 @@ function settings(args) {
         /^room-frame-marker-.*\.js$/.test(file) &&
         readFileSync(join(assets, file), 'utf8').includes('studioPresentWitness'),
     );
-  if (values.capture && !buildHasHold)
-    throw new Error(
-      'The selected production build lacks physical calibration hold. Rebuild the website.',
-    );
+  if ((values.capture || values.measure) && !buildHasHold)
+    throw new Error('The selected production build lacks the frame marker. Rebuild the website.');
   const display = readDisplay();
   const native = [profile.width, profile.height].join(',');
   if (
@@ -206,10 +212,11 @@ function settings(args) {
     );
   return {
     capture: values.capture,
+    measure: values.measure,
     display,
     dist,
     buildHasHold,
-    presentMon: resolve(presentMon),
+    presentMon: presentMon && resolve(presentMon),
     witness,
   };
 }
@@ -373,14 +380,29 @@ async function calibrationHold(page) {
   }, phases);
 }
 
-function holdWitness(path, report, hold) {
-  const heldSerial = hold.held.serial;
-  const resumedSerial = hold.resumed.serial;
-  const frames = readFileSync(path, 'utf8')
+function witnessFrames(path) {
+  return readFileSync(path, 'utf8')
     .trim()
     .split(/\r?\n/)
     .map((line) => JSON.parse(line))
     .filter((entry) => entry.type === 'frame' && entry.status !== 'mouse_only');
+}
+
+function witnessReport(path, display, args = []) {
+  const report = analysis('studio-witness.mjs', [path, ...args]);
+  if (
+    report.output.toUpperCase() !== display.name.toUpperCase() ||
+    report.outputPixels.join(',') !== display.signal.join(',') ||
+    Object.keys(roi).some((key) => report.roi[key] !== roi[key])
+  )
+    throw new Error('The witness captured an unexpected output or ROI.');
+  return report;
+}
+
+function holdWitness(path, report, hold) {
+  const heldSerial = hold.held.serial;
+  const resumedSerial = hold.resumed.serial;
+  const frames = witnessFrames(path);
   const held = frames.filter((frame) => frame.status === 'valid' && frame.sequence === heldSerial);
   const first = held.length ? frames.indexOf(held[0]) : 0;
   const last = held.length ? frames.indexOf(held.at(-1)) : frames.length - 1;
@@ -420,6 +442,78 @@ function holdWitness(path, report, hold) {
   };
 }
 
+async function primeDesk(page) {
+  await turnDesk(page, profile, 14000, true);
+  await page.waitForTimeout(1000);
+  await page.evaluate(() => {
+    window.studioBench.resolutions = {};
+    window.studioBench.rotations = [];
+  });
+  checkCanvas(await canvasState(page));
+}
+
+async function measureDesk(page, browserVersion, configuration, directory, captureWitness) {
+  const { display, dist } = configuration;
+  const motion = turnDesk(page, profile, 73000, false);
+  const motionEnded = motion.then(() => {
+    throw new Error('Desk motion ended before the witness capture was verified.');
+  });
+  await Promise.race([
+    motionEnded,
+    page.waitForFunction(() => window.studioBench.recording, null, { timeout: 10000 }),
+  ]);
+  const { entry, path, log } = captureWitness(65);
+  const exit = await Promise.race([motionEnded, entry.result]);
+  if (exit.code !== 0 && exit.code !== 2) throw captureFailure('DXGI witness', exit, log);
+  const state = await Promise.race([motionEnded, canvasState(page)]);
+  checkCanvas(state, true);
+  if (state.expectedSamples !== 4) throw new Error('Expected 4× MSAA during measurement.');
+  await motion;
+  if (JSON.stringify(readDisplay()) !== JSON.stringify(display))
+    throw new Error('The active output mode changed across the measurement window.');
+
+  const report = witnessReport(path, display, ['--start=2', '--seconds=60']);
+  const frames = witnessFrames(path).filter(({ status }) => status === 'valid');
+  const begin = BigInt(report.window.startQpc);
+  const end = BigInt(report.window.endQpc);
+  const windowBracketed =
+    frames.some(({ lastPresentQpc }) => BigInt(lastPresentQpc) < begin) &&
+    frames.some(({ lastPresentQpc }) => BigInt(lastPresentQpc) >= end);
+  const observedSceneFramesPerSecondLowerBound = windowBracketed
+    ? (report.observedSceneFramesPerSecondLowerBound ?? null)
+    : null;
+  const chunk = await page.evaluate(() => {
+    for (const { name } of performance.getEntriesByType('resource')) {
+      const url = new URL(name);
+      if (url.origin === location.origin && /^\/assets\/StudioView-[\w-]+\.js$/.test(url.pathname))
+        return url.pathname;
+    }
+  });
+  if (!chunk) throw new Error('The loaded StudioView production chunk was not recorded.');
+  const result = {
+    mode: 'measure',
+    route: 'desk',
+    browserVersion,
+    chunk,
+    chunkSHA256: createHash('sha256')
+      .update(readFileSync(join(dist, chunk)))
+      .digest('hex'),
+    display,
+    state,
+    windowBracketed,
+    witnessExitCode: exit.code,
+    observedSceneFramesPerSecondLowerBound,
+    witness: report,
+    etwFramesCorrelated: false,
+    certified: false,
+  };
+  const resultPath = join(directory, 'measurement.json');
+  writeFileSync(resultPath, JSON.stringify(result, null, 2) + '\n');
+  console.log(JSON.stringify({ path: resultPath, observedSceneFramesPerSecondLowerBound }));
+  if (!Number.isFinite(observedSceneFramesPerSecondLowerBound))
+    throw new Error('No observed scene-cadence bound was available. See ' + resultPath);
+}
+
 async function run(configuration, directory) {
   const { dist, display, presentMon, witness } = configuration;
   const server = await preview({
@@ -432,6 +526,20 @@ async function run(configuration, directory) {
   const captures = [];
   const session = `FelixStudioPhysical-${process.pid}-${Date.now()}`;
   let browser, desktop;
+  function captureWitness(seconds) {
+    const path = join(directory, 'witness.jsonl');
+    const log = join(directory, 'witness.log');
+    const roiArgs = Object.entries(roi).flatMap(([name, value]) => ['--' + name, String(value)]);
+    desktop = tool(
+      witness,
+      ['--capture', '--output', display.name, ...roiArgs, '--seconds', String(seconds)],
+      seconds,
+      log,
+      path,
+    );
+    captures.push(desktop);
+    return { entry: desktop, path, log };
+  }
   try {
     const args = browserArgs(profile.adapter);
     if (!args.some((arg) => arg.startsWith('--use-adapter-luid=')))
@@ -461,6 +569,11 @@ async function run(configuration, directory) {
     await waitForShading(page);
     await page.waitForFunction(() => window.studioPresentWitness.serial > 1);
     checkCanvas(await canvasState(page, true));
+    if (configuration.measure) {
+      await primeDesk(page);
+      await measureDesk(page, browser.version(), configuration, directory, captureWitness);
+      return;
+    }
     const browserCdp = await browser.newBrowserCDPSession();
     const { processInfo } = await browserCdp.send('SystemInfo.getProcessInfo');
     const gpu = processInfo.filter(({ type }) => type.toLowerCase() === 'gpu');
@@ -489,29 +602,13 @@ async function run(configuration, directory) {
       throw captureFailure('PresentMon preflight', preflightExit, preflight.log);
     if (!analyzePresent(preflight.path).some(({ displayed }) => displayed > 0))
       throw new Error('PresentMon preflight returned no display-tracked frames.');
-    await turnDesk(page, profile, 14000, true);
-    await page.waitForTimeout(1000);
-    await page.evaluate(() => {
-      window.studioBench.resolutions = {};
-      window.studioBench.rotations = [];
-    });
-    checkCanvas(await canvasState(page));
+    await primeDesk(page);
 
     const present = startPresent('display', 19);
     await delay(500);
     if (present.entry.finished)
       throw captureFailure('PresentMon', await present.entry.result, present.log);
-    const witnessPath = join(directory, 'witness.jsonl');
-    const witnessLog = join(directory, 'witness.log');
-    const roiArgs = Object.entries(roi).flatMap(([name, value]) => ['--' + name, String(value)]);
-    desktop = tool(
-      witness,
-      ['--capture', '--output', display.name, ...roiArgs, '--seconds', '15'],
-      15,
-      witnessLog,
-      witnessPath,
-    );
-    captures.push(desktop);
+    const { path: witnessPath, log: witnessLog } = captureWitness(15);
     const deadline = performance.now() + 2800;
     while (!statSync(witnessPath).size && !desktop.finished && performance.now() < deadline)
       await delay(40);
@@ -531,13 +628,7 @@ async function run(configuration, directory) {
     if (JSON.stringify(readDisplay()) !== JSON.stringify(display))
       throw new Error('The active output mode changed across the calibration window.');
     const chains = analyzePresent(present.path);
-    const report = analysis('studio-witness.mjs', [witnessPath]);
-    if (
-      report.output.toUpperCase() !== display.name.toUpperCase() ||
-      report.outputPixels.join(',') !== display.signal.join(',') ||
-      Object.keys(roi).some((key) => report.roi[key] !== roi[key])
-    )
-      throw new Error('The witness captured an unexpected output or ROI.');
+    const report = witnessReport(witnessPath, display);
     const opticalHold = holdWitness(witnessPath, report, hold);
     const result = {
       display,
@@ -583,7 +674,7 @@ async function run(configuration, directory) {
 try {
   const configuration = settings(process.argv.slice(2));
   if (!configuration) console.log(usage);
-  else if (!configuration.capture)
+  else if (!configuration.capture && !configuration.measure)
     console.log(
       JSON.stringify({ ...configuration, mode: 'dry-run', roi, phases, certified: false }, null, 2),
     );
@@ -591,7 +682,9 @@ try {
     const output = join(root, '.review/performance');
     mkdirSync(output, { recursive: true });
     const directory = mkdtempSync(join(output, 'studio-physical-'));
-    console.log('Calibration files: ' + directory);
+    console.log(
+      (configuration.measure ? 'Measurement files: ' : 'Calibration files: ') + directory,
+    );
     await run(configuration, directory);
   }
 } catch (error) {

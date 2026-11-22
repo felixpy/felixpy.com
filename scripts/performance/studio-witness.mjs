@@ -9,7 +9,10 @@ Analyze a completed studio-dxgi-roi-v1 witness file. The window starts at captur
 by default and ends at the capture deadline unless a duration is provided. Reports observed
 marker changes and acquisition gaps without ETW correlation or release certification.
 Serial gaps describe the distance between readable markers. Acquisition gaps come from
-DXGI AccumulatedFrames on records inside the selected window.`;
+DXGI AccumulatedFrames on records inside the selected window. The observed scene FPS
+lower bound subtracts one from the number of distinct readable serials to allow for a
+frame already on screen at window start. Serial reversals or inconsistent accumulation
+make this bound unavailable.`;
 
 const serialSpace = 0x1000000;
 const ticksPerSecond = 1_000_000n;
@@ -44,6 +47,10 @@ function checksum(serial) {
     for (let bit = 0; bit < 8; bit++) crc = ((crc << 1) ^ (crc & 0x80 ? 0x07 : 0)) & 0xff;
   }
   return crc;
+}
+
+function serialDistance(previous, current) {
+  return (current - previous + serialSpace) % serialSpace;
 }
 
 function parseCapture(path) {
@@ -205,6 +212,8 @@ function analyze(path, capture, startOffset, length) {
   };
   const examples = [];
   const observed = new Set();
+  let previousObservedSerial;
+  let observationsMonotonic = true;
   const sparse = (kind, time, detail) => {
     if (examples.length < maxExamples) examples.push({ kind, qpc: String(time), ...detail });
   };
@@ -240,11 +249,16 @@ function analyze(path, capture, startOffset, length) {
       } else {
         samples.validMarkers++;
         observed.add(frame.serial);
+        if (
+          previousObservedSerial !== undefined &&
+          serialDistance(previousObservedSerial, frame.serial) >= serialSpace / 2
+        )
+          observationsMonotonic = false;
         if (previous === undefined) samples.unlinkedMarkers++;
         else if (previous.serial === frame.serial) samples.repeatedSerials++;
         else {
           samples.observedSerialChanges++;
-          const step = (frame.serial - previous.serial + serialSpace) % serialSpace;
+          const step = serialDistance(previous.serial, frame.serial);
           const sequence = {
             previousSerial: previous.serial,
             previousQpc: String(previous.qpc),
@@ -261,9 +275,13 @@ function analyze(path, capture, startOffset, length) {
         }
       }
     }
+    if (valid) previousObservedSerial = frame.serial;
     previous = valid ? { serial: frame.serial, qpc: time } : undefined;
   }
 
+  const windowSeconds = Number(end - begin) / Number(frequency);
+  const hasConsistentObservations =
+    observationsMonotonic && !samples.inconsistentAccumulation && windowSeconds > 0;
   return {
     scope: 'Offline DXGI desktop ROI witness',
     capture: resolve(path),
@@ -274,10 +292,13 @@ function analyze(path, capture, startOffset, length) {
     window: {
       startQpc: String(begin),
       endQpc: String(end),
-      seconds: Number(end - begin) / Number(frequency),
+      seconds: windowSeconds,
     },
     ...samples,
     distinctSerialValues: observed.size,
+    observedSceneFramesPerSecondLowerBound: hasConsistentObservations
+      ? Math.max(0, observed.size - 1) / windowSeconds
+      : null,
     examples,
     etwFramesCorrelated: false,
     certified: false,

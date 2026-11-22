@@ -689,6 +689,8 @@ Runs 303–304 used default build `a95214b5` and the RTX 4090 native 4K profile.
 
 Both steady samples cleared the tolerated average submission cadence with no recorded browser issues. Manual desktop testing also reported smooth interaction. First-turn timing is covered separately above. A non-interactive Windows display check confirmed the current native signal at 3840 × 2160 and 143.999 Hz. Distinct physical presents still need a foreground capture.
 
+Run 305 repeated the desk route for 60 seconds on the same build, with a warm reload and a prime turn. At native 4K and 4× MSAA it submitted 138.98 FPS, with frame-interval P95/P99 of 7.0/13.9 ms versus 7.0/7.1 ms on the 144.00 FPS blank control. The longest scene interval was 562.5 ms and overlapped a 565 ms main-thread task after room readiness; no resource response finished during that interval. The run established the average cadence on the current desk build. The long-task source and proposed frame-time gates remain open. Run 306 measured the cold loader on the same build. The longest observed interval between changed compositor screenshots was 235 ms, while the longest main-thread animation callback gap was 915 ms.
+
 ## UHD 770 desk GPU attribution
 
 Runs 106–107 used native 1920 × 1080 with matte and lean lighting, scissor, window-only water and depth prefill. `--gpu-panorama` alternates whole main-color queries with queries around the panorama draw on separate frames. On the stock opaque order, GPU P95 was 39.64 ms inclusive and 0.98 ms for the panorama alone, with 14 samples each. The panorama query covers that single draw and its result is a sampled cost ceiling for savings on the photographed exterior, with other scene work still in the inclusive measurement. Near-first opaque sorting moved inclusive P95 to 40.74 ms and did not close the 30 FPS frame budget gap. It remains a benchmark diagnostic.
@@ -817,3 +819,13 @@ node scripts/performance/studio-physical.mjs --dry-run --display='\\.\DISPLAY1' 
 ```
 
 The MSVC build and witness CPU self-test passed. The runner dry run confirmed native 3840 × 2160 at 143999/1000 Hz and found the test build's hold hook. No foreground capture results are available yet.
+
+A provider-free ETW session preflight returned access denied under the current Windows token, including outside the workspace sandbox. The display-mode probe still passed. The [Windows ETW permission requirements](https://learn.microsoft.com/en-us/windows/win32/etw/controlling-event-tracing-sessions) explain why an authorized tracing process is required for PresentMon correlation.
+
+The `--measure` mode records a 65-second DXGI witness during continuous movement in the native high-quality desk view. It uses a private foreground Chrome session and analyzes the exact 60-second window starting two seconds into capture. Keep the display clear for the full replay.
+
+```powershell
+node scripts/performance/studio-physical.mjs --measure --display='\\.\DISPLAY1' --witness='<output-directory>\studio-dxgi-witness.exe'
+```
+
+The observed scene cadence divides the number of distinct readable frame markers minus one by the QPC window duration. The subtraction allows for a frame already displayed at the start. Repeated markers, unreadable markers and missed acquisitions add no frames to the count. At least 8,209 distinct readable markers in 60 seconds establish a lower bound of 136.8 FPS for the measured route. The combined calibration is still required for swap-chain attribution and exact timing over acquisition gaps.
