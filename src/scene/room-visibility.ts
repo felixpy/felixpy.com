@@ -8,6 +8,7 @@ import { deskOcclusionGLSL } from './desk-occlusion';
 import { desk } from './layout';
 import { cullRoomDirectLighting } from './room-direct-lighting';
 import { matteRoomLighting } from './room-matte-lighting';
+import { leanRoomLightEvaluation } from './room-lean-lighting';
 
 export const visibilityGrid = {
   origin: [-1.375, -0.125, -0.6875],
@@ -35,17 +36,16 @@ export function roomVisibility(
   const uniform = { value: texture(new Uint8Array([128, 128, 128, 255]), 1, 1, 1) };
   const restore: Array<() => void> = [];
   const seen = new Set<T.MeshStandardMaterial>();
-  const sharedReflections =
-    typeof location !== 'undefined' &&
-    new URLSearchParams(location.search).get('studio-reflections') === 'shared';
-  const lighting =
-    typeof location === 'undefined'
-      ? null
-      : new URLSearchParams(location.search).get('studio-lighting');
+  const options =
+    typeof location === 'undefined' ? undefined : new URLSearchParams(location.search);
+  const sharedReflections = options?.get('studio-reflections') === 'shared';
+  const lighting = options?.get('studio-lighting');
+  const leanKernel = options?.get('studio-light-kernel') === 'lean';
   const matteLighting = lighting === 'matte';
   const cullAllLighting = lighting === 'culled-all';
-  const cullLighting = matteLighting || lighting === 'culled';
+  const cullLighting = matteLighting || lighting === 'culled' || leanKernel;
   let cullDirectLights = cullAllLighting || (cullLighting && initial.quality === 'low');
+  let leanDirectLights = leanKernel && initial.quality === 'low';
   const lightEvaluation = T.ShaderChunk.lights_fragment_begin
     .replace(
       'getSpotLightInfo( spotLight, geometryPosition, directLight );',
@@ -66,6 +66,7 @@ export function roomVisibility(
           -inverseTransformDirection(directLight.direction, viewMatrix));
       #endif`,
     );
+  const leanEvaluation = leanKernel ? leanRoomLightEvaluation(lightEvaluation) : lightEvaluation;
   const prepare = (object: T.Object3D) => {
     if (!(object instanceof T.Mesh)) return;
     for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
@@ -96,7 +97,8 @@ export function roomVisibility(
         cacheKey +
         '-studio-room-visibility-' +
         (sharedReflections ? 'shared' : Number(localReflections)) +
-        (cullDirectLights ? (matte ? '-matte' : '-culled') : '');
+        (cullDirectLights ? (matte ? '-matte' : '-culled') : '') +
+        (leanDirectLights ? '-lean' : '');
       material.onBeforeCompile = (shader, renderer) => {
         compile.call(material, shader, renderer);
         if (sharedReflections) shader.uniforms.studioProjectReflections = reflectionProjection;
@@ -118,7 +120,8 @@ export function roomVisibility(
         const fragment = cullDirectLights
           ? cullRoomDirectLighting(
               matte ? matteRoomLighting(shader.fragmentShader) : shader.fragmentShader,
-              lightEvaluation,
+              leanDirectLights ? leanEvaluation : lightEvaluation,
+              leanDirectLights,
             )
           : shader.fragmentShader.replace('#include <lights_fragment_begin>', lightEvaluation);
         shader.fragmentShader =
@@ -172,8 +175,10 @@ export function roomVisibility(
     prepareMaterials,
     update(env: Environment, delta: number) {
       const cull = cullAllLighting || (cullLighting && env.quality === 'low');
-      if (cull !== cullDirectLights) {
+      const lean = leanKernel && env.quality === 'low';
+      if (cull !== cullDirectLights || lean !== leanDirectLights) {
         cullDirectLights = cull;
+        leanDirectLights = lean;
         for (const material of seen) material.needsUpdate = true;
       }
       bounce.update(env, delta);

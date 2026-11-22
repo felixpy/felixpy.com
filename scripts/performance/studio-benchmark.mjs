@@ -63,6 +63,7 @@ const experiments = {
   '--catch-up-warmup': ['studio-warmup', 'catch-up'],
   '--adaptive-warmup': ['studio-warmup', 'adaptive'],
   '--culled-lights': ['studio-lighting', 'culled'],
+  '--lean-lighting': ['studio-light-kernel', 'lean'],
   '--culled-all-lights': ['studio-lighting', 'culled-all'],
   '--matte-surfaces': ['studio-lighting', 'matte'],
   '--shared-reflections': ['studio-reflections', 'shared'],
@@ -77,6 +78,7 @@ List profiles or positive run IDs with commas. Run ID defaults to 1.
 Example: node scripts/performance/studio-benchmark.mjs 4k,uhd-adaptive 1,2,3
 Use --loader-profile to profile startup CPU work through loader removal.
 Use --steady-profile to profile CPU work during the warmed desk turn.
+Use --gpu-timing to sample main-color GPU work during the final steady route.
 Use --repeat-desk to prime the shaders and geometry with one matched desk turn before sampling.
 Use --seconds=<duration> to set the measured steady desk route duration (default 12).
 Use --route=<${Object.keys(roomRoutes).join('|')}> and --weather=<${Object.keys(weatherCodes).join('|')}> to replay room views.
@@ -100,6 +102,7 @@ function options(args) {
   const ids = (positional[1] ?? '1').split(',');
   const captureProfile = captured.delete('--loader-profile');
   const steadyProfile = captured.delete('--steady-profile');
+  const gpuTiming = captured.delete('--gpu-timing');
   const loaderTrace = captured.delete('--loader-trace');
   const startup = captured.delete('--startup');
   const fullRoom = captured.delete('--full-room');
@@ -131,6 +134,7 @@ function options(args) {
     !Number.isSafeInteger(inputDelayMs) ||
     inputDelayMs < 0 ||
     (captureProfile && screenshot) ||
+    (gpuTiming && (captureProfile || steadyProfile || startup || loaderTrace || slowDraws)) ||
     (loaderTrace && (captureProfile || startup || screenshot || slowDraws)) ||
     (steadyProfile && (captureProfile || loaderTrace || startup || slowDraws)) ||
     ((repeatDesk || secondsArgument) && (captureProfile || loaderTrace || startup)) ||
@@ -151,6 +155,7 @@ function options(args) {
     runs: ids.map(Number),
     captureProfile,
     steadyProfile,
+    gpuTiming,
     loaderTrace,
     startup,
     fullRoom,
@@ -187,7 +192,7 @@ function browserArgs(adapter) {
   return args;
 }
 
-function installProbe({ quality, forceNative, startup, slowDraws }) {
+function installProbe({ quality, forceNative, startup, slowDraws, gpuTiming }) {
   performance.setResourceTimingBufferSize(1000);
   localStorage.setItem(
     'felix-studio-v1',
@@ -239,6 +244,56 @@ function installProbe({ quality, forceNative, startup, slowDraws }) {
     }
   });
   observer.observe(document, { subtree: true, childList: true, attributeFilter: ['value'] });
+
+  function attachGpuTiming(renderer) {
+    const gl = renderer.getContext();
+    const timer = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+    if (!timer) return;
+    const pending = [];
+    const timings = (sample.mainColorGpu = { durations: [], discarded: 0 });
+    let active = false;
+    let inQuery = false;
+
+    function poll() {
+      if (!pending.length) return true;
+      if (gl.getParameter(timer.GPU_DISJOINT_EXT)) {
+        timings.discarded += pending.length;
+        for (const query of pending.splice(0)) gl.deleteQuery(query);
+        return true;
+      }
+      while (pending.length && gl.getQueryParameter(pending[0], gl.QUERY_RESULT_AVAILABLE)) {
+        const query = pending.shift();
+        timings.durations.push(gl.getQueryParameter(query, gl.QUERY_RESULT) / 1e6);
+        gl.deleteQuery(query);
+      }
+      return pending.length === 0;
+    }
+
+    sample.beginGpuTiming = () => {
+      active = true;
+    };
+    sample.finishGpuTiming = () => {
+      active = false;
+      return poll();
+    };
+    return {
+      begin() {
+        if (!active || inQuery || sample.roomFrames.length % 17) return null;
+        poll();
+        const query = gl.createQuery();
+        if (!query) return null;
+        gl.beginQuery(timer.TIME_ELAPSED_EXT, query);
+        inQuery = true;
+        return query;
+      },
+      end(query) {
+        gl.endQuery(timer.TIME_ELAPSED_EXT);
+        inQuery = false;
+        pending.push(query);
+      },
+    };
+  }
+
   window.__THREE_DEVTOOLS__ = new EventTarget();
   window.__THREE_DEVTOOLS__.addEventListener('observe', ({ detail: renderer }) => {
     if (!renderer.isWebGLRenderer) return;
@@ -343,6 +398,7 @@ function installProbe({ quality, forceNative, startup, slowDraws }) {
         return result;
       };
     }
+    const gpu = gpuTiming ? attachGpuTiming(renderer) : undefined;
     let world, roomCamera;
     sample.project = (name) => {
       const object = world?.getObjectByName(name);
@@ -370,7 +426,13 @@ function installProbe({ quality, forceNative, startup, slowDraws }) {
       const primary =
         sample.recording && room && !scene.overrideMaterial && sample.roomFrames.at(-1) !== frame;
       const start = primary ? performance.now() : 0;
-      const result = render.call(this, scene, camera);
+      const query = primary ? gpu?.begin() : null;
+      let result;
+      try {
+        result = render.call(this, scene, camera);
+      } finally {
+        if (query) gpu.end(query);
+      }
       if (drag && room) {
         yaw = camera.quaternion.y;
         if (drag.move != null) {
@@ -404,7 +466,8 @@ function installProbe({ quality, forceNative, startup, slowDraws }) {
 }
 
 function readSamples() {
-  const { renderer, rotations, recording, project, ...raw } = window.studioBench;
+  const { renderer, rotations, recording, project, beginGpuTiming, finishGpuTiming, ...raw } =
+    window.studioBench;
   const gl = renderer.getContext();
   const info = gl.getExtension('WEBGL_debug_renderer_info');
   const { weather, night } = JSON.parse(localStorage.getItem('felix-studio-v1') ?? '{}');
@@ -561,7 +624,12 @@ async function enterRoute(page, profile, routeName) {
   await page.waitForTimeout(1200);
 }
 
-async function sampleDesk(page, profile, { repeatDesk, seconds, screenshot, route }, startProfile) {
+async function sampleDesk(
+  page,
+  profile,
+  { repeatDesk, seconds, screenshot, route, gpuTiming },
+  startProfile,
+) {
   await waitForShading(page);
   await page.waitForTimeout(5000);
   await enterRoute(page, profile, route);
@@ -580,7 +648,18 @@ async function sampleDesk(page, profile, { repeatDesk, seconds, screenshot, rout
     await page.waitForTimeout(1000);
   }
   await startProfile?.();
+  if (gpuTiming)
+    await page.evaluate(() => {
+      const begin = window.studioBench.beginGpuTiming;
+      if (!begin) throw new Error('Main-color GPU timer unavailable.');
+      begin();
+    });
   await turnDesk(page, profile, 2000 + seconds * 1000, screenshot);
+  if (gpuTiming)
+    await page.waitForFunction(() => window.studioBench.finishGpuTiming(), null, {
+      polling: 50,
+      timeout: 15000,
+    });
   if (screenshot) await page.waitForTimeout(500);
   return firstTurn;
 }
@@ -675,11 +754,24 @@ function startupSummary(raw, automationCommandMs) {
     ([start, duration]) => start < move + 10000 && start + duration > move,
   );
   const resources = raw.resources.filter(({ responseEnd }) => responseEnd <= (accepted ?? move));
+  const observedPressUploads = raw.slowTextureUploads
+    ?.map(({ start, duration, path, source }) => ({
+      path,
+      source,
+      durationMs: rounded(Math.min(pressDispatch, start + duration) - Math.max(press, start)),
+    }))
+    .filter(({ durationMs }) => durationMs > 0);
   return {
     loaderEndToPressMs: rounded(press - raw.loaderEnd),
     loaderEndToMoveMs: rounded(move - raw.loaderEnd),
     loaderEndToChangedRoomSubmitMs: rounded(changedSubmit - raw.loaderEnd),
     pressDispatchMs: rounded(pressDispatch - press),
+    ...(observedPressUploads && {
+      observedPressUploads,
+      observedPressUploadMs: rounded(
+        observedPressUploads.reduce((total, upload) => total + upload.durationMs, 0),
+      ),
+    }),
     inputDispatchMs: rounded(moveDispatch - move),
     inputToNextRoomSubmitMs: rounded(nextSubmit - move),
     inputToChangedRoomSubmitMs: rounded(changedSubmit - move),
@@ -697,6 +789,7 @@ async function measure({ base, directory, head, name, run, settings }) {
   const {
     captureProfile,
     steadyProfile,
+    gpuTiming,
     loaderTrace,
     startup,
     fullRoom,
@@ -780,7 +873,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         return route.abort();
       });
     }
-    await page.addInitScript(installProbe, { ...profile, startup, slowDraws });
+    await page.addInitScript(installProbe, { ...profile, startup, slowDraws, gpuTiming });
     if (warm) {
       await page.goto(url.href, { waitUntil: 'domcontentloaded' });
       await waitForShading(page);
@@ -878,6 +971,7 @@ async function measure({ base, directory, head, name, run, settings }) {
       [
         captureProfile && 'loader-profile',
         steadyProfile && 'steady-profile',
+        gpuTiming && 'gpu-timing',
         loaderTrace && 'loader-trace',
         startup && 'startup',
         inputDelayMs > 0 && `input-delay-${inputDelayMs}ms`,
@@ -904,7 +998,15 @@ async function measure({ base, directory, head, name, run, settings }) {
         initialShading: rounded(shadedMs),
         assetsAndInitialShading: rounded(Math.max(frontMs, rearMs, shadedMs)),
       };
+
     summary.loaderProgress = raw.loaderProgress;
+    if (gpuTiming) {
+      const { durations, discarded } = raw.mainColorGpu;
+      if (durations.length < 5)
+        throw new Error('Insufficient valid main-color GPU timing queries.');
+      const { samples, p50, p95, p99, max } = stats(durations);
+      summary.mainColorGpuMs = { samples, p50, p95, p99, max, discarded };
+    }
     if (cpuProfile) {
       summary.navigationStartMonotonicSeconds = navigationStart;
       summary.sampledIntervalMicroseconds = 1000;

@@ -1,4 +1,5 @@
 import { ShaderChunk } from 'three';
+import { leanRoomPhysicalLighting, leanRoomPunctualLighting } from './room-lean-lighting';
 
 function localLightRejection(light: string) {
   return `
@@ -36,10 +37,17 @@ const physicalLighting = ShaderChunk.lights_physical_pars_fragment.replace(
   `,
 );
 
-export function cullRoomDirectLighting(fragmentShader: string, lightEvaluation: string) {
+const leanPunctual = leanRoomPunctualLighting(punctualLighting);
+const leanPhysical = leanRoomPhysicalLighting(physicalLighting);
+
+export function cullRoomDirectLighting(
+  fragmentShader: string,
+  lightEvaluation: string,
+  lean = false,
+) {
   return fragmentShader
-    .replace('#include <lights_pars_begin>', punctualLighting)
-    .replace('#include <lights_physical_pars_fragment>', physicalLighting)
+    .replace('#include <lights_pars_begin>', lean ? leanPunctual : punctualLighting)
+    .replace('#include <lights_physical_pars_fragment>', lean ? leanPhysical : physicalLighting)
     .replace(
       '#include <lights_fragment_begin>',
       lightEvaluation.replace(
