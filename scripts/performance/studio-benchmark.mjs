@@ -74,6 +74,7 @@ const experiments = {
   '--paced-warmup': ['studio-warmup', 'paced'],
   '--catch-up-warmup': ['studio-warmup', 'catch-up'],
   '--isolated-catch-up': ['studio-warmup', 'isolated-catch-up'],
+  '--resident-warmup-maps': ['studio-warmup-maps', 'resident'],
   '--warm-workbench': ['studio-warmup', 'workbench'],
   '--adaptive-warmup': ['studio-warmup', 'adaptive'],
   '--culled-lights': ['studio-lighting', 'culled'],
@@ -112,6 +113,7 @@ Use --day to start in daylight. Combine with --weather=overcast for the Shanghai
 Use --loader-trace to capture compositor events and screenshots during loading.
 Use --startup to exercise the first drag as soon as the loader disappears.
 Add --startup-spans to record long renderer calls during loading and the first ten seconds of input.
+Use --warmup-work to count program readiness queries and texture uploads during room preparation.
 Add --in-view-preview-uploads to prioritize visible textures with an existing preview staging mode.
 Add --route=workbench to turn toward the workbench on that first drag.
 Combine --loader-profile and --startup to profile through the first ten seconds after the drag.
@@ -150,6 +152,7 @@ function options(args) {
   const loaderTrace = captured.delete('--loader-trace');
   const startup = captured.delete('--startup');
   const startupSpans = captured.delete('--startup-spans');
+  const warmupWork = captured.delete('--warmup-work');
   const fullRoom = captured.delete('--full-room');
   const delayArgument = [...captured].find((arg) => arg.startsWith('--input-delay-ms='));
   captured.delete(delayArgument);
@@ -242,6 +245,7 @@ function options(args) {
     loaderTrace,
     startup,
     startupSpans,
+    warmupWork,
     fullRoom,
     inputDelayMs,
     screenshot,
@@ -289,6 +293,7 @@ function installProbe({
   drawInventory,
   startup,
   startupSpans,
+  warmupWork,
   slowDraws,
   textureUploads,
   checkShaders,
@@ -356,6 +361,128 @@ function installProbe({
     }
   });
   observer.observe(document, { subtree: true, childList: true, attributeFilter: ['value'] });
+
+  function attachWarmupWork(renderer) {
+    const gl = renderer.getContext();
+    const completion = gl.getExtension('KHR_parallel_shader_compile')?.COMPLETION_STATUS_KHR;
+    const stages = {
+      'studio-room-preview-start': 'preview',
+      'studio-room-shader-warm-start': 'shader',
+      'studio-room-shader-catch-up-start': 'catchUp',
+      'studio-room-shader-warm-end': 'finalPreparation',
+      'studio-room-full-draw-start': 'firstFullDraw',
+      'studio-room-shaded': 'rear',
+    };
+    const report = (sample.warmupWork = { parallelCompile: completion !== undefined, phases: [] });
+    const ids = new WeakMap();
+    let nextId = 0;
+    function programId(program) {
+      if (!ids.has(program)) ids.set(program, ++nextId);
+      return ids.get(program);
+    }
+    function begin(stage, start) {
+      const phase = { stage, start, work: {}, programs: {} };
+      report.phases.push(phase);
+      return phase;
+    }
+    let phase = begin('beforePreview', performance.now());
+    let shaded = false;
+    let rear = false;
+    const mark = performance.mark;
+    performance.mark = function (...args) {
+      const entry = mark.apply(this, args);
+      if (!phase) return entry;
+      const [name] = args;
+      if (name === 'studio-room-shaded') shaded = true;
+      if (name === 'studio-room-rear-ready') rear = true;
+      const stage = stages[name];
+      if (stage || (shaded && rear)) {
+        phase.end = entry.startTime;
+        phase = shaded && rear ? undefined : begin(stage, entry.startTime);
+      }
+      return entry;
+    };
+    function track(phase, name, duration) {
+      const entry = (phase.work[name] ??= { calls: 0, total: 0, max: 0 });
+      entry.calls++;
+      entry.total += duration;
+      entry.max = Math.max(entry.max, duration);
+    }
+    function measureCall(owner, method, category, after) {
+      const original = owner[method];
+      owner[method] = function (...args) {
+        const active = phase;
+        const name = active && category(args);
+        if (!name) return original.apply(this, args);
+        const start = performance.now();
+        const result = original.apply(this, args);
+        track(active, name, performance.now() - start);
+        after?.(active, args, result, start);
+        return result;
+      };
+    }
+    measureCall(renderer, 'compile', () => 'compile');
+    const renderBuffer = renderer.renderBufferDirect;
+    renderer.renderBufferDirect = function (camera, scene, geometry, material, object, group) {
+      if (phase?.stage !== 'firstFullDraw')
+        return renderBuffer.call(this, camera, scene, geometry, material, object, group);
+
+      const active = phase;
+      const result = renderBuffer.call(this, camera, scene, geometry, material, object, group);
+      const { currentProgram } = renderer.properties.get(material);
+      const id = ids.get(currentProgram?.program);
+      const entry = active.programs[id];
+      if (entry && !entry.firstDraw) {
+        const path = [];
+        for (let node = object; node; node = node.parent) {
+          if (node.name) path.unshift(node.name);
+        }
+        entry.firstDraw = { path, material: material.name, type: currentProgram.type };
+      }
+      return result;
+    };
+    measureCall(renderer, 'initTexture', ([texture]) => {
+      const properties = renderer.properties.has(texture) && renderer.properties.get(texture);
+      return properties?.__webglTexture && properties.__version === texture.version
+        ? 'initResidentTexture'
+        : 'initTexture';
+    });
+    measureCall(
+      gl,
+      'linkProgram',
+      () => 'link',
+      (active, [program], _, start) => {
+        const entry = (active.programs[programId(program)] ??= {});
+        entry.linkAt = start;
+      },
+    );
+    measureCall(
+      gl,
+      'getProgramParameter',
+      ([, parameter]) =>
+        parameter === completion ? 'completion' : parameter === gl.LINK_STATUS ? 'linkStatus' : '',
+      (active, [program, parameter], ready, start) => {
+        if (parameter !== completion) return;
+        const entry = (active.programs[programId(program)] ??= {});
+        entry.polls = (entry.polls ?? 0) + 1;
+        entry.firstPollAt ??= start;
+        entry.lastPollAt = start;
+        if (ready) entry.readyAt ??= start;
+        else entry.pending = (entry.pending ?? 0) + 1;
+      },
+    );
+    for (const name of [
+      'texImage2D',
+      'texSubImage2D',
+      'texImage3D',
+      'texSubImage3D',
+      'compressedTexImage2D',
+      'compressedTexSubImage2D',
+      'compressedTexImage3D',
+      'compressedTexSubImage3D',
+    ])
+      measureCall(gl, name, () => 'textureTransfer');
+  }
 
   function attachGpuTiming(renderer) {
     const gl = renderer.getContext();
@@ -443,6 +570,7 @@ function installProbe({
   window.__THREE_DEVTOOLS__.addEventListener('observe', ({ detail: renderer }) => {
     if (!renderer.isWebGLRenderer) return;
     sample.renderer = renderer;
+    if (warmupWork) attachWarmupWork(renderer);
     if (opaqueNearFirst)
       renderer.setOpaqueSort(
         (a, b) =>
@@ -1173,6 +1301,7 @@ async function measure({ base, directory, head, name, run, settings }) {
     loaderTrace,
     startup,
     startupSpans,
+    warmupWork,
     fullRoom,
     inputDelayMs,
     screenshot,
@@ -1268,6 +1397,7 @@ async function measure({ base, directory, head, name, run, settings }) {
       ...profile,
       startup,
       startupSpans,
+      warmupWork,
       slowDraws,
       textureUploads,
       checkShaders,
@@ -1389,6 +1519,21 @@ async function measure({ base, directory, head, name, run, settings }) {
       ...(raw.slowTextureUploads && { slowTextureUploads: raw.slowTextureUploads.length }),
       ...(opaqueNearFirst && { opaqueSort: 'near-first' }),
       ...(drawInventory && { inventoryFrames: raw.drawInventory.length }),
+      ...(warmupWork && {
+        warmupWork: raw.warmupWork.phases.map(({ stage, start, end, work, programs }) => ({
+          stage,
+          ...(end !== undefined && { elapsedMs: rounded(end - start) }),
+          programs: Object.keys(programs).length,
+          readyPrograms: Object.values(programs).filter(({ readyAt }) => readyAt !== undefined)
+            .length,
+          ...Object.fromEntries(
+            Object.entries(work).map(([name, { calls, total, max }]) => [
+              name,
+              { calls, totalMs: rounded(total), maxMs: rounded(max) },
+            ]),
+          ),
+        })),
+      }),
       ...(raw.wddm && {
         wddmSamples: raw.wddm.samples.length,
         ...(raw.wddm.error && { wddmError: raw.wddm.error }),
@@ -1418,6 +1563,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         loaderTrace && 'loader-trace',
         startup && 'startup',
         startupSpans && 'startup-spans',
+        warmupWork && 'warmup-work',
         inputDelayMs > 0 && `input-delay-${inputDelayMs}ms`,
         slowDraws && 'slow-draws',
         textureUploads && 'texture-uploads',

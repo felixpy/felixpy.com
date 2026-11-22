@@ -1,5 +1,6 @@
 import {
   Camera,
+  CanvasTexture,
   DoubleSide,
   Frustum,
   Group,
@@ -46,6 +47,10 @@ export function roomWarmup(
   subtrees?: readonly Object3D[],
 ) {
   const isolated = mode === 'isolated-catch-up';
+  const pruneResidentMaps =
+    isolated &&
+    typeof location !== 'undefined' &&
+    new URLSearchParams(location.search).get('studio-warmup-maps') === 'resident';
   const catchUp = mode === 'catch-up' || isolated;
   const pacePrograms = mode === 'paced' || mode === 'adaptive';
   const batchLimit = subtrees ? 6 : 20;
@@ -159,10 +164,26 @@ export function roomWarmup(
     });
   }
 
+  function residentMap(texture: Texture) {
+    if (
+      (texture.constructor !== Texture && texture.constructor !== CanvasTexture) ||
+      texture.isRenderTargetTexture ||
+      !texture.source.dataReady ||
+      !gl.properties.has(texture)
+    )
+      return false;
+    const resident = gl.properties.get(texture) as {
+      __webglTexture?: WebGLTexture | null;
+      __version?: number;
+    };
+    return !!resident.__webglTexture && resident.__version === texture.version;
+  }
+
   function upload(textures: Set<Texture>, budget: number) {
     const until = performance.now() + budget;
     for (const texture of textures) {
       textures.delete(texture);
+      if (pruneResidentMaps && (!texture.version || residentMap(texture))) continue;
       if (texture.version) gl.initTexture(texture);
       if (performance.now() >= until) break;
     }

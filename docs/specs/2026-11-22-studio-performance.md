@@ -363,6 +363,27 @@ The opposite-order pair reversed the frame-interval result. First change remaine
 
 The isolated option lowered post-input P95 in both orders. Whole-room readiness took 4.0–4.4 seconds longer and the worst intervals remained over 450 ms. Native endpoint stills showed the same workbench, furnishings and lighting. Keep the option experimental while improving throughput when the view is idle.
 
+### Shader and texture work during preparation
+
+`--warmup-work` records program links and completion queries, renderer compile calls, texture initialization and GL texture-transfer calls. It separates phases at the existing startup marks and records the first draw that used each newly linked program during the first complete frame. The elapsed times are CPU wall spans and can include graphics-driver waits. Renderer compile and texture-initialization spans can contain the measured GL calls. A program's last completion observation is when the query observed readiness, so its elapsed time also includes polling and scheduling delay.
+
+Runs 177–178 and 180–181 used one native 4K RTX 4090 build (StudioView SHA-256 prefix `55048674`) for the immediate workbench turn with isolated catch-up, gesture-priority textures, in-view upload order and atlas detail on inspection. `--resident-warmup-maps` skips versionless entries and ordinary 2D textures whose matching version is already resident in the renderer. It checks residency as the queue drains and preserves the order of pending uploads. Each isolated callback still starts at most one pending transfer. The reverse-order pair included startup spans and texture-upload logging in both visits.
+
+| Run and isolated queue | Resident init calls | Other init calls | Room readiness | Move to changed submit | Post-input interval P95 / max |
+| ---------------------- | ------------------: | ---------------: | -------------: | ---------------------: | ----------------------------: |
+| 177, stock             |                 231 |              160 |        19.10 s |                63.7 ms |               76.5 / 194.6 ms |
+| 178, skip resident     |                   4 |              160 |        16.43 s |                66.4 ms |               97.3 / 388.8 ms |
+| 180, skip resident     |                   4 |              160 |        16.34 s |                60.6 ms |              104.2 / 493.0 ms |
+| 181, stock             |                 231 |              160 |        19.23 s |                62.6 ms |               97.1 / 284.9 ms |
+
+The counts cover the catch-up phase. The candidate eliminated 227 already-resident initialization calls in both orders and preserved 160 other calls. Whole-room readiness improved by 2.67–2.88 seconds. The first ten seconds had longer worst intervals in both comparisons. In run 180, the 493 ms interval contained a 17.5 ms room render and had no overlapping recorded long task. Keep the candidate opt-in while checking texture and preview scheduling under input.
+
+Runs 179 and 182 measured the default warmup in an immediate native 1080p UHD 770 desk turn on the same build. The shader phase took 9.25 and 8.50 seconds. The 14,890 and 12,999 completion queries occupied 25.8 and 115.3 ms of CPU wall time. In run 179 the last program link started 6.14 seconds into the phase and the last readiness observation was at 9.25 seconds. The query time alone offers little scope for a seconds-scale improvement.
+
+The first full draw in run 182 took 1.58 seconds. Two newly linked programs explain most of the long render: the Astro Mondrian workbench lamp's graphite aluminium took 679 ms, and the SELPHY postcard image took 859 ms. The run logged three newly linked programs during that full draw. The lamp's bounding sphere is outside the initial warmup scan at the eased yaw reached when preparation begins. The 96-pixel input brings it into the frustum before the full draw.
+
+Run 183 added the existing `--warm-workbench` and cut the first full draw to 634 ms. The lamp and postcard links were absent from that draw. The pegboard outside the scoped roots still took 586 ms on first use. Whole-room readiness moved from 13.45 to 13.26 seconds, and post-input interval P95 rose from 229.2 to 340.3 ms. Keep scoped preparation optional. Its shorter final draw tests the cause of the hitch, and moving that work into the existing queue still leaves long intervals during the first input.
+
 ## Idle-aware catch-up
 
 `--idle-catch-up` keeps isolated preparation and permits up to three preparation frames before a quiet preview. It prioritizes the preview when 50 ms has elapsed since the preceding preview and restores alternating preparation and preview on input or visible movement. A single blocking render or warmup call can exceed that interval. Runs 140–143 used one native 4K RTX 4090 workbench build, StudioView SHA-256 prefix `ef5db8ab`. Each comparison used in-view uploads, gesture priority and detail on inspection.
@@ -399,6 +420,8 @@ Run 164 made a 20-second warmed visit using that same older bundle and sampled N
 `--wddm-luid=<high,low>` samples the selected Windows adapter during the steady route. Use the current boot's adapter LUID. The report records UTC time, dedicated adapter bytes and one utilization pair per 3D engine for the private Chrome GPU process and all other processes combined. Browser frame timestamps can be aligned using `timeOriginUnixMs`. The report also records collection errors or absent Chrome counters.
 
 Run 176 replayed the same `9fe40ab2` bundle for 20 seconds with WDDM sampling, a native 3840 × 2160 drawing buffer and a native 4× MSAA main target. It submitted 141.20 FPS with interval P95/P99 of 7.0/13.9 ms. CPU submission P95 was 7.2 ms, main-color GPU P95 was 6.36 ms, and downstream GPU P95 was 1.48 ms. The 19 WDDM rows within the measured interval found one active 3D engine, with Chrome utilization of 71.8–99.8% (median 93.4%) and 0.3–2.6% from other processes. Dedicated adapter use was 5.28–5.33 GiB. The fast replay shows the earlier slowdown is intermittent. This visit did not capture WDDM during a slowdown. The 141.20 FPS figure counts browser submissions, and physical cadence still requires calibration.
+
+Pairing same-frame query results by submission ordinal in run 176 gives 6.81/7.54 ms GPU P50/P95 across main and downstream draws. Views from center toward the tower accounted for 63 of the 67 paired samples above 6.94 ms and 55 of the 56 submission intervals above 10 ms. The view bands use replayed pointer motion, so the eased camera lags the commanded heading. Compare these bands on the next native 4K render change and measure physical presentation separately.
 
 Room readiness on run 176 was 17.27 seconds. The room shader warm-up marks bracketed 13.13 seconds before the first full draw. The interval includes preparation and waiting between submitted work. Measure program link and readiness-poll counts before attributing its duration to repeated compilation or to actual compiler latency.
 
