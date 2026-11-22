@@ -146,6 +146,7 @@ export function roomFirstFrame({
   warmPreview = false,
   warmOled = false,
   warmBuffers = false,
+  stagedTextures = false,
 } = {}) {
   const materials = [new Map<Surface, RawShaderMaterial>(), new Map<Surface, RawShaderMaterial>()];
   const meshes: Mesh[] = [];
@@ -157,6 +158,9 @@ export function roomFirstFrame({
     forward = new Vector3();
   const white = new DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
   white.needsUpdate = true;
+  const pendingTextures = new Set<Texture>();
+  const uploadedTextures = new WeakSet<Texture>();
+  let drewPreview = false;
   const emptyMatrix = new Matrix3();
   const black = new Color(0);
   const night = { value: 0 };
@@ -183,6 +187,20 @@ export function roomFirstFrame({
   let upload: (() => boolean) | undefined;
   let buffersReady = !warmBuffers;
   let disposeUpload: (() => void) | undefined;
+
+  function previewMap(texture: Texture | null) {
+    const image = texture?.image;
+    if (!texture || !image) return white;
+    if (!stagedTextures || !texture.version || uploadedTextures.has(texture)) return texture;
+    if (
+      (typeof HTMLImageElement !== 'undefined' && image instanceof HTMLImageElement) ||
+      (typeof ImageBitmap !== 'undefined' && image instanceof ImageBitmap)
+    ) {
+      pendingTextures.add(texture);
+      return white;
+    }
+    return texture;
+  }
 
   function surface(source: Material, instanced = false) {
     if (!(source instanceof MeshStandardMaterial || source instanceof MeshBasicMaterial))
@@ -255,8 +273,8 @@ export function roomFirstFrame({
     const map: Texture | null = source.map;
     if (map?.matrixAutoUpdate) map.updateMatrix();
     uniforms.mapMatrix.value = map?.matrix ?? emptyMatrix;
-    uniforms.albedo.value = map?.image ? map : white;
-    uniforms.mask.value = source.alphaMap?.image ? source.alphaMap : white;
+    uniforms.albedo.value = previewMap(map);
+    uniforms.mask.value = previewMap(source.alphaMap);
     uniforms.opacity.value = source.opacity;
     if (source instanceof MeshStandardMaterial)
       uniforms.emission.value
@@ -431,6 +449,7 @@ export function roomFirstFrame({
       });
     },
     draw(gl: WebGLRenderer, scene: Scene, camera: Camera, atNight: boolean, look: RoomLook) {
+      pendingTextures.clear();
       const shadows = gl.shadowMap.enabled;
       const environment = scene.environment;
       gl.shadowMap.enabled = false;
@@ -509,6 +528,15 @@ export function roomFirstFrame({
         gl.shadowMap.enabled = shadows;
         scene.environment = environment;
       }
+      if (stagedTextures) {
+        const texture = pendingTextures.values().next().value;
+        if (drewPreview && texture) {
+          gl.initTexture(texture);
+          uploadedTextures.add(texture);
+        }
+        drewPreview = true;
+        pendingTextures.clear();
+      }
     },
     dispose() {
       stopWarming?.();
@@ -517,6 +545,7 @@ export function roomFirstFrame({
       oledWarmup = undefined;
       disposeUpload?.();
       upload = undefined;
+      pendingTextures.clear();
       for (const cache of materials) {
         for (const material of cache.values()) material.dispose();
         cache.clear();

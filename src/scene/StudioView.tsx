@@ -1529,6 +1529,7 @@ export default function StudioView(props: Props) {
     return roomFirstFrame({
       warmPreview: preview === 'warm',
       warmOled: preview === 'oled',
+      stagedTextures: options.get('studio-preview-textures') === 'staged',
       warmBuffers: options.get('studio-buffers') === 'warm',
     });
   });

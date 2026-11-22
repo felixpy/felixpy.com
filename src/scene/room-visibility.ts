@@ -43,8 +43,9 @@ export function roomVisibility(
       ? null
       : new URLSearchParams(location.search).get('studio-lighting');
   const matteLighting = lighting === 'matte';
+  const cullAllLighting = lighting === 'culled-all';
   const cullLighting = matteLighting || lighting === 'culled';
-  let cullDirectLights = cullLighting && initial.quality === 'low';
+  let cullDirectLights = cullAllLighting || (cullLighting && initial.quality === 'low');
   const lightEvaluation = T.ShaderChunk.lights_fragment_begin
     .replace(
       'getSpotLightInfo( spotLight, geometryPosition, directLight );',
@@ -170,7 +171,7 @@ export function roomVisibility(
     },
     prepareMaterials,
     update(env: Environment, delta: number) {
-      const cull = cullLighting && env.quality === 'low';
+      const cull = cullAllLighting || (cullLighting && env.quality === 'low');
       if (cull !== cullDirectLights) {
         cullDirectLights = cull;
         for (const material of seen) material.needsUpdate = true;
