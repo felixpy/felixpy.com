@@ -122,13 +122,14 @@ Use --raf-control to sample an unloaded animation clock in the same browser afte
 Use --repeat-desk to prime the shaders and geometry with one matched desk turn before sampling.
 Use --seconds=<duration> to set the measured steady desk route duration (default 12).
 Use --route=<${Object.keys(roomRoutes).join('|')}> and --weather=<${Object.keys(weatherCodes).join('|')}> to replay room views.
+Use --cabinet-entry-timing with --route=cabinet to time the first close-up click after the room is shaded.
 Use --day to start in daylight. Combine with --weather=overcast for the Shanghai 5120-pixel panorama.
 Use --loader-trace to capture compositor events and screenshots during loading.
 Use --startup to exercise the first drag as soon as the loader disappears.
 Add --startup-spans to record long renderer calls and post-loader animation callbacks during startup.
 Use --warmup-work to count program readiness queries and texture uploads during room preparation.
 Add --in-view-preview-uploads to prioritize visible textures with an existing preview staging mode.
-Add --route=workbench to turn toward the workbench on that first drag.
+Add --route=workbench or --route=cabinet to turn toward that area on the first drag.
 Combine --loader-profile and --startup to profile through the first ten seconds after the drag.
 Add --full-room to wait for rear asset readiness on builds that report it.
 Set --input-delay-ms=<milliseconds> to wait before the first drag.
@@ -168,6 +169,7 @@ function options(args) {
   const loaderTrace = captured.delete('--loader-trace');
   const startup = captured.delete('--startup');
   const startupSpans = captured.delete('--startup-spans');
+  const cabinetEntryTiming = captured.delete('--cabinet-entry-timing');
   const warmupWork = captured.delete('--warmup-work');
   const fullRoom = captured.delete('--full-room');
   const delayArgument = [...captured].find((arg) => arg.startsWith('--input-delay-ms='));
@@ -228,7 +230,8 @@ function options(args) {
     (steadyProfile && (captureProfile || loaderTrace || startup || slowDraws)) ||
     ((repeatDesk || secondsArgument) && (captureProfile || loaderTrace || startup)) ||
     (route !== 'desk' && (loaderTrace || (captureProfile && !startup))) ||
-    (startup && route !== 'desk' && route !== 'workbench') ||
+    (startup && route !== 'desk' && route !== 'workbench' && route !== 'cabinet') ||
+    (cabinetEntryTiming && (route !== 'cabinet' || startup)) ||
     !Object.hasOwn(roomRoutes, route) ||
     !Object.hasOwn(weatherCodes, weather) ||
     !Number.isSafeInteger(seconds) ||
@@ -261,6 +264,7 @@ function options(args) {
     loaderTrace,
     startup,
     startupSpans,
+    cabinetEntryTiming,
     warmupWork,
     fullRoom,
     inputDelayMs,
@@ -309,6 +313,7 @@ function installProbe({
   drawInventory,
   startup,
   startupSpans,
+  cabinetEntryTiming,
   warmupWork,
   slowDraws,
   textureUploads,
@@ -974,6 +979,28 @@ function installProbe({
       }
     }
     let world, roomCamera;
+    let lastRoomSubmit, lastCabinetEntryFrame, cabinetCamera;
+    if (cabinetEntryTiming)
+      sample.armCabinetEntry = () => {
+        renderer.domElement.addEventListener(
+          'pointerup',
+          (event) => {
+            const dispatch = performance.now();
+            cabinetCamera = {
+              camera: roomCamera,
+              position: roomCamera.position.clone(),
+              rotation: roomCamera.quaternion.clone(),
+              fov: roomCamera.fov,
+            };
+            sample.cabinetEntry = {
+              input: event.timeStamp,
+              dispatch,
+              submissions: [lastRoomSubmit],
+            };
+          },
+          { capture: true, once: true },
+        );
+      };
     let inventory;
     if (drawInventory) {
       const renderBuffer = renderer.renderBufferDirect;
@@ -1150,6 +1177,21 @@ function installProbe({
             drag.frames.push(frame);
         }
       }
+      if (cabinetEntryTiming && room && !scene.overrideMaterial) {
+        const entry = sample.cabinetEntry;
+        const submitted = (lastRoomSubmit = performance.now());
+        if (entry && entry.end == null && camera === cabinetCamera.camera) {
+          if (lastCabinetEntryFrame !== frame) entry.submissions.push(submitted);
+          lastCabinetEntryFrame = frame;
+          if (
+            entry.changedSubmit == null &&
+            (camera.position.distanceToSquared(cabinetCamera.position) > 1e-10 ||
+              1 - Math.abs(camera.quaternion.dot(cabinetCamera.rotation)) > 1e-10 ||
+              Math.abs(camera.fov - cabinetCamera.fov) > 1e-5)
+          )
+            entry.changedSubmit = submitted;
+        }
+      }
       if (primary) {
         const target = renderer.getRenderTarget();
         if (query && gpuDownstream && target) {
@@ -1185,8 +1227,16 @@ function installProbe({
 }
 
 function readSamples() {
-  const { renderer, rotations, recording, project, beginGpuTiming, finishGpuTiming, ...raw } =
-    window.studioBench;
+  const {
+    renderer,
+    rotations,
+    recording,
+    project,
+    armCabinetEntry,
+    beginGpuTiming,
+    finishGpuTiming,
+    ...raw
+  } = window.studioBench;
   const gl = renderer.getContext();
   const info = gl.getExtension('WEBGL_debug_renderer_info');
   const { weather, night } = JSON.parse(localStorage.getItem('felix-studio-v1') ?? '{}');
@@ -1288,7 +1338,7 @@ async function sampleStartup(page, profile, inputDelayMs, route) {
       arrival.y < 0 ||
       arrival.y > profile.height)
   )
-    throw new Error('The first drag did not bring the workbench into the viewport.');
+    throw new Error(`The first drag did not bring ${route.target} into the viewport.`);
   return {
     position: rounded(positioned - start),
     press: rounded(pressed - positioned),
@@ -1333,7 +1383,7 @@ async function turnDesk(page, profile, duration, reset) {
   await page.mouse.up();
 }
 
-async function enterRoute(page, profile, routeName) {
+async function enterRoute(page, profile, routeName, cabinetEntryTiming) {
   const route = roomRoutes[routeName];
   if (!route) return;
   if (route.turn) {
@@ -1351,6 +1401,7 @@ async function enterRoute(page, profile, routeName) {
       : null;
   }, route.target);
   const { x, y } = await projected.jsonValue();
+  if (cabinetEntryTiming) await page.evaluate(() => window.studioBench.armCabinetEntry());
   await page.mouse.click(x, y);
   await page.waitForFunction(
     ({ mode, caption }) =>
@@ -1359,17 +1410,28 @@ async function enterRoute(page, profile, routeName) {
     route,
   );
   await page.waitForTimeout(1200);
+  if (cabinetEntryTiming)
+    await page.evaluate(() => {
+      const entry = window.studioBench.cabinetEntry;
+      if (
+        entry?.changedSubmit == null ||
+        !Number.isFinite(entry.submissions[0]) ||
+        entry.submissions.length < 2
+      )
+        throw new Error('The first cabinet click produced no measurable camera transition.');
+      entry.end = performance.now();
+    });
 }
 
 async function sampleDesk(
   page,
   profile,
-  { repeatDesk, seconds, screenshot, route, gpuTiming },
+  { repeatDesk, seconds, screenshot, route, gpuTiming, cabinetEntryTiming },
   beforeMeasurement,
 ) {
   await waitForShading(page);
   await page.waitForTimeout(5000);
-  await enterRoute(page, profile, route);
+  await enterRoute(page, profile, route, cabinetEntryTiming);
   let firstTurn;
   if (repeatDesk) {
     await turnDesk(page, profile, 14000, true);
@@ -1545,6 +1607,7 @@ async function measure({ base, directory, head, name, run, settings }) {
     loaderTrace,
     startup,
     startupSpans,
+    cabinetEntryTiming,
     warmupWork,
     fullRoom,
     inputDelayMs,
@@ -1642,6 +1705,7 @@ async function measure({ base, directory, head, name, run, settings }) {
       ...profile,
       startup,
       startupSpans,
+      cabinetEntryTiming,
       warmupWork,
       slowDraws,
       textureUploads,
@@ -1820,6 +1884,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         loaderTrace && 'loader-trace',
         startup && 'startup',
         startupSpans && 'startup-spans',
+        cabinetEntryTiming && 'cabinet-entry-timing',
         warmupWork && 'warmup-work',
         inputDelayMs > 0 && `input-delay-${inputDelayMs}ms`,
         slowDraws && 'slow-draws',
@@ -1875,6 +1940,16 @@ async function measure({ base, directory, head, name, run, settings }) {
       };
 
     summary.loaderProgress = raw.loaderProgress;
+    if (cabinetEntryTiming) {
+      const { input, dispatch, changedSubmit, submissions, end } = raw.cabinetEntry;
+      summary.cabinetEntry = {
+        loaderEndToClickMs: rounded(input - raw.loaderEnd),
+        inputDispatchMs: rounded(dispatch - input),
+        inputToChangedRoomSubmitMs: rounded(changedSubmit - input),
+        transitionSampleMs: rounded(end - input),
+        maxFrameGapMs: rounded(Math.max(...intervals(submissions))),
+      };
+    }
     if (gpuTiming) {
       const { durations, discarded } = raw.mainColorGpu;
       if (durations.length < 5)
