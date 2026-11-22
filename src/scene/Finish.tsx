@@ -73,7 +73,7 @@ export function Finish({
       preparation.current = null;
       shaders.current = 'cold';
     };
-  }, [catchUp]);
+  }, [camera, catchUp, enabled, gl, grade, scene]);
 
   useEffect(() => {
     if (!enabled || !gl.extensions.has('EXT_color_buffer_float')) return;

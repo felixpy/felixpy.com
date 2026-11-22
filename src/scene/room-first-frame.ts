@@ -142,7 +142,11 @@ void main() {
   pixel = vec4(mix(vec3(dot(graded,vec3(.213,.715,.072))),graded,saturation),a);
 }`;
 
-export function roomFirstFrame({ warmPreview = false, warmBuffers = false } = {}) {
+export function roomFirstFrame({
+  warmPreview = false,
+  warmOled = false,
+  warmBuffers = false,
+} = {}) {
   const materials = [new Map<Surface, RawShaderMaterial>(), new Map<Surface, RawShaderMaterial>()];
   const meshes: Mesh[] = [];
   const originals: (Material | Material[])[] = [];
@@ -175,6 +179,7 @@ export function roomFirstFrame({ warmPreview = false, warmBuffers = false } = {}
   let warmed = false;
   let stopWarming: (() => void) | undefined;
   let stopWaterfront: (() => void) | undefined;
+  let oledWarmup: AbortController | undefined;
   let upload: (() => boolean) | undefined;
   let buffersReady = !warmBuffers;
   let disposeUpload: (() => void) | undefined;
@@ -260,13 +265,18 @@ export function roomFirstFrame({ warmPreview = false, warmBuffers = false } = {}
     return material;
   }
 
-  function warmPreviewShaders(gl: WebGLRenderer, geometry: PlaneGeometry, group: Group) {
+  function previewClockMaterial() {
     const clock = Object.assign(new MeshBasicMaterial(), {
       oledTime: { value: 0 },
       oledClock: white,
     });
-    group.add(new Mesh(geometry, surface(clock)));
+    const material = surface(clock);
     clock.dispose();
+    return material;
+  }
+
+  function warmPreviewShaders(gl: WebGLRenderer, geometry: PlaneGeometry, group: Group) {
+    group.add(new Mesh(geometry, previewClockMaterial()));
     const probe = new Scene();
     const camera = new PerspectiveCamera();
     camera.position.z = 1;
@@ -400,6 +410,15 @@ export function roomFirstFrame({ warmPreview = false, warmBuffers = false } = {}
           for (const node of group.children) if (node instanceof InstancedMesh) node.dispose();
         });
       gl.getContext().flush();
+      if (warmOled) {
+        const controller = new AbortController();
+        oledWarmup = controller;
+        performance.mark('studio-preview-oled-warm-start');
+        void warmRoomEffect(gl, previewClockMaterial(), controller.signal).then((ready) => {
+          if (oledWarmup === controller) oledWarmup = undefined;
+          if (ready) performance.mark('studio-preview-oled-warm-end');
+        });
+      }
     },
     warmWaterfront(gl: WebGLRenderer, material: Material) {
       if (stopWaterfront || !gl.extensions.has('KHR_parallel_shader_compile')) return;
@@ -494,6 +513,8 @@ export function roomFirstFrame({ warmPreview = false, warmBuffers = false } = {}
     dispose() {
       stopWarming?.();
       stopWaterfront?.();
+      oledWarmup?.abort();
+      oledWarmup = undefined;
       disposeUpload?.();
       upload = undefined;
       for (const cache of materials) {

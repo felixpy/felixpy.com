@@ -27,7 +27,7 @@ import { parquet, parquetSurfaceY } from './parquet';
 import { loadDisplayModel } from './display-model';
 import { bypassDoors, perforatedToolWall } from './workshop-fittings';
 
-import { roomSize, desk, workshopLayout } from './layout';
+import { roomSize, roomDoor, desk, workshopLayout } from './layout';
 export { roomSize, windowOpening, desk, workshopLayout } from './layout';
 
 const bookcase = { x: 1.55, z: -0.374, width: 0.61, height: 2.41, side: 0.034, depth: 0.354 };
@@ -47,10 +47,10 @@ export function architecture(root: T.Group, p: Palette, coastalPrint: T.Texture)
   acousticWall(root, p, 1.205, east, north, ceiling - bookcase.height, bookcase.height);
   const pictureLight = archiveLight(root, p, north);
   rearGalleryPrint(root, p, coastalPrint, south);
-  const doorCenter = 1.83,
-    doorLeft = doorCenter - 0.421,
-    doorRight = doorCenter + 0.421,
-    doorHeight = 2.135;
+  const doorCenter = roomDoor.center,
+    doorLeft = doorCenter - roomDoor.halfWidth,
+    doorRight = doorCenter + roomDoor.halfWidth,
+    doorHeight = roomDoor.height;
   for (const [left, right] of [
     [west, doorLeft],
     [doorRight, east],

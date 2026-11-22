@@ -1,4 +1,5 @@
 export const roomSize = { west: -1.26, east: 2.52, north: -0.56, south: 3.19, ceiling: 2.71 };
+export const roomDoor = { center: 1.83, halfWidth: 0.421, height: 2.135 };
 export const windowOpening = {
   wall: roomSize.west,
   z0: -0.22,

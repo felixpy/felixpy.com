@@ -1132,10 +1132,11 @@ function CameraRig(props: RigProps & Assembly & { earlyRear: boolean }) {
             (isStation(current) || (current === 'returning' && !cabinetFocus.current)
               ? zoom.current[station.current]
               : hardwareFov));
+    const fovEase = env.reducedMotion ? 1 : 1 - Math.exp(-elapsed * 10.5);
     const nextFov =
       current === 'computer'
         ? T.MathUtils.lerp(computerStart.current.fov, viewFov, lean)
-        : T.MathUtils.lerp(camera.fov, targetFov, ease);
+        : T.MathUtils.lerp(camera.fov, targetFov, fovEase);
     if (Math.abs(camera.fov - targetFov) > 0.001) {
       camera.fov = Math.abs(nextFov - targetFov) < 0.001 ? targetFov : nextFov;
       camera.updateProjectionMatrix();
@@ -1398,6 +1399,8 @@ function StudioRoom({
   const [startup] = useState(() => {
     const query = new URLSearchParams(location.search);
     const rearMode = query.get('studio-rear');
+    const deferWaterMotion = query.get('studio-water-motion') !== 'eager';
+    const waterfront = query.get('studio-waterfront');
     return {
       environment: props.environment,
       earlyRear: rearMode === 'early',
@@ -1408,9 +1411,9 @@ function StudioRoom({
         prioritizeRear: rearMode === 'priority' || rearMode === 'early',
         preloadInspection: query.get('studio-details') === 'preload',
         mergeFirst: query.get('studio-batching') !== 'transform-first',
-        deferWaterMotion: query.get('studio-water-motion') !== 'eager',
+        deferWaterMotion,
         warmWaterfront:
-          query.get('studio-waterfront') === 'warm'
+          waterfront === 'warm' || (deferWaterMotion && waterfront !== 'cold')
             ? (material: T.ShaderMaterial) => firstFrame.warmWaterfront(gl, material)
             : undefined,
       },
@@ -1522,8 +1525,10 @@ export default function StudioView(props: Props) {
   const firstPicture = useRef<FirstPicture>('loading');
   const [firstFrame] = useState(() => {
     const options = new URLSearchParams(location.search);
+    const preview = options.get('studio-preview');
     return roomFirstFrame({
-      warmPreview: options.get('studio-preview') === 'warm',
+      warmPreview: preview === 'warm',
+      warmOled: preview === 'oled',
       warmBuffers: options.get('studio-buffers') === 'warm',
     });
   });

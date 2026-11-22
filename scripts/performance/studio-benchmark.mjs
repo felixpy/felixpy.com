@@ -38,6 +38,7 @@ const weatherCodes = { clear: 0, rain: 61, snow: 71 };
 const experiments = {
   '--deferred-books': ['studio-startup', 'deferred-books'],
   '--warm-preview': ['studio-preview', 'warm'],
+  '--warm-oled': ['studio-preview', 'oled'],
   '--warm-buffers': ['studio-buffers', 'warm'],
   '--worker-parts': ['studio-parts', 'worker'],
   '--worker-meshopt': ['studio-meshopt', 'worker'],
@@ -52,6 +53,8 @@ const experiments = {
   '--legacy-output': ['studio-output', 'legacy'],
   '--stable-effects': ['studio-effects', 'stable'],
   '--warm-waterfront': ['studio-waterfront', 'warm'],
+  '--cold-waterfront': ['studio-waterfront', 'cold'],
+  '--window-scissor': ['studio-window-clip', 'scissor'],
   '--eager-water-motion': ['studio-water-motion', 'eager'],
   '--bitmap-images': ['studio-images', 'bitmap'],
   '--incremental-warmup': ['studio-warmup', 'incremental'],

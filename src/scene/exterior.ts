@@ -5,6 +5,7 @@ import type { buildRainGlass } from './rain-glass';
 import { panoramaMaterial, panoramaMeshName, panoramaPoint, bankSlope } from './window-depth';
 import { windowExposure, type WindowExposure } from '../content/window-scenes';
 import { riverFerry } from './river-ferry';
+import { roomExteriorScissor } from './room-exterior-scissor';
 
 export function panoramaGeometry() {
   const columns = 64,
@@ -126,6 +127,50 @@ export function buildExterior(
   const plate = mesh(world, panoramaGeometry(), material);
   plate.name = panoramaMeshName;
   plate.castShadow = plate.receiveShadow = false;
+  const query = typeof location === 'undefined' ? undefined : new URLSearchParams(location.search);
+  if (
+    query?.get('studio-window-clip') === 'scissor' &&
+    query.get('studio-low') === 'native' &&
+    !query.has('review')
+  ) {
+    const project = roomExteriorScissor();
+    const identity = new T.Matrix4();
+    const size = new T.Vector2();
+    const viewport = new T.Vector4();
+    const clip = new T.Vector4();
+    const previous = new T.Vector4();
+    let clipped: T.WebGLRenderer | undefined;
+    const restore = (renderer: T.WebGLRenderer) => {
+      if (renderer !== clipped) return;
+      renderer.setScissor(previous);
+      renderer.setScissorTest(false);
+      clipped = undefined;
+    };
+    plate.onBeforeRender = (renderer, scene, camera) => {
+      restore(renderer);
+      if (
+        scene.overrideMaterial ||
+        renderer.getRenderTarget() ||
+        renderer.getPixelRatio() !== 1 ||
+        renderer.getScissorTest() ||
+        renderer.shadowMap.enabled ||
+        renderer.xr.isPresenting ||
+        !root.matrixWorld.equals(identity)
+      )
+        return;
+      renderer.getSize(size);
+      renderer.getViewport(viewport);
+      if (viewport.x !== 0 || viewport.y !== 0 || viewport.z !== size.x || viewport.w !== size.y)
+        return;
+      if (!project(camera, size.x, size.y, clip) || (clip.z === size.x && clip.w === size.y))
+        return;
+      renderer.getScissor(previous);
+      clipped = renderer;
+      renderer.setScissor(clip);
+      renderer.setScissorTest(true);
+    };
+    plate.onAfterRender = restore;
+  }
   const grade = new T.Color();
   let shown = view(initial),
     target = shown,
