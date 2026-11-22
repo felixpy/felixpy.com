@@ -17,6 +17,7 @@ import { caseReflections } from './case-reflections';
 import { caseComponentLights } from './case-component-lights';
 import { oledWallpaper } from './oled-wallpaper';
 import { oledClock } from './oled-clock';
+import { markStandardRoomDepth } from './room-depth-prefill';
 
 import { display, deskSetup } from './layout';
 export { display, deskSetup } from './layout';
@@ -48,6 +49,7 @@ export function monitor(parent: T.Object3D, p: Palette, manager: T.LoadingManage
         '#include <emissivemap_fragment>\nfloat ink = oledTextCoverage(oledClock, displayUv);\ntotalEmissiveRadiance += mix(oledColour(displayUv, flowTime), oledInk, ink);',
       );
   };
+  markStandardRoomDepth(displayGlass);
   const screen = mesh(monitor, new T.PlaneGeometry(width, height), displayGlass, [
     0,
     0,

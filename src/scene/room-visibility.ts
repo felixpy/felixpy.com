@@ -9,6 +9,7 @@ import { desk } from './layout';
 import { cullRoomDirectLighting } from './room-direct-lighting';
 import { matteRoomLighting } from './room-matte-lighting';
 import { leanRoomLightEvaluation } from './room-lean-lighting';
+import { hasStandardRoomDepth, markStandardRoomDepth } from './room-depth-prefill';
 
 export const visibilityGrid = {
   origin: [-1.375, -0.125, -0.6875],
@@ -78,6 +79,7 @@ export function roomVisibility(
         continue;
       seen.add(material);
       const compile = material.onBeforeCompile;
+      const standardDepth = hasStandardRoomDepth(material);
       const matte =
         matteLighting &&
         material.userData.studioMatte === true &&
@@ -150,6 +152,7 @@ export function roomVisibility(
         `,
           );
       };
+      if (standardDepth) markStandardRoomDepth(material);
       material.needsUpdate = true;
     }
   };

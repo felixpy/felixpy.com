@@ -54,13 +54,11 @@ export function Finish({
 }) {
   const { gl, scene, camera, size, viewport } = useThree();
   const grade = useMemo(roomColorGrade, []);
-  const prefill = useMemo(
-    () =>
-      nativeLow && new URLSearchParams(location.search).get('studio-depth-prefill') === 'coarse'
-        ? roomDepthPrefill()
-        : undefined,
-    [nativeLow],
-  );
+  const prefill = useMemo(() => {
+    const mode = new URLSearchParams(location.search).get('studio-depth-prefill');
+    if (nativeLow && (mode === 'coarse' || mode === 'wide'))
+      return roomDepthPrefill({ wide: mode === 'wide' });
+  }, [nativeLow]);
   const warmup = useMemo(() => new URLSearchParams(location.search).get('studio-warmup'), []);
   const warmWorkbench = warmup === 'workbench';
   const pacing = warmup === 'paced' || warmup === 'adaptive' ? warmup : undefined;

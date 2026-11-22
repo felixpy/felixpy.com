@@ -363,6 +363,27 @@ The opposite-order pair reversed the frame-interval result. First change remaine
 
 The isolated option lowered post-input P95 in both orders. Whole-room readiness took 4.0–4.4 seconds longer and the worst intervals remained over 450 ms. Native endpoint stills showed the same workbench, furnishings and lighting. Keep the option experimental while improving throughput when the view is idle.
 
+## Idle-aware catch-up
+
+`--idle-catch-up` keeps isolated preparation and permits up to three preparation frames before a quiet preview. It prioritizes the preview when 50 ms has elapsed since the preceding preview and restores alternating preparation and preview on input or visible movement. A single blocking render or warmup call can exceed that interval. Runs 140–143 used one native 4K RTX 4090 workbench build, StudioView SHA-256 prefix `ef5db8ab`. Each comparison used in-view uploads, gesture priority and detail on inspection.
+
+| Run and warmup             | Move to changed submit | Room readiness | Post-input interval P95 / max |
+| -------------------------- | ---------------------: | -------------: | ----------------------------: |
+| 140, immediate isolated    |                62.1 ms |        19.29 s |              111.1 / 173.6 ms |
+| 141, immediate idle        |                62.2 ms |        17.91 s |               83.4 / 187.5 ms |
+| 142, 4.5 s delay, isolated |                92.3 ms |        20.92 s |              41.7 / 2076.3 ms |
+| 143, 4.5 s delay, idle     |               125.5 ms |        18.81 s |              97.0 / 1041.5 ms |
+
+The immediate moves arrived before shader preparation. The delayed moves arrived during it. Quiet preparation shortened readiness by 1.38 and 2.12 seconds, with slower delayed move response and a higher post-input P95 in the delayed pair.
+
+Runs 150–151 reversed the delayed comparison on a second build, StudioView SHA-256 prefix `7ba66ee7`. The trial preserved one priority preview for the first actual camera, projection or scene-detail change after an unchanged press. The focused scheduler regression passed. Idle and fixed alternation finished at 21.50 and 21.87 seconds respectively. Move-to-changed submit was 98.9 and 92.1 ms, with interval P95 of 166.6 and 118.0 ms during the first ten seconds after input. Both moves arrived during preparation. The measured savings in readiness came with slower delayed input and worse pacing, so the idle scheduler was removed.
+
+## 4K post-processing attribution
+
+`--gpu-downstream` adds a separate elapsed GPU query after each sampled high-quality main-color render and closes it after the final output draw. The sample includes ambient occlusion, denoise and output, while the main-color sample includes the render target resolve. Browser compositing and physical display need separate measurement.
+
+Runs 146–147 compared the RGBA half-float ambient occlusion path with two single-channel half-float targets on the same native 4K RTX 4090 desk build and 4× MSAA. The trial reduced the two half-resolution color attachments from 31.64 MiB to 7.91 MiB of calculated storage. The WebGL fixture verified complete targets and matching pixel samples under matched denoise inputs. Downstream GPU P50/P95 was 1.27/1.58 ms in the reference (68 queries) and 1.26/1.66 ms in the trial (65 queries). Warm submission rates were 142.50 and 137.61 FPS over eight seconds. The measured benefit was confined to calculated attachment storage, so the shader trial was removed. The downstream benchmark remains available.
+
 ## UHD 770 desk GPU attribution
 
 Runs 106–107 used native 1920 × 1080 with matte and lean lighting, scissor, window-only water and depth prefill. `--gpu-panorama` alternates whole main-color queries with queries around the panorama draw on separate frames. On the stock opaque order, GPU P95 was 39.64 ms inclusive and 0.98 ms for the panorama alone, with 14 samples each. The panorama query covers that single draw and its result is a sampled cost ceiling for savings on the photographed exterior, with other scene work still in the inclusive measurement. Near-first opaque sorting moved inclusive P95 to 40.74 ms and did not close the 30 FPS frame budget gap. It remains a benchmark diagnostic.
@@ -379,6 +400,19 @@ The GPU difference was 0.60 ms with 16 timer samples per run. Near-identical sub
 Runs 126–127 compared stock transparent lighting with exact direct-light culling on the window pane and two outer PC glass materials. Both used the same UHD 770 native 1080p build and matched lean, matte, scissor, depth-prefill and window-only water settings. The candidate kept the authored glass shading and preserved the window and PC in the endpoint screenshots. Both poses showed 1,139 draws and 1,544,136 triangles. Warm submissions changed from 25.96 to 26.37 FPS and main-color GPU P50/P95 from 36.38/40.58 to 36.55/39.68 ms (16 timer samples each). Room readiness increased from 13.36 to 14.67 s and interval P99 from 118 to 125 ms. The trial was removed given the small steady difference and slower readiness in this pair.
 
 Runs 137–138 tested matte lighting and more compact diffuse light loops on selected rough walls, millwork and backings. The trial kept the regular renderer, authored textures, weather and occlusion. Desktop, floor, text, transparent panes and authored material hooks used the prior path. The two native 1080p UHD 770 replays had 1,139 draws and 1,544,136 triangles at the ending pose. Warm submissions moved from 26.16 to 26.52 FPS, GPU P50/P95 from 37.46/40.38 to 35.05/38.90 ms, and room readiness from 13.92 to 14.10 seconds. Each run had 16 GPU samples. The two desk stills show similar lighting on the visible walls and preserved main props. The small cadence gain leaves the 30 FPS goal open. The trial was removed.
+
+## Wide depth prefill
+
+`--wide-depth-prefill` expands depth-only coverage using existing opaque geometry whose material hooks preserve vertex positions. It ranks selected meshes by their clipped camera footprint and geometry cost. The pass restores layers and ordering before regular color rendering. Transparency, authored vertex positioning, overlays, and near-plane intersections are excluded. The mode uses the same native low room path as `--depth-prefill`.
+
+| Pair and mode     | Warm submissions | Inclusive GPU P95 | Valid queries | Submission P95 / P99 | Room readiness |
+| ----------------- | ---------------: | ----------------: | ------------: | -------------------: | -------------: |
+| 144, coarse, 8 s  |        26.87 FPS |          39.93 ms |            13 |      42.1 / 118.1 ms |        13.05 s |
+| 145, wide, 8 s    |        28.73 FPS |          34.68 ms |            14 |      41.9 / 111.1 ms |        13.03 s |
+| 148, wide, 20 s   |        28.28 FPS |          34.67 ms |            34 |      41.9 / 111.0 ms |        14.17 s |
+| 149, coarse, 20 s |        26.05 FPS |          40.05 ms |            31 |      48.7 / 124.9 ms |        14.51 s |
+
+Runs 144–145 used StudioView SHA-256 prefix `ef5db8ab`. Reversed runs 148–149 used prefix `7ba66ee7`. Both pairs used native 1920 × 1080, matte and lean lighting, window scissor and window-only water. The desk stills preserve the principal surfaces, screen and PC glass. The timed query includes depth and main color draws. The 20-second runs recorded a median of 96 prefill draws and 69,896 triangles for wide, and 18 draws and 9,878 triangles for coarse. Keep wide available while measuring depth-only cost and extending visual and motion coverage. Submission pacing and physical presentation remain open for the native 30 FPS gate.
 
 `scripts/performance/studio-witness.mjs` validates a completed `studio-dxgi-roi-v1` file offline. It checks QPC order and marker CRC and distinguishes repeated serials, skipped serials and missed acquisitions. Synthetic covered-window tests passed. A two-second PresentMon preflight targeting the invoking process exited with code 1 before producing a CSV under the current user token. A headed GPU process and joint PresentMon and desktop witness capture are still required for physical calibration.
 
