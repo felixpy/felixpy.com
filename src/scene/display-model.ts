@@ -1,6 +1,6 @@
 import * as T from 'three';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { displayMeshoptDecoder } from './display-meshopt';
 import { packedBuffer } from './packed-buffer';
 
 type ModelSetup = {
@@ -35,7 +35,7 @@ export function loadDisplayModel(
   manager: T.LoadingManager,
   setup: ModelSetup = {},
 ) {
-  const loader = new GLTFLoader(manager).setMeshoptDecoder(displayMeshoptDecoder());
+  const loader = new GLTFLoader(manager).setMeshoptDecoder(MeshoptDecoder);
   const { mark } = setup;
   async function mount() {
     const authoring =

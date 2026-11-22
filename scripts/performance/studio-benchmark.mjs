@@ -51,8 +51,6 @@ const experiments = {
   '--progressive-high-startup': ['studio-high-startup', 'progressive'],
   '--legacy-high-startup': ['studio-high-startup', 'legacy'],
   '--warm-buffers': ['studio-buffers', 'warm'],
-  '--worker-parts': ['studio-parts', 'worker'],
-  '--worker-meshopt': ['studio-meshopt', 'worker'],
   '--priority-rear': ['studio-rear', 'priority'],
   '--vitrine-timing': ['studio-vitrine-timing', 'on'],
   '--early-rear': ['studio-rear', 'early'],

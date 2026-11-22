@@ -47,52 +47,10 @@ test('standalone botanical and printer assemblies still load their original BPK1
   }
 });
 
-test('the studio part Worker returns the original mesh bytes', async ({ page }) => {
-  await page.goto('/robots.txt?studio-parts=worker');
-  const result = await page.evaluate(async () => {
-    const libraryModule = '/src/scene/blender-library.ts';
-    const partsModule = '/src/scene/blender-parts.ts';
-    const packedBufferModule = '/src/scene/packed-buffer.ts';
-    const { loadParts, meshBytes } = (await import(
-      libraryModule
-    )) as typeof import('../src/scene/blender-library');
-    const { partLibraryPath, unpackParts } = (await import(
-      partsModule
-    )) as typeof import('../src/scene/blender-parts');
-    const { packedBuffer } = (await import(
-      packedBufferModule
-    )) as typeof import('../src/scene/packed-buffer');
-    await loadParts('studio');
-    const mainParts = unpackParts(await fetch(partLibraryPath('studio')).then(packedBuffer));
-    return {
-      transferred: mainParts.size,
-      mismatch: [...mainParts].find(([name, buffer]) => {
-        const input = new Uint8Array(buffer);
-        const output = new Uint8Array(meshBytes(name));
-        return (
-          input.length !== output.length || input.some((byte, index) => byte !== output[index])
-        );
-      })?.[0],
-      usedWorker: performance.getEntriesByName('studio-parts-studio-worker-unpack').length === 1,
-      fellBack: performance.getEntriesByName('studio-parts-studio-worker-fallback').length !== 0,
-    };
-  });
-  expect(result.transferred).toBeGreaterThan(0);
-  expect(result.mismatch).toBeUndefined();
-  expect(result.usedWorker).toBe(true);
-  expect(result.fellBack).toBe(false);
-});
-
-test('the studio library retries on the main thread when a Worker loses the transferred input', async ({
+test('concurrent studio library loads share one fetch and install the original mesh', async ({
   page,
 }) => {
-  await page.context().route('**/blender-parts.worker.ts?*', (route) =>
-    route.fulfill({
-      contentType: 'text/javascript',
-      body: 'postMessage("ready"); onmessage = () => postMessage({ error: "Unable to unpack" });',
-    }),
-  );
-  await page.goto('/robots.txt?studio-parts=worker');
+  await page.goto('/robots.txt');
   const result = await page.evaluate(async () => {
     const libraryModule = '/src/scene/blender-library.ts';
     const { loadParts, meshBytes } = (await import(
@@ -104,11 +62,10 @@ test('the studio library retries on the main thread when a Worker loses the tran
     return {
       samePromise: first === other,
       fetches: performance.getEntriesByName('studio-parts-studio-fetch-start').length,
-      fellBack: performance.getEntriesByName('studio-parts-studio-worker-fallback').length === 1,
       mesh: new TextDecoder().decode(new Uint8Array(meshBytes('astral-impeller-shell'), 0, 4)),
     };
   });
-  expect(result).toEqual({ samePromise: true, fetches: 2, fellBack: true, mesh: 'BMS1' });
+  expect(result).toEqual({ samePromise: true, fetches: 1, mesh: 'BMS1' });
 });
 
 test('the static build serves only the model deliveries available to site visitors', async ({
