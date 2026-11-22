@@ -93,6 +93,7 @@ export function buildWindow(
   initial: Environment,
   warmWaterfront?: (material: T.ShaderMaterial) => void,
   deferWaterMotion = false,
+  windowOnlyWater = false,
 ) {
   const { wall: x, z0, z1, y0, y1, thickness } = windowOpening;
   const centerZ = (z0 + z1) / 2,
@@ -261,7 +262,15 @@ export function buildWindow(
   const skyDome = mesh(root, new T.SphereGeometry(60, 32, 20), sky);
   skyDome.castShadow = false;
   skyDome.renderOrder = -10;
-  const exterior = buildExterior(root, loader, wetGlass, initial, warmWaterfront, deferWaterMotion);
+  const exterior = buildExterior(
+    root,
+    loader,
+    wetGlass,
+    initial,
+    warmWaterfront,
+    deferWaterMotion,
+    windowOnlyWater,
+  );
   const rain = rainfall(exterior.world);
   const updateSnow = snowfall(exterior.world);
   let openness = 0,
@@ -297,7 +306,7 @@ export function buildWindow(
     setBlinds,
     prepareWaterMotion: exterior.prepareWaterMotion,
     remoteRest: [x + 0.079, y0 + 0.037, 0.39] satisfies XYZ,
-    update(env: Environment, delta: number) {
+    update(env: Environment, delta: number, closeWindow = false) {
       const immediate = env.reducedMotion ? 1 : 1 - Math.exp(-delta * 7);
       const blinds = setBlinds(env.blinds, env.angle, immediate);
       skyTarget.copy(env.night ? nightSky : env.weather === '晴' ? daySky : overcast);
@@ -307,7 +316,7 @@ export function buildWindow(
       rainBlend = T.MathUtils.lerp(rainBlend, Number(env.weather === '雨'), change);
       snowBlend = T.MathUtils.lerp(snowBlend, Number(env.weather === '雪'), change);
       wetGlass.update(rainBlend, env.reducedMotion ? 0 : delta);
-      exterior.update(env, delta);
+      exterior.update(env, delta, closeWindow);
       rain.object.visible = rainBlend > 0.012;
       rain.object.material.opacity = rainBlend * (env.night ? 0.063 : 0.088);
       if (rain.object.visible) rain.update(env.reducedMotion ? 0 : delta);

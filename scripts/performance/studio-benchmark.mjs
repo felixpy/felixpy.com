@@ -42,6 +42,7 @@ const experiments = {
   '--warm-preview': ['studio-preview', 'warm'],
   '--warm-oled': ['studio-preview', 'oled'],
   '--staged-preview-textures': ['studio-preview-textures', 'staged'],
+  '--input-priority-textures': ['studio-preview-textures', 'input-priority'],
   '--warm-buffers': ['studio-buffers', 'warm'],
   '--worker-parts': ['studio-parts', 'worker'],
   '--worker-meshopt': ['studio-meshopt', 'worker'],
@@ -60,6 +61,7 @@ const experiments = {
   '--window-scissor': ['studio-window-clip', 'scissor'],
   '--warm-ferry': ['studio-ferry', 'warm'],
   '--eager-water-motion': ['studio-water-motion', 'eager'],
+  '--window-only-water': ['studio-water-motion', 'window'],
   '--bitmap-images': ['studio-images', 'bitmap'],
   '--incremental-warmup': ['studio-warmup', 'incremental'],
   '--paced-warmup': ['studio-warmup', 'paced'],
@@ -73,6 +75,7 @@ const experiments = {
   '--depth-prefill': ['studio-depth-prefill', 'coarse'],
   '--shared-reflections': ['studio-reflections', 'shared'],
   '--legacy-loader': ['studio-loader', 'legacy'],
+  '--present-witness': ['studio-present-witness', 'roi'],
   '--merge-first': ['studio-batching', 'merge-first'],
   '--transform-first': ['studio-batching', 'transform-first'],
 };

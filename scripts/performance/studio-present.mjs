@@ -4,15 +4,17 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 const usage = `Usage:
-  node scripts/performance/studio-present.mjs capture --pid=PID [--seconds=65] [--presentmon=EXE]
-  node scripts/performance/studio-present.mjs analyze CAPTURE.csv --pid=PID
-  node scripts/performance/studio-present.mjs analyze CAPTURE.csv --pid=PID --swap-chain=ADDRESS --start=2 [--seconds=60] [--target=144]
+  node scripts/performance/studio-present.mjs capture --pid=PID [--seconds=65] [--presentmon=EXE] [--qpc-ms]
+  node scripts/performance/studio-present.mjs analyze CAPTURE.csv --pid=PID [--qpc-ms]
+  node scripts/performance/studio-present.mjs analyze CAPTURE.csv --pid=PID --swap-chain=ADDRESS --start=SECONDS [--seconds=60] [--target=144] [--qpc-ms]
 
 Capture requires an explicitly selected GPU process from an isolated, headed Chrome session.
 Record the tested window, monitor, refresh mode, and native scene dimensions separately.
 The swap-chain-free analysis lists candidates. For cadence analysis, identify the tested
 window's swap chain and provide its address explicitly. Pad both ends of the chosen interval.
 Input is PresentMon v1 metrics CSV with display tracking and dropped presents retained.
+Use --qpc-ms on both commands for a shared clock with a DXGI frame-marker witness.
+In QPC mode, --start is the requested absolute QPC time converted to seconds.
 The result measures OS-displayed swap-chain changes. Correlate these with distinct canvas
 frames before using them for Studio acceptance.`;
 
@@ -51,22 +53,22 @@ function csvFields(line) {
   }
 }
 
-function readCapture(path, pid) {
+function readCapture(path, pid, qpcMs) {
   const [heading, ...lines] = readFileSync(path, 'utf8').trim().split(/\r?\n/);
   const keys = csvFields(heading.replace(/^\uFEFF/, '')).map((name) => name.trim());
   const columns = new Map(keys.map((key, index) => [key, index]));
+  const timeColumn = qpcMs ? 'QPCTime' : 'TimeInSeconds';
+  const microsecondsPerUnit = qpcMs ? 1000 : 1e6;
   const required = [
     'Application',
     'ProcessID',
     'SwapChainAddress',
     'Dropped',
-    'TimeInSeconds',
+    timeColumn,
     'MsUntilDisplayed',
   ];
   if (keys.length !== columns.size || required.some((key) => !columns.has(key)))
-    throw new Error(
-      'PresentMon v1 CSV is required. Capture with --v1_metrics and display tracking.',
-    );
+    throw new Error(`PresentMon v1 CSV with ${timeColumn} and display tracking is required.`);
 
   const chains = new Map();
   for (const line of lines) {
@@ -86,7 +88,7 @@ function readCapture(path, pid) {
     if (columns.has('PresentMode')) chain.modes.add(read('PresentMode'));
     const dropped = integerOf(read('Dropped'), 'Dropped', 0);
     if (dropped > 1) throw new Error('Dropped must be 0 or 1.');
-    const submitted = numberOf(read('TimeInSeconds'), 'TimeInSeconds') * 1e6;
+    const submitted = numberOf(read(timeColumn), timeColumn) * microsecondsPerUnit;
     const displayed = dropped
       ? null
       : Math.round(submitted + numberOf(read('MsUntilDisplayed'), 'MsUntilDisplayed') * 1000);
@@ -97,7 +99,7 @@ function readCapture(path, pid) {
   return chains;
 }
 
-function capture(pid, seconds, executable) {
+function capture(pid, seconds, executable, qpcMs) {
   if (process.platform !== 'win32') throw new Error('PresentMon capture requires Windows.');
   const presentMon =
     executable ??
@@ -118,6 +120,7 @@ function capture(pid, seconds, executable) {
     '--process_id',
     String(pid),
     '--v1_metrics',
+    ...(qpcMs ? ['--qpc_time_ms'] : []),
     '--timed',
     String(seconds),
     '--terminate_after_timed',
@@ -135,8 +138,8 @@ function capture(pid, seconds, executable) {
   console.log(path);
 }
 
-function analyze(path, pid, address, start, seconds, target) {
-  const chains = readCapture(path, pid);
+function analyze(path, pid, address, start, seconds, target, qpcMs) {
+  const chains = readCapture(path, pid, qpcMs);
   if (!address) {
     console.log(
       JSON.stringify(
@@ -194,6 +197,7 @@ function analyze(path, pid, address, start, seconds, target) {
     swapChain: chain.address,
     application: [...chain.applications][0],
     presentModes: [...chain.modes],
+    clock: qpcMs ? 'windows-qpc' : 'relative',
     window: { startSeconds: start, durationSeconds: seconds },
     targetFps: target,
     displayedFps,
@@ -224,6 +228,7 @@ try {
       help: { type: 'boolean', short: 'h' },
       pid: { type: 'string' },
       presentmon: { type: 'string' },
+      'qpc-ms': { type: 'boolean' },
       'swap-chain': { type: 'string' },
       start: { type: 'string' },
       seconds: { type: 'string' },
@@ -243,6 +248,7 @@ try {
       integerOf(values.pid, 'pid'),
       integerOf(values.seconds ?? '65', 'seconds'),
       values.presentmon,
+      values['qpc-ms'],
     );
   } else if (mode === 'analyze' && path && !extras.length && !values.presentmon) {
     const pid = integerOf(values.pid, 'pid');
@@ -256,6 +262,7 @@ try {
       address ? numberOf(values.start, 'start') : 0,
       numberOf(values.seconds ?? '60', 'seconds', 0.001),
       target,
+      values['qpc-ms'],
     );
   } else throw new Error(usage);
 } catch (error) {

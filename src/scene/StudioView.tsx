@@ -126,7 +126,10 @@ function assemblyLoading() {
   return { assets, manager, frontReady };
 }
 
-function CameraRig(props: RigProps & Assembly & { earlyRear: boolean }) {
+function CameraRig(
+  props: RigProps &
+    Assembly & { earlyRear: boolean; firstFrame: ReturnType<typeof roomFirstFrame> },
+) {
   const { camera: baseCamera, gl, scene } = useThree();
   const camera = baseCamera as T.PerspectiveCamera;
   const { model, assets } = props;
@@ -707,6 +710,7 @@ function CameraRig(props: RigProps & Assembly & { earlyRear: boolean }) {
       if (!drag.moved && isStation(mode.current)) void model.prepareRear();
       drag.moved = true;
       if (canLookAround(mode.current)) {
+        if (live.current.roomVisible) live.current.firstFrame.prioritizeInput();
         turnView(mode.current, -dx * 0.0035, -dy * 0.0028);
         if (!measuredFirstTurn && live.current.roomVisible) {
           measuredFirstTurn = true;
@@ -769,6 +773,7 @@ function CameraRig(props: RigProps & Assembly & { earlyRear: boolean }) {
     }
     function down(event: PointerEvent) {
       if (event.button !== 0 || !canPick(mode.current)) return;
+      if (live.current.roomVisible) live.current.firstFrame.prioritizeInput();
       openSequence.current++;
       const rect = element.getBoundingClientRect();
       pointer.current = {
@@ -796,6 +801,7 @@ function CameraRig(props: RigProps & Assembly & { earlyRear: boolean }) {
     }
     function cancel() {
       pointer.current = null;
+      live.current.firstFrame.cancelInputPriority();
       element.style.cursor = '';
     }
     function leave() {
@@ -1394,6 +1400,7 @@ function CameraRig(props: RigProps & Assembly & { earlyRear: boolean }) {
       current === 'bench' || (atBench && current === 'inspect'),
       camera,
       props.nativeLow,
+      lookingOutside,
     );
     if (shadowWarmup.current > 0 || current === 'returning' || geometryMoving) {
       shadowWarmup.current = Math.max(0, shadowWarmup.current - 1);
@@ -1416,7 +1423,8 @@ function StudioRoom({
   const [startup] = useState(() => {
     const query = new URLSearchParams(location.search);
     const rearMode = query.get('studio-rear');
-    const deferWaterMotion = query.get('studio-water-motion') !== 'eager';
+    const waterMotion = query.get('studio-water-motion');
+    const deferWaterMotion = waterMotion !== 'eager';
     const waterfront = query.get('studio-waterfront');
     return {
       environment: props.environment,
@@ -1429,6 +1437,7 @@ function StudioRoom({
         preloadInspection: query.get('studio-details') === 'preload',
         mergeFirst: query.get('studio-batching') !== 'transform-first',
         deferWaterMotion,
+        windowOnlyWater: nativeLow && waterMotion === 'window',
         warmWaterfront:
           waterfront === 'warm' || (deferWaterMotion && waterfront !== 'cold')
             ? (material: T.ShaderMaterial) => firstFrame.warmWaterfront(gl, material)
@@ -1516,7 +1525,13 @@ function StudioRoom({
   if (!assembly) return null;
   return (
     <>
-      <CameraRig {...props} {...assembly} nativeLow={nativeLow} earlyRear={startup.earlyRear} />
+      <CameraRig
+        {...props}
+        {...assembly}
+        nativeLow={nativeLow}
+        earlyRear={startup.earlyRear}
+        firstFrame={firstFrame}
+      />
       <Finish
         firstFrame={firstFrame}
         night={props.environment.night}
@@ -1545,10 +1560,12 @@ export default function StudioView(props: Props) {
   const [firstFrame] = useState(() => {
     const options = new URLSearchParams(location.search);
     const preview = options.get('studio-preview');
+    const previewTextures = options.get('studio-preview-textures');
     return roomFirstFrame({
       warmPreview: preview === 'warm',
       warmOled: preview === 'oled',
-      stagedTextures: options.get('studio-preview-textures') === 'staged',
+      stagedTextures: previewTextures === 'staged',
+      inputPriorityTextures: previewTextures === 'input-priority',
       warmBuffers: options.get('studio-buffers') === 'warm',
     });
   });

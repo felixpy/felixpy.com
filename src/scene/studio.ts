@@ -92,6 +92,7 @@ export function* buildStudioSteps(
     mergeFirst = true,
     warmWaterfront = undefined as ((material: T.ShaderMaterial) => void) | undefined,
     deferWaterMotion = false,
+    windowOnlyWater = false,
   } = {},
 ) {
   const root = new T.Group();
@@ -134,7 +135,15 @@ export function* buildStudioSteps(
     [0.105, -0.068, -0.208],
     detailMounted,
   );
-  const window = buildWindow(root, p, loader, initial, warmWaterfront, deferWaterMotion);
+  const window = buildWindow(
+    root,
+    p,
+    loader,
+    initial,
+    warmWaterfront,
+    deferWaterMotion,
+    windowOnlyWater,
+  );
   radiator(interior, p);
   yield;
   const rearLoader = new T.LoadingManager();
@@ -1046,6 +1055,7 @@ export function* buildStudioSteps(
       atWorkbench = false,
       camera?: T.PerspectiveCamera,
       fullInspection = false,
+      closeWindow = false,
     ) {
       selectTowerDetail(inspectedHardware === 'case');
       fieldGear.updateLanternPort();
@@ -1059,7 +1069,12 @@ export function* buildStudioSteps(
         setBoardLocale(printLocale);
         proof.setLocale(printLocale);
       }
-      const { blocked, moving: blindsMoving, pitch, angle } = window.update(env, delta);
+      const {
+        blocked,
+        moving: blindsMoving,
+        pitch,
+        angle,
+      } = window.update(env, delta, closeWindow);
       slats.set(pitch, angle);
       const doorMoving = architectureParts.update(delta, clock, env.reducedMotion);
       const cabinetMoving = bench.cabinet.update(delta, env.reducedMotion);

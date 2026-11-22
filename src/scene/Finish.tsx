@@ -75,11 +75,27 @@ export function Finish({
     output: OutputPass;
   } | null>(null);
   const lastRoomFrame = useRef(0);
+  const frameMarker = useRef<ReturnType<
+    typeof import('./room-frame-marker').roomFrameMarker
+  > | null>(null);
   const shaders = useRef<'cold' | 'pending' | 'ready'>('cold');
   const preparation = useRef<ReturnType<typeof roomWarmup> | null>(null);
   const workbenchPreparation = useRef<ReturnType<typeof roomWarmup> | null>(null);
   const scannedRevision = useRef(-1);
   const sample = useRef({ frames: 0, slowFrames: 0, elapsed: 0, headroom: 0 });
+
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get('studio-present-witness') !== 'roi') return;
+    let active = true;
+    void import('./room-frame-marker').then(({ roomFrameMarker }) => {
+      if (active) frameMarker.current = roomFrameMarker();
+    });
+    return () => {
+      active = false;
+      frameMarker.current?.dispose();
+      frameMarker.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (!warmWorkbench || !gl.extensions.has('KHR_parallel_shader_compile')) return;
@@ -301,6 +317,7 @@ export function Finish({
       occlusion.render(gl, color, beauty, delta, false);
       output.render(gl, beauty, color, delta, false);
     }
+    if (frameMarker.current?.draw(gl) === 1) performance.mark('studio-present-marker-ready');
     if (drawn && pacing) preparation.current?.step(active?.beauty ?? null);
     if (firstPicture.current === 'preparing') {
       firstPicture.current = 'drawn';

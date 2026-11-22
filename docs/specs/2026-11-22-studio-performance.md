@@ -256,3 +256,42 @@ Runs 85–86 on a matched native 4K desk build used `--warm-ferry --repeat-desk 
 ## Native low rectangular-light field
 
 Runs 87–88 used native 1080p UHD 770 with lean lighting, matte surfaces, window scissor and depth prefill. The trial used a Web Worker to tabulate diffuse form factors for two fixed rectangle lights and transferred a 1.27 MiB field. The worker completed at 3.29 s and the texture uploaded at the first full render. The matched 18-query GPU P95 values were 39.88 and 39.65 ms. Warm submissions were 25.23 and 25.38 FPS, at 124.9 and 125.0 ms interval P99. Rear readiness moved from 13.62 to 14.03 s. The trial was removed after the small measured difference. The worker asset, raw samples and native stills remain with the trial build.
+
+## Long desk replay and physical display clock
+
+Runs 91–92 used the same high-quality build, RTX 4090, cold startup, ferry prewarming and a prime turn followed by 60 seconds of motion. Both default and main-color targets used the requested native resolution with 4× MSAA on the main target. Draw and triangle counts matched at the sampled ending pose. These runs measure one route's room submissions and GPU work.
+
+| RTX 4090 mode      | Warm submission rate | Submission P95 / P99 | Main-color GPU P95 | Initial room readiness |
+| ------------------ | -------------------: | -------------------: | -----------------: | ---------------------: |
+| Native 2560 × 1440 |           134.58 FPS |       13.9 / 13.9 ms |            7.75 ms |                18.52 s |
+| Native 3840 × 2160 |           132.93 FPS |       13.9 / 13.9 ms |            6.81 ms |                18.57 s |
+
+Both warmed visits had a 27.8 ms maximum interval. Their prime turns still had 521 and 486 ms maxima. One matched pair offers a development comparator and similar steady cadence at both resolutions. Desktop RTX 3060 hardware and physical presentation remain separate acceptance work. Results are under `.review/performance/0eb486a/`.
+
+Windows `QueryDisplayConfig` reported one active `DISPLAY1` on the RTX 4090 at 3840 × 2160 progressive. The target path and active signal both report 143999/1000 Hz. The installed PresentMon provides an absolute performance-counter clock. `studio-present.mjs capture --qpc-ms` records that mode and `analyze --qpc-ms` reads its millisecond `QPCTime` field. Use seconds on `--start`, matching the converted absolute clock. Model captures validated both parsers at 60 FPS with dropped rows retained. A headed session with a calibrated canvas witness is still required to identify distinct displayed scene frames.
+
+`--present-witness` enables a canvas marker at top-left physical pixel (32, 32) in the fully graded room frame. Its 160 × 4 pixels contain a synchronization byte, 24-bit frame serial and CRC-8. The draw runs only when there is a completed render to the full default framebuffer. The marker module loads on demand and restores the prior clear state. Run 99 verified the exact black and white cells in a native 4K screenshot and decoded `D7 00 04 5C 68`, serial 1116 with a matching CRC. For a headed calibration, first confirm the fullscreen canvas maps to the selected display and the marker region has no overlay. Test rendered and frozen-canvas intervals before correlating the DXGI witness and PresentMon on their common QPC clock.
+
+## Native low window motion
+
+Runs 93–94 paired native UHD 770 1080p with lean lighting, matte surfaces, window scissor and depth prefill. `--window-only-water` keeps the static waterfront in ordinary low-quality room views and selects the already prepared animation on entry to a close window view. The water clock and ferry visibility follow that choice. The regression covers exit, reentry, reduced motion and quality changes.
+
+Warm desk submissions changed from 25.09 to 25.75 FPS. Interval P95 stayed near 49 ms and P99 was 124.9 ms in both runs. The largest interval fell from 263.9 to 131.9 ms in this pair. Inclusive GPU P95 was 40.01 and 40.61 ms. Whole-room readiness was 13.79 and 14.76 s. The native low 30 FPS desk gate remains open. In a separate eight-second close-window smoke, run 95 submitted 39.76 FPS with GPU P95 of 24.42 ms. See `.review/performance/0eb486a/`.
+
+Reversing the order in runs 100–101 reproduced the direction. The window-only visit submitted 25.77 FPS with a 125.1 ms maximum and GPU P95 of 40.23 ms. The control with water motion in the desk view submitted 25.17 FPS with a 270.9 ms maximum and GPU P95 of 39.69 ms. Keep this option for the worst-interval improvement on the measured desk route. Sustained GPU cost still exceeds the 30 FPS budget.
+
+## First-drag texture priority
+
+Runs 96–98 used the same native 4K build and stock shader warmup. `--input-priority-textures` keeps the initial preview, stages single texture uploads and holds them for 120 ms after the first frame. A viewport gesture extends the hold for 100 ms with a hard 350 ms cutoff from that frame. Cancellation clears the gesture extension.
+
+| Texture strategy                                | Loader exit to changed submit | Pointer-down dispatch | First ten seconds P95 / max | Room readiness |
+| ----------------------------------------------- | ----------------------------: | --------------------: | --------------------------: | -------------: |
+| Default                                         |                        724 ms |                358 ms |                278 / 528 ms |        18.19 s |
+| One staged upload per frame                     |                        177 ms |                 26 ms |                444 / 715 ms |        18.50 s |
+| One staged upload per frame with input priority |                        175 ms |                 24 ms |                382 / 403 ms |        18.08 s |
+
+The first response was earlier on both staged variants. The gesture hold improved the longest interval over plain staging in this pair and the remaining frame distribution kept the candidate optional. The first press overlapped 262 ms of logged texture upload in the control and about 15 ms on both variants. Compare using `4k --startup --full-room --texture-uploads`. Results are under `.review/performance/0eb486a/`.
+
+The first full-shading render without catch-up still took about 3.1 seconds in all three visits, after the first-input window. Report that span independently from the first ten seconds of interactive preview.
+
+With catch-up enabled in both desk runs 102–103, adding the input hold changed the first response from 176 to 177 ms, whole-room readiness from 15.57 to 15.83 s and first-input P95 from 361 to 375 ms. The maximum interval moved from 521 to 438 ms. A separate run 104 turned directly toward the workbench with the combined options. It submitted the first changed view in 176 ms, reached whole-room readiness at 15.76 s and finished the first full draw in 130 ms. Its first-input maximum was 778 ms. Keep the combination experimental until the remaining preview stalls are reduced.

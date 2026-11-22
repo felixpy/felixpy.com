@@ -575,3 +575,98 @@ test('river motion waits for its post-room warmup while the photographed window 
   expect(result.clock).toBeGreaterThan(0);
   expect(result.animatedPhoto).toBe(true);
 });
+
+test('native low reuses prepared waterfront motion only during window views', async ({ page }) => {
+  await openEmptyPage(page);
+  const result = await page.evaluate(async () => {
+    const three = '/node_modules/three/build/three.module.js';
+    const T = (await import(three)) as typeof import('three');
+    const exteriorModule = '/src/scene/exterior.ts';
+    const { buildExterior } = (await import(
+      exteriorModule
+    )) as typeof import('../src/scene/exterior');
+    const envModule = '/src/app/environment.ts';
+    const { initialEnvironment } = (await import(
+      envModule
+    )) as typeof import('../src/app/environment');
+    const rainModule = '/src/scene/rain-glass.ts';
+    const { buildRainGlass } = (await import(
+      rainModule
+    )) as typeof import('../src/scene/rain-glass');
+    const depthModule = '/src/scene/window-depth.ts';
+    const { panoramaMeshName } = (await import(
+      depthModule
+    )) as typeof import('../src/scene/window-depth');
+
+    const root = new T.Group();
+    const glass = buildRainGlass(new T.Vector3(), new T.Vector2(1.56, 1.27));
+    const environment = { ...initialEnvironment, quality: 'low' as const };
+    const exterior = buildExterior(
+      root,
+      new T.TextureLoader(),
+      glass,
+      environment,
+      undefined,
+      true,
+      true,
+    );
+    const plate = root.getObjectByName(panoramaMeshName) as import('three').Mesh<
+      import('three').BufferGeometry,
+      import('three').ShaderMaterial
+    >;
+    const original = plate.material;
+    const warming = Promise.withResolvers<import('three').ShaderMaterial>();
+    exterior.prepareWaterMotion!(async (moving) => {
+      warming.resolve(moving);
+      return true;
+    }, new AbortController().signal);
+    exterior.update(environment, 1);
+    exterior.update(environment, 1, true);
+    const pending = plate.material === original;
+    const moving = await warming.promise;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    exterior.update(environment, 1);
+    const room = plate.material === original && original.uniforms.riverTime.value === 0;
+    exterior.update(environment, 1, true);
+    const close = plate.material === moving && original.uniforms.riverTime.value === 1;
+    exterior.update({ ...environment, reducedMotion: true }, 1, true);
+    const reduced = plate.material === original && original.uniforms.riverTime.value === 1;
+    exterior.update(environment, 1);
+    const exit = plate.material === original && original.uniforms.riverTime.value === 1;
+    const ferry = root.getObjectByName('Passing river ferry');
+    const noFerry =
+      ferry?.visible === false &&
+      original.uniforms.ferryTrack.value.equals(new T.Vector4(100000, 100000, 0, -1));
+    exterior.update(environment, 1, true);
+    const returnToWindow = plate.material === moving && original.uniforms.riverTime.value === 2;
+    exterior.update({ ...environment, quality: 'high' }, 1);
+    const high = plate.material === moving && original.uniforms.riverTime.value === 3;
+    return {
+      pending,
+      room,
+      close,
+      reduced,
+      exit,
+      noFerry,
+      returnToWindow,
+      high,
+      sharedUniforms: original.uniforms === moving.uniforms,
+      staticShader: !original.defines.STUDIO_ANIMATED_WATER,
+      animatedShader: Boolean(moving.defines.STUDIO_ANIMATED_WATER),
+    };
+  });
+  expect(result).toEqual({
+    pending: true,
+    room: true,
+    close: true,
+    reduced: true,
+    exit: true,
+    noFerry: true,
+    returnToWindow: true,
+    high: true,
+    sharedUniforms: true,
+    staticShader: true,
+    animatedShader: true,
+  });
+});

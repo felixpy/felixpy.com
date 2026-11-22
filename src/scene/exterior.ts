@@ -36,7 +36,9 @@ export function buildExterior(
   initial: Environment,
   warmWaterfront?: (material: T.ShaderMaterial) => void,
   deferWaterMotion = false,
+  windowOnlyWater = false,
 ) {
+  const keepStaticMaterial = deferWaterMotion && windowOnlyWater;
   const world = group(root, 'Outdoor volume');
   world.add(glass.highlights);
   const depths = new Map<string, T.Texture>();
@@ -182,7 +184,7 @@ export function buildExterior(
     signal: AbortSignal;
     ferry?: FerryWarmup;
   };
-  let motionEnabled = !deferWaterMotion;
+  let movingMaterial = deferWaterMotion ? undefined : material;
   let motionRequest: MotionRequest | undefined;
   let attemptedMotion: MotionRequest | undefined;
   function prepareWaterMotion(
@@ -190,7 +192,7 @@ export function buildExterior(
     signal: AbortSignal,
     warmFerry?: FerryWarmup['warm'],
   ) {
-    if ((!motionEnabled || warmFerry) && !signal.aborted)
+    if ((!movingMaterial || warmFerry) && !signal.aborted)
       motionRequest = { warm, signal, ferry: warmFerry ? { warm: warmFerry, signal } : undefined };
   }
   function startWaterMotion() {
@@ -207,13 +209,15 @@ export function buildExterior(
           moving.dispose();
           return;
         }
-        plate.material = moving;
-        motionEnabled = true;
-        material.dispose();
+        movingMaterial = moving;
+        if (!keepStaticMaterial) {
+          plate.material = moving;
+          material.dispose();
+        }
         performance.mark('studio-water-motion-ready');
       });
   }
-  if (motionEnabled && shown.scene.kind === 'river') {
+  if (movingMaterial && shown.scene.kind === 'river') {
     void waterResources();
     if (shown.scene.route) vesselResources();
   }
@@ -221,8 +225,12 @@ export function buildExterior(
   return {
     world,
     prepareWaterMotion: deferWaterMotion ? prepareWaterMotion : undefined,
-    update(env: Environment, delta: number) {
-      if (!env.reducedMotion && motionEnabled) time += delta;
+    update(env: Environment, delta: number, closeWindow = false) {
+      const windowOnly = keepStaticMaterial && env.quality === 'low';
+      const visibleMotion =
+        windowOnly && (!closeWindow || env.reducedMotion) ? undefined : movingMaterial;
+      if (keepStaticMaterial) plate.material = visibleMotion ?? material;
+      if (!env.reducedMotion && visibleMotion) time += delta;
       const desired = view(env);
       if (desired.photo.image && desired.depth.image && desired !== target) {
         if (desired === shown) {
@@ -267,17 +275,23 @@ export function buildExterior(
         env.weather === '雨' ? 1 : 0.48,
         ease,
       );
-      if (motionEnabled && desired.scene.kind === 'river') {
+      if (movingMaterial && desired.scene.kind === 'river') {
         void waterResources();
         if (desired.scene.route) vesselResources();
-      } else if (!motionEnabled && !env.reducedMotion && target.scene.kind === 'river') {
+      } else if (!movingMaterial && !env.reducedMotion && target.scene.kind === 'river') {
         startWaterMotion();
       }
       const route = shown.scene.kind === 'river' ? shown.scene.route : undefined;
       const nextRoute = target.scene.kind === 'river' ? target.scene.route : undefined;
       if (ferry)
         uniforms.ferryTrack.value.copy(
-          ferry(route, time, uniforms.nightWater.value, env.weather, Number(route === nextRoute)),
+          ferry(
+            visibleMotion ? route : undefined,
+            time,
+            uniforms.nightWater.value,
+            env.weather,
+            Number(route === nextRoute),
+          ),
         );
       uniforms.mist.value = T.MathUtils.lerp(
         uniforms.mist.value,

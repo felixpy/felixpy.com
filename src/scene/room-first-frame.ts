@@ -39,6 +39,9 @@ type Surface = MeshStandardMaterial | MeshBasicMaterial;
 const maxPreviewLights = 6;
 const previewBufferMinimum = 128 * 1024;
 const previewUploadBudget = 3;
+const initialTextureHoldMs = 120;
+const textureHoldAfterInputMs = 100;
+const maximumTextureHoldMs = 350;
 
 const vertex = `
 precision highp float;
@@ -147,7 +150,9 @@ export function roomFirstFrame({
   warmOled = false,
   warmBuffers = false,
   stagedTextures = false,
+  inputPriorityTextures = false,
 } = {}) {
+  const stageTextures = stagedTextures || inputPriorityTextures;
   const materials = [new Map<Surface, RawShaderMaterial>(), new Map<Surface, RawShaderMaterial>()];
   const meshes: Mesh[] = [];
   const originals: (Material | Material[])[] = [];
@@ -161,6 +166,8 @@ export function roomFirstFrame({
   const pendingTextures = new Set<Texture>();
   const uploadedTextures = new WeakSet<Texture>();
   let drewPreview = false;
+  let firstPreviewAt: number | undefined;
+  let resumeUploadsAt = 0;
   const emptyMatrix = new Matrix3();
   const black = new Color(0);
   const night = { value: 0 };
@@ -191,7 +198,7 @@ export function roomFirstFrame({
   function previewMap(texture: Texture | null) {
     const image = texture?.image;
     if (!texture || !image) return white;
-    if (!stagedTextures || !texture.version || uploadedTextures.has(texture)) return texture;
+    if (!stageTextures || !texture.version || uploadedTextures.has(texture)) return texture;
     if (
       (typeof HTMLImageElement !== 'undefined' && image instanceof HTMLImageElement) ||
       (typeof ImageBitmap !== 'undefined' && image instanceof ImageBitmap)
@@ -397,6 +404,15 @@ export function roomFirstFrame({
 
   return {
     windowSlats,
+    prioritizeInput() {
+      if (firstPreviewAt === undefined) return;
+      const now = performance.now();
+      if (now - firstPreviewAt < maximumTextureHoldMs)
+        resumeUploadsAt = now + textureHoldAfterInputMs;
+    },
+    cancelInputPriority() {
+      resumeUploadsAt = 0;
+    },
     preparing(gl: WebGLRenderer, scene: Scene, camera: Camera) {
       if (stopWarming) return true;
       if (buffersReady) return false;
@@ -528,9 +544,16 @@ export function roomFirstFrame({
         gl.shadowMap.enabled = shadows;
         scene.environment = environment;
       }
-      if (stagedTextures) {
+      if (stageTextures) {
+        const now = inputPriorityTextures ? performance.now() : 0;
+        if (inputPriorityTextures) firstPreviewAt ??= now;
+        const previewAge = now - (firstPreviewAt ?? now);
+        const canUpload =
+          !inputPriorityTextures ||
+          previewAge >= maximumTextureHoldMs ||
+          (previewAge >= initialTextureHoldMs && now >= resumeUploadsAt);
         const texture = pendingTextures.values().next().value;
-        if (drewPreview && texture) {
+        if (drewPreview && canUpload && texture) {
           gl.initTexture(texture);
           uploadedTextures.add(texture);
         }
@@ -546,6 +569,11 @@ export function roomFirstFrame({
       disposeUpload?.();
       upload = undefined;
       pendingTextures.clear();
+      if (inputPriorityTextures) {
+        firstPreviewAt = undefined;
+        resumeUploadsAt = 0;
+        drewPreview = false;
+      }
       for (const cache of materials) {
         for (const material of cache.values()) material.dispose();
         cache.clear();
