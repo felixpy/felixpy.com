@@ -941,6 +941,15 @@ function CameraRig(
     };
   }, [camera, gl, model, scene]);
 
+  useEffect(() => model.disposeAtlasDetail, [model]);
+
+  useEffect(() => {
+    const inspect = model.setAtlasInspection;
+    if (!inspect || !props.roomVisible || props.mode !== 'map') return;
+    inspect(true);
+    return () => inspect(false);
+  }, [model, props.mode, props.roomVisible]);
+
   useEffect(() => {
     if (!props.roomVisible || !shaded) return;
     return model.prepareBookBacks();
@@ -1435,6 +1444,7 @@ function StudioRoom({
         deferBookBacks: query.get('studio-startup') === 'deferred-books',
         prioritizeRear: rearMode === 'priority' || rearMode === 'early',
         preloadInspection: query.get('studio-details') === 'preload',
+        atlasDetailOnInspect: query.get('studio-atlas-detail') === 'on-inspect',
         mergeFirst: query.get('studio-batching') !== 'transform-first',
         deferWaterMotion,
         windowOnlyWater: nativeLow && waterMotion === 'window',

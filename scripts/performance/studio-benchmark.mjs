@@ -63,6 +63,7 @@ const experiments = {
   '--eager-water-motion': ['studio-water-motion', 'eager'],
   '--window-only-water': ['studio-water-motion', 'window'],
   '--bitmap-images': ['studio-images', 'bitmap'],
+  '--atlas-detail-on-inspect': ['studio-atlas-detail', 'on-inspect'],
   '--incremental-warmup': ['studio-warmup', 'incremental'],
   '--paced-warmup': ['studio-warmup', 'paced'],
   '--catch-up-warmup': ['studio-warmup', 'catch-up'],
@@ -87,6 +88,8 @@ Example: node scripts/performance/studio-benchmark.mjs 4k,uhd-adaptive 1,2,3
 Use --loader-profile to profile startup CPU work through loader removal.
 Use --steady-profile to profile CPU work during the warmed desk turn.
 Use --gpu-timing to sample main-color GPU work during the final steady route, including any depth prefill.
+Add --gpu-panorama to alternate whole-room queries with queries around the panorama draw.
+Use --opaque-near-first to measure a front-to-back opaque draw order in the replay.
 Use --draw-calls to record WebGL indexed and multi-draw calls during the final steady route.
 Use --repeat-desk to prime the shaders and geometry with one matched desk turn before sampling.
 Use --seconds=<duration> to set the measured steady desk route duration (default 12).
@@ -115,6 +118,8 @@ function options(args) {
   const captureProfile = captured.delete('--loader-profile');
   const steadyProfile = captured.delete('--steady-profile');
   const gpuTiming = captured.delete('--gpu-timing');
+  const gpuPanorama = captured.delete('--gpu-panorama');
+  const opaqueNearFirst = captured.delete('--opaque-near-first');
   const drawCalls = captured.delete('--draw-calls');
   const loaderTrace = captured.delete('--loader-trace');
   const startup = captured.delete('--startup');
@@ -150,6 +155,7 @@ function options(args) {
     inputDelayMs < 0 ||
     (captureProfile && screenshot) ||
     (gpuTiming && (captureProfile || steadyProfile || startup || loaderTrace || slowDraws)) ||
+    (gpuPanorama && !gpuTiming) ||
     (drawCalls && (captureProfile || steadyProfile || startup || loaderTrace)) ||
     (loaderTrace && (captureProfile || startup || screenshot || slowDraws)) ||
     (steadyProfile && (captureProfile || loaderTrace || startup || slowDraws)) ||
@@ -173,6 +179,8 @@ function options(args) {
     captureProfile,
     steadyProfile,
     gpuTiming,
+    gpuPanorama,
+    opaqueNearFirst,
     drawCalls,
     loaderTrace,
     startup,
@@ -220,6 +228,8 @@ function installProbe({
   slowDraws,
   textureUploads,
   gpuTiming,
+  gpuPanorama,
+  opaqueNearFirst,
   day,
   weather,
 }) {
@@ -283,19 +293,24 @@ function installProbe({
     if (!timer) return;
     const pending = [];
     const timings = (sample.mainColorGpu = { durations: [], discarded: 0 });
+    const panorama = gpuPanorama
+      ? (sample.panoramaGpu = { durations: [], discarded: 0 })
+      : undefined;
     let active = false;
     let inQuery = false;
 
     function poll() {
       if (!pending.length) return true;
       if (gl.getParameter(timer.GPU_DISJOINT_EXT)) {
-        timings.discarded += pending.length;
-        for (const query of pending.splice(0)) gl.deleteQuery(query);
+        for (const { query, result } of pending.splice(0)) {
+          result.discarded++;
+          gl.deleteQuery(query);
+        }
         return true;
       }
-      while (pending.length && gl.getQueryParameter(pending[0], gl.QUERY_RESULT_AVAILABLE)) {
-        const query = pending.shift();
-        timings.durations.push(gl.getQueryParameter(query, gl.QUERY_RESULT) / 1e6);
+      while (pending.length && gl.getQueryParameter(pending[0].query, gl.QUERY_RESULT_AVAILABLE)) {
+        const { query, result } = pending.shift();
+        result.durations.push(gl.getQueryParameter(query, gl.QUERY_RESULT) / 1e6);
         gl.deleteQuery(query);
       }
       return pending.length === 0;
@@ -308,15 +323,18 @@ function installProbe({
       active = false;
       return poll();
     };
+    const panoramaFrame = () => active && Boolean(panorama) && sample.roomFrames.length % 34 === 17;
     return {
-      begin() {
-        if (!active || inQuery || sample.roomFrames.length % 17) return null;
+      panoramaFrame,
+      begin(panoramaDraw = false) {
+        if (!active || inQuery || sample.roomFrames.length % 17 || panoramaFrame() !== panoramaDraw)
+          return null;
         poll();
         const query = gl.createQuery();
         if (!query) return null;
         gl.beginQuery(timer.TIME_ELAPSED_EXT, query);
         inQuery = true;
-        return query;
+        return { query, result: panoramaDraw ? panorama : timings };
       },
       end(query) {
         gl.endQuery(timer.TIME_ELAPSED_EXT);
@@ -330,6 +348,15 @@ function installProbe({
   window.__THREE_DEVTOOLS__.addEventListener('observe', ({ detail: renderer }) => {
     if (!renderer.isWebGLRenderer) return;
     sample.renderer = renderer;
+    if (opaqueNearFirst)
+      renderer.setOpaqueSort(
+        (a, b) =>
+          a.groupOrder - b.groupOrder ||
+          a.renderOrder - b.renderOrder ||
+          a.z - b.z ||
+          a.material.id - b.material.id ||
+          a.id - b.id,
+      );
     const drag = sample.firstDrag;
     let yaw;
     if (drag) {
@@ -433,6 +460,20 @@ function installProbe({
       };
     }
     const gpu = gpuTiming ? attachGpuTiming(renderer) : undefined;
+    let renderPanorama = false;
+    if (gpu && gpuPanorama) {
+      const renderBuffer = renderer.renderBufferDirect;
+      renderer.renderBufferDirect = function (...args) {
+        if (!renderPanorama || args[4].name !== 'Depth-reprojected waterfront photograph')
+          return renderBuffer.apply(this, args);
+        const query = gpu.begin(true);
+        try {
+          return renderBuffer.apply(this, args);
+        } finally {
+          if (query) gpu.end(query);
+        }
+      };
+    }
     let drawSample = null;
     if (drawCalls) {
       const gl = renderer.getContext();
@@ -490,11 +531,14 @@ function installProbe({
       if (primary) query = depthQuery ?? gpu?.begin();
       else if (depthPrefill) query = gpu?.begin();
       if (primary && drawCalls) drawSample = { indexed: 0, multi: 0, multiSubdraws: 0 };
+      if (gpuPanorama) renderPanorama = primary && gpu?.panoramaFrame();
+      if (renderPanorama) sample.panoramaFrames = (sample.panoramaFrames ?? 0) + 1;
       let result;
       try {
         result = render.call(this, scene, camera);
         if (depthPrefill) depthQuery = query;
       } finally {
+        renderPanorama = false;
         if (primary && drawSample) {
           sample.drawCalls.push(drawSample);
           drawSample = null;
@@ -874,6 +918,8 @@ async function measure({ base, directory, head, name, run, settings }) {
     captureProfile,
     steadyProfile,
     gpuTiming,
+    gpuPanorama,
+    opaqueNearFirst,
     drawCalls,
     loaderTrace,
     startup,
@@ -968,6 +1014,8 @@ async function measure({ base, directory, head, name, run, settings }) {
       slowDraws,
       textureUploads,
       gpuTiming,
+      gpuPanorama,
+      opaqueNearFirst,
       drawCalls,
       day,
       weather: weatherLabels[weather],
@@ -1062,6 +1110,7 @@ async function measure({ base, directory, head, name, run, settings }) {
       experiments: Object.fromEntries(url.searchParams),
       ...(slowDraws && { slowDraws: raw.slowDraws.length }),
       ...(raw.slowTextureUploads && { slowTextureUploads: raw.slowTextureUploads.length }),
+      ...(opaqueNearFirst && { opaqueSort: 'near-first' }),
       ...(drawCalls && {
         multiDrawAvailable: raw.multiDrawAvailable,
         indexedDrawP50: stats(raw.drawCalls.map(({ indexed }) => indexed)).p50,
@@ -1076,6 +1125,8 @@ async function measure({ base, directory, head, name, run, settings }) {
         captureProfile && 'loader-profile',
         steadyProfile && 'steady-profile',
         gpuTiming && 'gpu-timing',
+        gpuPanorama && 'gpu-panorama',
+        opaqueNearFirst && 'opaque-near-first',
         drawCalls && 'draw-calls',
         loaderTrace && 'loader-trace',
         startup && 'startup',
@@ -1114,6 +1165,20 @@ async function measure({ base, directory, head, name, run, settings }) {
       const { samples, p50, p95, p99, max } = stats(durations);
       summary.mainColorGpuMs = { samples, p50, p95, p99, max, discarded };
     }
+    if (gpuPanorama) {
+      const { durations, discarded } = raw.panoramaGpu;
+      if (durations.length < 5) throw new Error('Insufficient valid panorama GPU timing queries.');
+      const { samples, p50, p95, p99, max } = stats(durations);
+      summary.panoramaGpuMs = {
+        frames: raw.panoramaFrames,
+        samples,
+        p50,
+        p95,
+        p99,
+        max,
+        discarded,
+      };
+    }
     if (cpuProfile) {
       summary.navigationStartMonotonicSeconds = navigationStart;
       summary.sampledIntervalMicroseconds = 1000;
@@ -1121,7 +1186,8 @@ async function measure({ base, directory, head, name, run, settings }) {
     }
     if (captureProfile) {
       if (startup) Object.assign(summary, startupSummary(raw, automationCommandMs));
-      writeFileSync(stem + '.meta.json', JSON.stringify({ ...raw, ...summary }, null, 2));
+      const metadata = { ...raw, ...summary, textureUploadEvents: raw.slowTextureUploads };
+      writeFileSync(stem + '.meta.json', JSON.stringify(metadata, null, 2));
     } else {
       const loaderTasks = raw.longTasks.filter(
         ([start, duration]) => start < raw.loaderEnd && start + duration > raw.loaderStart,

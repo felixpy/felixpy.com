@@ -89,6 +89,7 @@ export function* buildStudioSteps(
     deferBookBacks = false,
     prioritizeRear = false,
     preloadInspection = false,
+    atlasDetailOnInspect = false,
     mergeFirst = true,
     warmWaterfront = undefined as ((material: T.ShaderMaterial) => void) | undefined,
     deferWaterMotion = false,
@@ -292,8 +293,7 @@ export function* buildStudioSteps(
   );
   const mapPreview = photo('/media/graphics/world-atlas-room.webp');
   const atlasFrame = wallAtlas(interior, p, mapPreview);
-  deferDesk(async () => {
-    const loader = new T.TextureLoader(rearLoader);
+  async function loadAtlasDetail(loader: T.TextureLoader) {
     const src = '/media/graphics/world-atlas.webp';
     const detail = bitmapTextures
       ? await new Promise<T.Texture>((resolve, reject) => {
@@ -302,9 +302,57 @@ export function* buildStudioSteps(
       : await loader.loadAsync(src);
     detail.colorSpace = mapPreview.colorSpace;
     detail.anisotropy = mapPreview.anisotropy;
+    return detail;
+  }
+  if (!atlasDetailOnInspect) {
+    deferDesk(async () => {
+      atlasFrame.ink.map = await loadAtlasDetail(new T.TextureLoader(rearLoader));
+      mapPreview.dispose();
+    });
+  }
+  let inspectingAtlas = false;
+  let inspectedAtlas: T.Texture | undefined;
+  let atlasRequest: Promise<T.Texture> | undefined;
+  function applyAtlasDetail(detail: T.Texture) {
     atlasFrame.ink.map = detail;
-    mapPreview.dispose();
-  });
+    performance.mark('studio-map-detail-applied');
+  }
+  function setAtlasInspection(active: boolean) {
+    inspectingAtlas = active;
+    if (!active) {
+      atlasFrame.ink.map = mapPreview;
+      return;
+    }
+    if (inspectedAtlas) {
+      applyAtlasDetail(inspectedAtlas);
+      return;
+    }
+    if (atlasRequest) return;
+    performance.mark('studio-map-detail-start');
+    const request = loadAtlasDetail(new T.TextureLoader());
+    atlasRequest = request;
+    void request.then(
+      (detail) => {
+        if (atlasRequest !== request) {
+          detail.dispose();
+          return;
+        }
+        atlasRequest = undefined;
+        inspectedAtlas = detail;
+        performance.mark('studio-map-detail-loaded');
+        if (inspectingAtlas) applyAtlasDetail(detail);
+      },
+      () => {
+        if (atlasRequest === request) atlasRequest = undefined;
+      },
+    );
+  }
+  function disposeAtlasDetail() {
+    setAtlasInspection(false);
+    atlasRequest = undefined;
+    inspectedAtlas?.dispose();
+    inspectedAtlas = undefined;
+  }
   const { board, prints, setLocale: setBoardLocale } = personalArchive(interior, p, places, photo);
   const notes = projectNotebook(interior, p);
 
@@ -947,6 +995,8 @@ export function* buildStudioSteps(
     gearWall: fieldGear.zone,
     pickRoots: [interior, window.unit],
     mountedDetails,
+    setAtlasInspection: atlasDetailOnInspect ? setAtlasInspection : undefined,
+    disposeAtlasDetail: atlasDetailOnInspect ? disposeAtlasDetail : undefined,
     prepareDrawerMedia,
     prepareBookBacks,
     prepareBookExport,
