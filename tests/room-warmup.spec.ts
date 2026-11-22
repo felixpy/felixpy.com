@@ -6,8 +6,11 @@ import {
   Material,
   Mesh,
   MeshBasicMaterial,
+  NoToneMapping,
   PerspectiveCamera,
   Scene,
+  ShaderMaterial,
+  SRGBColorSpace,
   WebGLRenderTarget,
   type Object3D,
   type Texture,
@@ -266,6 +269,80 @@ test('live front warms the current view while the initial front batch is linking
     geometry.dispose();
     beauty.dispose();
     previous.dispose();
+  }
+});
+
+test('direct warmup retains a tagged preview program only while it is current', async () => {
+  const scene = new Scene();
+  const camera = new PerspectiveCamera(50, 1, 0.1, 100);
+  camera.updateMatrixWorld();
+  const geometry = new BoxGeometry(0.2, 0.2, 0.2);
+  const beauty = new WebGLRenderTarget(1, 1);
+  const properties = new Map<Material, object>();
+  function effect(reflected = true) {
+    const material = new ShaderMaterial();
+    const object = new Mesh(geometry, material);
+    object.position.z = -4;
+    object.userData.studioKeepPreviewProgram = true;
+    properties.set(material, {
+      currentProgram: { program: {} },
+      uniformsList: reflected ? [] : null,
+      __version: material.version,
+      outputColorSpace: SRGBColorSpace,
+      toneMapping: NoToneMapping,
+    });
+    scene.add(object);
+    return object;
+  }
+  const kept = effect();
+  const unmarked = effect();
+  const stale = effect();
+  const unreflected = effect(false);
+  let target: WebGLRenderTarget | null = beauty;
+  const compiled: { target: WebGLRenderTarget | null; objects: number[] }[] = [];
+  const renderer = {
+    properties,
+    outputColorSpace: SRGBColorSpace,
+    toneMapping: NoToneMapping,
+    getRenderTarget: () => target,
+    setRenderTarget(next: WebGLRenderTarget | null) {
+      target = next;
+    },
+    compileAsync(batch: Object3D) {
+      compiled.push({ target, objects: batch.children.map((object) => object.id) });
+      return Promise.resolve(batch);
+    },
+  } as unknown as WebGLRenderer;
+  const direct = roomWarmup(renderer, scene, camera, [], undefined, undefined, true);
+  const offscreen = roomWarmup(renderer, scene, camera, [], undefined, undefined, true);
+  const originalFrame = globalThis.requestAnimationFrame;
+  const frames: FrameRequestCallback[] = [];
+  globalThis.requestAnimationFrame = (callback) => frames.push(callback);
+  try {
+    const first = direct.front(null);
+    unmarked.userData.studioKeepPreviewProgram = false;
+    stale.material.needsUpdate = true;
+    frames.shift()!(performance.now());
+    await first;
+    expect(compiled).toEqual([{ target: null, objects: [unmarked.id, stale.id, unreflected.id] }]);
+    expect(target).toBe(beauty);
+    expect(kept.visible && kept.parent === scene).toBe(true);
+
+    const second = offscreen.front(beauty);
+    frames.shift()!(performance.now());
+    await second;
+    expect(compiled[1]).toEqual({
+      target: beauty,
+      objects: [kept.id, unmarked.id, stale.id, unreflected.id],
+    });
+  } finally {
+    direct.dispose();
+    offscreen.dispose();
+    if (originalFrame) globalThis.requestAnimationFrame = originalFrame;
+    else Reflect.deleteProperty(globalThis, 'requestAnimationFrame');
+    for (const material of properties.keys()) material.dispose();
+    geometry.dispose();
+    beauty.dispose();
   }
 });
 

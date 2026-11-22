@@ -74,6 +74,7 @@ export function deskObjects(parent: T.Object3D, manager: T.LoadingManager) {
   });
   const steam = mesh(cup, new T.PlaneGeometry(0.13, 0.195), vapor, [0, 0.169, 0]);
   steam.name = 'Tea vapor';
+  steam.userData.studioKeepPreviewProgram = true;
   steam.castShadow = steam.receiveShadow = false;
   steam.raycast = () => {};
   steam.visible = false;

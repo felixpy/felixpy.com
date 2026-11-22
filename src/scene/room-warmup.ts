@@ -8,10 +8,12 @@ import {
   Line,
   Matrix4,
   Mesh,
+  NoToneMapping,
   OrthographicCamera,
   PlaneGeometry,
   Points,
   Scene,
+  ShaderMaterial,
   Texture,
 } from 'three';
 import type { Material, Object3D, WebGLRenderTarget, WebGLRenderer } from 'three';
@@ -54,6 +56,7 @@ export function roomWarmup(
   passes: WarmupPass[] = [],
   mode?: WarmupMode,
   subtrees?: readonly Object3D[],
+  keepPreviewPrograms = false,
 ) {
   const isolated = mode === 'isolated-catch-up';
   const pruneResidentMaps =
@@ -93,6 +96,39 @@ export function roomWarmup(
   let disposed = false;
   let warmingSubtrees = false;
   let liveFront: LiveFront | undefined;
+
+  function hasPreviewProgram(object: Renderable, target: WebGLRenderTarget | null) {
+    const { material } = object;
+    if (
+      !keepPreviewPrograms ||
+      target !== null ||
+      object.userData.studioKeepPreviewProgram !== true ||
+      !(material instanceof ShaderMaterial) ||
+      material.lights ||
+      !gl.properties.has(material)
+    )
+      return false;
+    const state = gl.properties.get(material) as {
+      currentProgram?: LinkedProgram;
+      uniformsList?: unknown;
+      __version?: number;
+      outputColorSpace?: string;
+      toneMapping?: number;
+    };
+    return (
+      !!state.currentProgram?.program &&
+      state.uniformsList != null &&
+      state.__version === material.version &&
+      state.outputColorSpace === gl.outputColorSpace &&
+      state.toneMapping === (material.toneMapped ? gl.toneMapping : NoToneMapping)
+    );
+  }
+
+  function warmupBatch(batch: Renderable[], target: WebGLRenderTarget | null) {
+    return keepPreviewPrograms && target === null
+      ? batch.filter((object) => !hasPreviewProgram(object, target))
+      : batch;
+  }
 
   function budgetAfterDraw() {
     const now = performance.now();
@@ -164,6 +200,8 @@ export function roomWarmup(
   }
 
   function compileFrontBatch(target: WebGLRenderTarget | null, batch: Renderable[]) {
+    batch = warmupBatch(batch, target);
+    if (!batch.length) return Promise.resolve(group);
     const front = liveFront;
     if (front) {
       updateFrontContext(target, front);
@@ -211,6 +249,7 @@ export function roomWarmup(
         batch.length === liveFrontBatchLimit ||
         !renderable(object) ||
         !object.layers.test(camera.layers) ||
+        hasPreviewProgram(object, target) ||
         (object.frustumCulled && !view.intersectsObject(object))
       )
         return;
@@ -398,6 +437,8 @@ export function roomWarmup(
   }
 
   function compileObjects(target: WebGLRenderTarget | null, batch: Renderable[]) {
+    batch = warmupBatch(batch, target);
+    if (!batch.length) return 0;
     const previous = gl.getRenderTarget();
     const face = subtrees ? gl.getActiveCubeFace() : undefined;
     const mip = subtrees ? gl.getActiveMipmapLevel() : undefined;
@@ -635,14 +676,19 @@ export function roomWarmup(
       }
       if (offset < queue.length) {
         const end = Math.min(offset + 40, queue.length);
-        for (; offset < end; offset++) group.children.push(queue[offset]);
-        const previous = gl.getRenderTarget();
-        gl.setRenderTarget(target);
-        try {
-          gl.compile(group, camera, scene);
-        } finally {
-          group.children.length = 0;
-          gl.setRenderTarget(previous);
+        for (; offset < end; offset++) {
+          const object = queue[offset];
+          if (!hasPreviewProgram(object, target)) group.children.push(object);
+        }
+        if (group.children.length) {
+          const previous = gl.getRenderTarget();
+          gl.setRenderTarget(target);
+          try {
+            gl.compile(group, camera, scene);
+          } finally {
+            group.children.length = 0;
+            gl.setRenderTarget(previous);
+          }
         }
         if (offset === queue.length) {
           offset = queue.length = 0;

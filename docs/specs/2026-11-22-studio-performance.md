@@ -428,6 +428,29 @@ Runs 205–207 used one native 1080p UHD 770 build (StudioView SHA-256 prefix `5
 
 The variants improved interval P95 in this set while extending the worst interval and whole-room time. Both trials were removed. The CPU profile places the longest observed task at first-use GPU program reflection. Measure the draw and its program variant before considering more cabinet decode or preview fill-rate changes for the long tail.
 
+### First-use program reflection
+
+`--warmup-work` also times the uniform count and individual uniform lookups. Calls of at least 16 ms record the owning draw when one is active, including its object path and material type. Run 209 used the native 1080p `b9d1f176` build with live-front preparation and staged preview textures. The first tea vapor program spent 60 ms in its initial uniform count. A second tea program used during the shader-warm phase spent 827 ms in its first count. The first input window recorded a 917 ms maximum interval. Earlier runs 205–207 each attributed their longest preview render primarily to the tea vapor draw.
+
+The vapor is an unlit `ShaderMaterial` and continues to render during the simplified preview. A scene warmup batch can select a second program with the full scene's light counts. The preview draw retains that program when the effect does not use lights, and its first uniform query can wait on the new link. Preserving the initialized program for this specific effect keeps the preview shader in use in the same direct native-low render context.
+
+Runs 212–215 replayed the immediate native 1080p desk turn on the same `c76c8bbf` build in control, reuse, reuse, control order. Both control runs queried uniforms for a second tea program, taking 1,300 and 663 ms. The two reuse runs queried just the original tea program. All four visits completed without browser errors.
+
+| Run and program handling | Whole room ready | First-input interval P95 / max |
+| ------------------------ | ---------------: | -----------------------------: |
+| 212, control             |          12.63 s |               277.8 / 1,438 ms |
+| 213, reuse               |          12.46 s |                 194.3 / 375 ms |
+| 214, reuse               |          12.96 s |                 201.5 / 340 ms |
+| 215, control             |          12.74 s |               222.2 / 1,299 ms |
+
+Native low now preserves the marked, initialized unlit effect program when the material version, tone mapping and output color space match the direct renderer. A new, stale or offscreen program still enters warmup. The vapor remains in the ordinary color render. `--legacy-tea-warmup` restores the earlier warmup behavior for comparison. Whole-room time stayed near 13 seconds, and several first-input intervals still exceeded the release budget.
+
+The default native-low build `5aedcd90` completed the workbench startup in run 216 without browser or shader errors. Run 217 found one translucent tea vapor draw in each of three warmed desk inventory samples and submitted 28.80 FPS over six seconds. Both checks used native 1920 × 1080. They verify program preservation and continued drawing on the sampled routes.
+
+Runs 218–220 tested a further idle-only tea vapor variant on build `1901a211`. This variant waited for initial shading, rear readiness and a quiet callback, then prepared the real direct-framebuffer tea program before revealing the vapor. The matched startup comparison with existing program reuse had 13.47/13.34 seconds room readiness and 361/1,549 ms maximum first-input intervals in control/trial order. The trial's longest interval occurred before the queued tea preparation started. In the separate warmed turn, preparation finished at 17.43 seconds and the vapor became visible at 32.20 seconds after the held turn ended. The trial was removed because the added scheduling did not produce a startup improvement in this comparison. Retain the measured program reuse and existing vapor rendering.
+
+Runs 210–211 used compositor screenshots of the loader on that same native 1080p build, with stock preview and `--warm-oled` respectively. Including the loader boundaries, the longest gaps between changed screenshots were 320 and 255 ms, while the main-thread callback gaps were 896 and 875 ms. Both visits had visible feedback within one second. Loader removal occurred at 2.37 and 2.23 seconds. OLED's first visible uniform query still took 367 and 281 ms, and the trial's OLED warm-end mark occurred just after loader removal. Repeat before changing the default OLED preparation order.
+
 ## Idle-aware catch-up
 
 `--idle-catch-up` keeps isolated preparation and permits up to three preparation frames before a quiet preview. It prioritizes the preview when 50 ms has elapsed since the preceding preview and restores alternating preparation and preview on input or visible movement. A single blocking render or warmup call can exceed that interval. Runs 140–143 used one native 4K RTX 4090 workbench build, StudioView SHA-256 prefix `ef5db8ab`. Each comparison used in-view uploads, gesture priority and detail on inspection.

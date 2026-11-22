@@ -76,6 +76,7 @@ const experiments = {
   '--isolated-catch-up': ['studio-warmup', 'isolated-catch-up'],
   '--resident-warmup-maps': ['studio-warmup-maps', 'resident'],
   '--live-front-warmup': ['studio-warmup-live', 'front'],
+  '--legacy-tea-warmup': ['studio-tea-warmup', 'legacy'],
   '--warm-workbench': ['studio-warmup', 'workbench'],
   '--adaptive-warmup': ['studio-warmup', 'adaptive'],
   '--culled-lights': ['studio-lighting', 'culled'],
@@ -426,30 +427,42 @@ function installProbe({
         if (!name) return original.apply(this, args);
         const start = performance.now();
         const result = original.apply(this, args);
-        track(active, name, performance.now() - start);
-        after?.(active, args, result, start);
+        const duration = performance.now() - start;
+        track(active, name, duration);
+        after?.(active, args, result, start, duration);
         return result;
       };
     }
     measureCall(renderer, 'compile', () => 'compile');
+    let drawingObject, drawingMaterial;
+    function drawOwner(object, material) {
+      const path = [];
+      for (let node = object; node; node = node.parent) {
+        if (node.name) path.unshift(node.name);
+      }
+      return { path, material: material.name, type: material.type };
+    }
     const renderBuffer = renderer.renderBufferDirect;
     renderer.renderBufferDirect = function (camera, scene, geometry, material, object, group) {
-      if (phase?.stage !== 'firstFullDraw')
-        return renderBuffer.call(this, camera, scene, geometry, material, object, group);
-
       const active = phase;
-      const result = renderBuffer.call(this, camera, scene, geometry, material, object, group);
-      const { currentProgram } = renderer.properties.get(material);
-      const id = ids.get(currentProgram?.program);
-      const entry = active.programs[id];
-      if (entry && !entry.firstDraw) {
-        const path = [];
-        for (let node = object; node; node = node.parent) {
-          if (node.name) path.unshift(node.name);
+      if (!active) return renderBuffer.call(this, camera, scene, geometry, material, object, group);
+
+      const parentObject = drawingObject;
+      const parentMaterial = drawingMaterial;
+      drawingObject = object;
+      drawingMaterial = material;
+      try {
+        const result = renderBuffer.call(this, camera, scene, geometry, material, object, group);
+        if (active.stage === 'firstFullDraw') {
+          const { currentProgram } = renderer.properties.get(material);
+          const entry = active.programs[ids.get(currentProgram?.program)];
+          if (entry && !entry.firstDraw) entry.firstDraw = drawOwner(object, material);
         }
-        entry.firstDraw = { path, material: material.name, type: currentProgram.type };
+        return result;
+      } finally {
+        drawingObject = parentObject;
+        drawingMaterial = parentMaterial;
       }
-      return result;
     };
     measureCall(renderer, 'initTexture', ([texture]) => {
       const properties = renderer.properties.has(texture) && renderer.properties.get(texture);
@@ -469,9 +482,20 @@ function installProbe({
     measureCall(
       gl,
       'getProgramParameter',
-      ([, parameter]) =>
-        parameter === completion ? 'completion' : parameter === gl.LINK_STATUS ? 'linkStatus' : '',
-      (active, [program, parameter], ready, start) => {
+      ([, parameter]) => {
+        if (parameter === completion) return 'completion';
+        if (parameter === gl.LINK_STATUS) return 'linkStatus';
+        return parameter === gl.ACTIVE_UNIFORMS ? 'uniformCount' : '';
+      },
+      (active, [program, parameter], ready, start, duration) => {
+        if (parameter === gl.ACTIVE_UNIFORMS) {
+          const entry = (active.programs[programId(program)] ??= {});
+          entry.uniformsQueriedAt ??= start;
+          if (!entry.firstDraw && drawingObject && drawingMaterial)
+            entry.firstDraw = drawOwner(drawingObject, drawingMaterial);
+          recordUniformLookup(active, 'uniformCount', program, start, duration);
+          return;
+        }
         if (parameter !== completion) return;
         const entry = (active.programs[programId(program)] ??= {});
         entry.polls = (entry.polls ?? 0) + 1;
@@ -480,6 +504,31 @@ function installProbe({
         if (ready) entry.readyAt ??= start;
         else entry.pending = (entry.pending ?? 0) + 1;
       },
+    );
+    function recordUniformLookup(active, call, program, start, duration) {
+      if (duration < 16) return;
+      const engineProgram = renderer.info.programs?.find((entry) => entry.program === program);
+      (report.slowUniformLookups ??= []).push({
+        stage: active.stage,
+        call,
+        start,
+        duration,
+        program: programId(program),
+        engineProgram: engineProgram && {
+          id: engineProgram.id,
+          name: engineProgram.name,
+          type: engineProgram.type,
+        },
+        ...(drawingObject &&
+          drawingMaterial && { draw: drawOwner(drawingObject, drawingMaterial) }),
+      });
+    }
+    measureCall(
+      gl,
+      'getActiveUniform',
+      () => 'activeUniform',
+      (active, [program], _, start, duration) =>
+        recordUniformLookup(active, 'activeUniform', program, start, duration),
     );
     for (const name of [
       'texImage2D',

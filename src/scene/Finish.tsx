@@ -73,6 +73,13 @@ export function Finish({
       new URLSearchParams(location.search).get('studio-warmup-live') === 'front',
     [enabled, nativeLow, warmup],
   );
+  const keepPreviewPrograms = useMemo(
+    () =>
+      nativeLow &&
+      !enabled &&
+      new URLSearchParams(location.search).get('studio-tea-warmup') !== 'legacy',
+    [enabled, nativeLow],
+  );
   useEffect(() => () => firstFrame.dispose(), [firstFrame]);
   useEffect(() => () => grade.dispose(), [grade]);
   useEffect(() => () => prefill?.dispose(), [prefill]);
@@ -109,7 +116,15 @@ export function Finish({
 
   useEffect(() => {
     if (!warmWorkbench || !gl.extensions.has('KHR_parallel_shader_compile')) return;
-    const pending = roomWarmup(gl, scene, camera, [], undefined, workbench.roots);
+    const pending = roomWarmup(
+      gl,
+      scene,
+      camera,
+      [],
+      undefined,
+      workbench.roots,
+      keepPreviewPrograms,
+    );
     let disposed = false;
     void workbench.ready.then(() => {
       if (!disposed) workbenchPreparation.current = pending;
@@ -119,17 +134,17 @@ export function Finish({
       workbenchPreparation.current = null;
       pending.dispose();
     };
-  }, [camera, enabled, gl, scene, warmWorkbench, workbench]);
+  }, [camera, enabled, gl, keepPreviewPrograms, scene, warmWorkbench, workbench]);
 
   useEffect(() => {
-    if (!catchUp && !isolatedCatchUp && !liveFront) return;
+    if (!catchUp && !isolatedCatchUp && !liveFront && !keepPreviewPrograms) return;
     return () => {
       preparation.current?.dispose();
       preparation.current = null;
       shaders.current = 'cold';
       previewNext.current = true;
     };
-  }, [camera, catchUp, enabled, gl, grade, isolatedCatchUp, liveFront, scene]);
+  }, [camera, catchUp, enabled, gl, grade, isolatedCatchUp, keepPreviewPrograms, liveFront, scene]);
 
   useEffect(() => {
     if (!enabled || !gl.extensions.has('EXT_color_buffer_float')) return;
@@ -258,6 +273,8 @@ export function Finish({
             camera,
             occlusionWarmup(active?.occlusion),
             isolatedCatchUp ? 'isolated-catch-up' : pacing,
+            undefined,
+            keepPreviewPrograms,
           );
           performance.mark('studio-room-shader-warm-start');
           if (isolatedCatchUp) performance.mark('studio-room-shader-catch-up-start');
@@ -304,6 +321,8 @@ export function Finish({
             camera,
             catchUp ? occlusionWarmup(active?.occlusion) : undefined,
             catchUp ? 'catch-up' : undefined,
+            undefined,
+            keepPreviewPrograms,
           );
           preparation.current = pending;
           scannedRevision.current = catchUp ? -1 : detailRevision.current;
