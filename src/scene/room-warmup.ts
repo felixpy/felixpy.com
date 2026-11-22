@@ -91,11 +91,13 @@ export function roomWarmup(
   mode?: WarmupMode,
   subtrees?: readonly Object3D[],
   keepPreviewPrograms = false,
+  skipResidentMaps = false,
 ) {
   const isolated = mode === 'isolated-catch-up';
   const options =
     isolated && typeof location !== 'undefined' ? new URLSearchParams(location.search) : undefined;
-  const pruneResidentMaps = options?.get('studio-warmup-maps') === 'resident';
+  const pruneResidentMaps =
+    isolated && (skipResidentMaps || options?.get('studio-warmup-maps') === 'resident');
   const batchSmallMaps = options?.get('studio-warmup-small-maps') === 'on';
   const catchUp = mode === 'catch-up' || isolated;
   const pacePrograms = mode === 'paced' || mode === 'adaptive';

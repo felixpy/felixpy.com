@@ -48,6 +48,8 @@ const experiments = {
   '--staged-preview-textures': ['studio-preview-textures', 'staged'],
   '--input-priority-textures': ['studio-preview-textures', 'input-priority'],
   '--in-view-preview-uploads': ['studio-preview-upload-order', 'in-view'],
+  '--progressive-high-startup': ['studio-high-startup', 'progressive'],
+  '--legacy-high-startup': ['studio-high-startup', 'legacy'],
   '--warm-buffers': ['studio-buffers', 'warm'],
   '--worker-parts': ['studio-parts', 'worker'],
   '--worker-meshopt': ['studio-meshopt', 'worker'],
@@ -112,7 +114,7 @@ Add --gpu-panorama to alternate whole-room queries with queries around the panor
 Add --gpu-downstream to also time GTAO and final output on the high-quality path.
 Add --gpu-low-grade to time the low-quality framebuffer copy and room-grade draw.
 Add --gpu-depth-prepass to alternate inclusive and split depth/color samples on the low-quality path.
-Add --gpu-color-passes to alternate inclusive and opaque/translucent draw samples on the low-quality path.
+Add --gpu-color-passes to sample opaque/translucent draws and explicit high-quality 4× MSAA resolves.
 Use --opaque-near-first to measure a front-to-back opaque draw order in the replay.
 Use --draw-calls to record WebGL indexed and multi-draw calls during the final steady route.
 Use --draw-inventory to attribute main-color draws to objects in up to three steady route frames.
@@ -208,11 +210,7 @@ function options(args) {
     (gpuLowGrade && (!gpuTiming || names.some((name) => profiles[name]?.quality !== 'low'))) ||
     (gpuDepthPrepass &&
       (!gpuTiming || gpuPanorama || names.some((name) => profiles[name]?.quality !== 'low'))) ||
-    (gpuColorPasses &&
-      (!gpuTiming ||
-        gpuPanorama ||
-        gpuDepthPrepass ||
-        names.some((name) => profiles[name]?.quality !== 'low'))) ||
+    (gpuColorPasses && (!gpuTiming || gpuPanorama || gpuDepthPrepass)) ||
     (drawCalls && (captureProfile || steadyProfile || startup || loaderTrace)) ||
     (drawInventory &&
       (captureProfile ||
@@ -357,6 +355,7 @@ function installProbe({
     visible: document.visibilityState,
     visibilityChanged: false,
   });
+  const highColorPasses = gpuColorPasses && quality === 'high';
   document.addEventListener('visibilitychange', () => {
     sample.visibilityChanged = true;
   });
@@ -581,6 +580,7 @@ function installProbe({
       timings.opaque = sample.opaqueColorGpu = makeTiming();
       timings.translucent = sample.translucentColorGpu = makeTiming();
     }
+    if (highColorPasses) timings.resolve = sample.beautyResolveGpu = makeTiming();
     let active = false;
     let openQuery;
 
@@ -614,20 +614,20 @@ function installProbe({
     const panoramaFrame = () => Boolean(timings.panorama) && splitFrame();
     const splitDepthFrame = () => Boolean(timings.depth) && splitFrame();
     const colorPassFrame = () => Boolean(timings.opaque) && splitFrame();
-    function end(query, discard = false) {
+    function end(query, discard = false, batch = pending) {
       if (openQuery !== query) return;
       gl.endQuery(timer.TIME_ELAPSED_EXT);
       openQuery = undefined;
       if (discard) {
         query.result.discarded++;
         gl.deleteQuery(query.query);
-      } else pending.push(query);
+      } else batch.push(query);
     }
     return {
       panoramaFrame,
       splitDepthFrame,
       colorPassFrame,
-      begin(stage = 'main', index = sample.roomFrames.length) {
+      begin(stage = 'main', index = sample.roomFrames.length, batch) {
         const result = timings[stage];
         const selected =
           stage === 'downstream' ||
@@ -637,7 +637,7 @@ function installProbe({
               ? !panoramaFrame() && !splitDepthFrame() && !colorPassFrame()
               : splitFrame()));
         if (!active || !result || openQuery || !selected) return null;
-        poll();
+        if (!batch?.length) poll();
         const query = gl.createQuery();
         if (!query) return null;
         gl.beginQuery(timer.TIME_ELAPSED_EXT, query);
@@ -645,6 +645,15 @@ function installProbe({
         return openQuery;
       },
       end,
+      finishBatch(batch, discard) {
+        if (!discard) pending.push(...batch);
+        else {
+          for (const { query, result } of batch) {
+            result.discarded++;
+            gl.deleteQuery(query);
+          }
+        }
+      },
     };
   }
 
@@ -801,26 +810,123 @@ function installProbe({
     }
     const gpu = gpuTiming ? attachGpuTiming(renderer) : undefined;
     let colorWork;
+    const colorGl = highColorPasses ? renderer.getContext() : undefined;
+    function startColorPassWork() {
+      const work = { target: null, opaque: 0, translucent: 0, offscreen: 0, lateOpaque: 0 };
+      if (!colorGl) return work;
+      const target = renderer.getRenderTarget();
+      const supported =
+        target?.isWebGLRenderTarget &&
+        !target.isWebGLCubeRenderTarget &&
+        !target.isWebGL3DRenderTarget &&
+        !target.isWebGLArrayRenderTarget &&
+        target.samples === 4 &&
+        target.width === colorGl.drawingBufferWidth &&
+        target.height === colorGl.drawingBufferHeight &&
+        target.textures.length === 1 &&
+        target.depthBuffer &&
+        target.depthTexture &&
+        target.resolveDepthBuffer &&
+        !target.stencilBuffer &&
+        renderer.getActiveMipmapLevel() === 0;
+      return {
+        ...work,
+        target,
+        supported: Boolean(supported),
+        frameIndex: sample.roomFrames.length,
+        batch: [],
+        offscreenDuringColor: 0,
+        drawsAfterResolve: 0,
+        resolves: 0,
+        unexpectedBlits: 0,
+      };
+    }
+
+    function recordColorPassWork(complete) {
+      const { query, stage, target, supported, batch, ...work } = colorWork;
+      colorWork = undefined;
+      if (!batch) {
+        if (query) gpu.end(query, !complete);
+        if (complete) (sample.colorPassWork ??= []).push(work);
+        return;
+      }
+
+      if (query) gpu.end(query, false, batch);
+      const reasons = [];
+      if (!complete) reasons.push('renderIncomplete');
+      if (!supported) reasons.push('unsupportedTarget');
+      else {
+        if (work.resolves === 0) reasons.push('missingResolve');
+        if (work.resolves > 1) reasons.push('multipleResolves');
+        if (work.unexpectedBlits) reasons.push('unexpectedBlits');
+        if (work.offscreenDuringColor) reasons.push('offscreenDuringColor');
+        if (work.lateOpaque) reasons.push('lateOpaque');
+        if (work.drawsAfterResolve) reasons.push('drawsAfterResolve');
+        if (!work.opaque || batch.length !== 2 + Number(work.translucent > 0))
+          reasons.push('missingStage');
+      }
+      gpu.finishBatch(batch, reasons.length > 0);
+      (sample.colorPassWork ??= []).push({ ...work, reasons });
+    }
+
     if (gpu && gpuColorPasses) {
       const renderBuffer = renderer.renderBufferDirect;
       renderer.renderBufferDirect = function (...args) {
-        if (colorWork) {
+        if (colorWork && (!colorGl || colorWork.supported)) {
           const material = args[3];
-          if (renderer.getRenderTarget()) colorWork.offscreen++;
+          if (renderer.getRenderTarget() !== colorWork.target) {
+            colorWork.offscreen++;
+            if (colorGl && colorWork.stage) colorWork.offscreenDuringColor++;
+          } else if (colorWork.resolves) colorWork.drawsAfterResolve++;
           else {
             const translucent = material.transparent || material.transmission > 0;
             const stage =
               translucent || colorWork.stage === 'translucent' ? 'translucent' : 'opaque';
             if (colorWork.stage === 'translucent' && !translucent) colorWork.lateOpaque++;
             if (colorWork.stage !== stage) {
-              if (colorWork.query) gpu.end(colorWork.query);
-              colorWork.query = gpu.begin(stage);
+              if (colorWork.query) gpu.end(colorWork.query, false, colorWork.batch);
+              colorWork.query = gpu.begin(stage, undefined, colorWork.batch);
               colorWork.stage = stage;
             }
             colorWork[stage]++;
           }
         }
         return renderBuffer.apply(this, args);
+      };
+    }
+    if (gpu && colorGl) {
+      const blitFramebuffer = colorGl.blitFramebuffer;
+      colorGl.blitFramebuffer = function (...args) {
+        const work = colorWork;
+        if (!work?.supported || renderer.getRenderTarget() !== work.target)
+          return blitFramebuffer.apply(this, args);
+        const [sx, sy, sw, sh, dx, dy, dw, dh, mask, filter] = args;
+        const { width, height } = work.target;
+        const resolveMask = colorGl.COLOR_BUFFER_BIT | colorGl.DEPTH_BUFFER_BIT;
+        if (
+          sx !== 0 ||
+          sy !== 0 ||
+          dx !== 0 ||
+          dy !== 0 ||
+          sw !== width ||
+          sh !== height ||
+          dw !== width ||
+          dh !== height ||
+          mask !== resolveMask ||
+          filter !== colorGl.NEAREST
+        ) {
+          work.unexpectedBlits++;
+          return blitFramebuffer.apply(this, args);
+        }
+        if (++work.resolves !== 1) return blitFramebuffer.apply(this, args);
+        if (work.query) gpu.end(work.query, false, work.batch);
+        work.query = undefined;
+        const query = gpu.begin('resolve', work.frameIndex, work.batch);
+        try {
+          return blitFramebuffer.apply(this, args);
+        } finally {
+          if (query) gpu.end(query, false, work.batch);
+        }
       };
     }
     let renderPanorama = false;
@@ -984,8 +1090,8 @@ function installProbe({
         };
       if (gpuPanorama) renderPanorama = primary && gpu?.panoramaFrame();
       if (renderPanorama) sample.panoramaFrames = (sample.panoramaFrames ?? 0) + 1;
-      if (primary && gpu?.colorPassFrame())
-        colorWork = { opaque: 0, translucent: 0, offscreen: 0, lateOpaque: 0 };
+      const measureColorPasses = primary && gpu?.colorPassFrame() && !colorWork;
+      if (measureColorPasses) colorWork = startColorPassWork();
       let result;
       let complete = false;
       try {
@@ -1024,12 +1130,7 @@ function installProbe({
           gpu.end(gradeQuery, !complete);
           gradeQuery = gradeTexture = undefined;
         }
-        if (primary && colorWork) {
-          const { query, stage, ...work } = colorWork;
-          if (query) gpu.end(query, !complete);
-          if (complete) (sample.colorPassWork ??= []).push(work);
-          colorWork = undefined;
-        }
+        if (measureColorPasses) recordColorPassWork(complete);
       }
       if (drag && room && !scene.overrideMaterial) {
         yaw = camera.quaternion.y;
@@ -1794,28 +1895,46 @@ async function measure({ base, directory, head, name, run, settings }) {
       const { samples, p50, p95, p99, max } = stats(durations);
       summary.downstreamGpuMs = { samples, p50, p95, p99, max, discarded };
     }
-    for (const [enabled, key, rawTiming] of [
+    const highColorPasses = gpuColorPasses && profile.quality === 'high';
+    for (const [enabled, key, rawTiming, requireSamples = true] of [
       [gpuDepthPrepass, 'depthOnlyGpuMs', raw.depthOnlyGpu],
       [gpuDepthPrepass, 'colorAfterDepthGpuMs', raw.colorAfterDepthGpu],
-      [gpuColorPasses, 'opaqueColorGpuMs', raw.opaqueColorGpu],
-      [gpuColorPasses, 'translucentColorGpuMs', raw.translucentColorGpu],
+      [gpuColorPasses, 'opaqueColorGpuMs', raw.opaqueColorGpu, !highColorPasses],
+      [gpuColorPasses, 'translucentColorGpuMs', raw.translucentColorGpu, !highColorPasses],
+      [highColorPasses, 'beautyResolveGpuMs', raw.beautyResolveGpu, false],
       [gpuLowGrade, 'lowGradeGpuMs', raw.lowGradeGpu],
     ]) {
       if (!enabled) continue;
-      if (rawTiming.durations.length < 5)
+      if (requireSamples && rawTiming.durations.length < 5)
         throw new Error('Insufficient valid GPU timing queries for ' + key);
+      if (!rawTiming.durations.length) continue;
       const { samples, p50, p95, p99, max } = stats(rawTiming.durations);
       summary[key] = { samples, p50, p95, p99, max, discarded: rawTiming.discarded };
     }
     if (gpuColorPasses) {
-      const work = raw.colorPassWork;
+      const work = raw.colorPassWork ?? [];
+      const valid = highColorPasses ? work.filter(({ reasons }) => !reasons.length) : work;
       summary.colorPassWork = {
         frames: work.length,
-        medianOpaqueDraws: stats(work.map(({ opaque }) => opaque)).p50,
-        medianTranslucentDraws: stats(work.map(({ translucent }) => translucent)).p50,
+        ...(valid.length && {
+          medianOpaqueDraws: stats(valid.map(({ opaque }) => opaque)).p50,
+          medianTranslucentDraws: stats(valid.map(({ translucent }) => translucent)).p50,
+        }),
         offscreenDraws: work.reduce((sum, { offscreen }) => sum + offscreen, 0),
         lateOpaqueDraws: work.reduce((sum, { lateOpaque }) => sum + lateOpaque, 0),
       };
+      if (highColorPasses) {
+        const rejected = {};
+        for (const { reasons } of work) {
+          for (const reason of reasons) rejected[reason] = (rejected[reason] ?? 0) + 1;
+        }
+        Object.assign(summary.colorPassWork, {
+          validFrames: valid.length,
+          validResolveSamples: raw.beautyResolveGpu.durations.length,
+          discardedResolveQueries: raw.beautyResolveGpu.discarded,
+          rejected,
+        });
+      }
     }
     if (raw.depthPrefillWork?.length) {
       summary.depthPrefillWork = {

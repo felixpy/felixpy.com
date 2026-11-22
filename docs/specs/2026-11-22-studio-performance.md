@@ -411,6 +411,29 @@ Runs 260–263 repeated the comparison on build `df199b52` with the usual high-q
 
 In run 261, the move waited 5.21 seconds for event dispatch and 344 ms more for the changed submission after acceptance. The four visits' first full draws repeatedly linked 21–22 programs at the actual workbench view. Preserve the ordinary default and keep `--idle-rear` available for use alongside isolated preparation. Its favorable timing is conditional on the rest of the preparation schedule. The usual startup needs earlier preparation for the actual view before adopting the trigger.
 
+### Progressive high-quality startup
+
+The integrated path combines isolated view-dependent preparation, resident-map skipping, gesture-priority texture staging in view order and the idle rear trigger with original queue priority. It runs on high quality when parallel shader compilation and the floating-point beauty target are available. An explicitly selected shader warmup mode keeps its previous behavior. `--legacy-high-startup` selects the original startup schedule for comparison. `--progressive-high-startup` explicitly selects the integrated schedule.
+
+Runs 264–265 first ran the equivalent switches individually on revision `8645257`, without the previous benchmark's atlas-on-inspection or ferry switches. Both loaded the ordinary 2880 × 1620 atlas and recorded its transfer. Immediate and delayed workbench turns reached whole-room readiness at 16.01 and 16.70 seconds with first full draws of 140 and 108 ms.
+
+Runs 266–269 used the same native 4K high-quality build `f60ca9fc` in legacy, progressive, progressive, legacy order. Both schedules used the regular assets, including the full world atlas and travel photographs. No shader, browser or resource issues were recorded.
+
+| Run and mode               | Whole room ready | Move to changed submit | First full draw | First-input P95 / max | New programs in first full draw |
+| -------------------------- | ---------------: | ---------------------: | --------------: | --------------------: | ------------------------------: |
+| 266, immediate, legacy     |          23.73 s |                  11 ms |         10.14 s |          232 / 393 ms |                              21 |
+| 267, immediate, integrated |          16.26 s |                  61 ms |          123 ms |           77 / 207 ms |                               7 |
+| 268, delayed, integrated   |          16.50 s |                  62 ms |          128 ms |           40 / 138 ms |                               7 |
+| 269, delayed, legacy       |          25.26 s |                  75 ms |         10.30 s |         31 / 5,068 ms |                              21 |
+
+The integrated schedule made the first immediate changed submission 50 ms later and reduced the following interval tail. In the delayed pair it removed the measured five-second interval. The first complete draw still links six shadow-depth programs and one output program. The full atlas transfer in the integrated visits was 91–94 ms and occurred within preparation. Promote this schedule together, since moving rear work alone regressed an initial turn in the older preparation path.
+
+Runs 270–272 used the promoted default build `619f7924`. The cold desk turn in run 270 reached 16.22 seconds whole-room readiness and a 135 ms first full draw. The ordinary atlas request carried the same 880,194-byte image. Run 272 recorded 92 compositor screenshots and 61 changes during loading. The longest interval between visible changes including both loader boundaries was 263 ms.
+
+The warm delayed workbench turns in runs 271 and 274 each revalidated 136 responses and reached whole-room readiness at 4.60 and 4.58 seconds, before the turn. They still took 3.03 and 3.63 seconds from the move to the changed submission, mostly waiting for input dispatch. Water-motion preparation started shortly before the position, press and move commands ran into long scene submissions. The recorded draws were in several regular scene materials, so the overlap alone does not attribute the delay to the water effect.
+
+Runs 275–277 compared legacy startup, the progressive path with water preparation delayed six seconds, and progressive startup with ordinary water timing on one build `da18bd20`. The measured move-to-submission times were 1.61, 3.46 and 2.96 seconds. In the delayed-water test, input dispatch took 2.4 ms and the first changed beauty render blocked for 3.45 seconds before water preparation began. The workbench pegboard draw accounted for 3.39 seconds. Legacy startup itself recorded a 1.57-second workbench lamp draw. The delayed-water option was removed because it left a multi-second first response. These runs separate preparation for the initial visible scene from first use of materials in an area entered after that scene is already shaded.
+
 Runs 179 and 182 measured the default warmup in an immediate native 1080p UHD 770 desk turn on the same build. The shader phase took 9.25 and 8.50 seconds. The 14,890 and 12,999 completion queries occupied 25.8 and 115.3 ms of CPU wall time. In run 179 the last program link started 6.14 seconds into the phase and the last readiness observation was at 9.25 seconds. The query time alone offers little scope for a seconds-scale improvement.
 
 The first full draw in run 182 took 1.58 seconds. Two newly linked programs explain most of the long render: the Astro Mondrian workbench lamp's graphite aluminium took 679 ms, and the SELPHY postcard image took 859 ms. The run logged three newly linked programs during that full draw. The lamp's bounding sphere is outside the initial warmup scan at the eased yaw reached when preparation begins. The 96-pixel input brings it into the frustum before the full draw.
@@ -597,6 +620,22 @@ Runs 249–250 compared the stock and zero-radiance directional shadow branch on
 | 250, branch  |       134.91 FPS |         104 of 1,617 |      7.12 ms |                          8.54 ms |                        8.49 ms |
 
 The branch had 96 valid same-frame GPU pairs and the control had 98. Both had 67 pairs in the center and right bands. The trial was removed after its slower timings in this comparison.
+
+### Native high beauty and resolve attribution
+
+On the high path, `--gpu-color-passes` alternates inclusive GPU timing with three separate queries on the actual native-size 4× MSAA beauty target. The split starts at the first opaque color draw, transitions at the first blended or transmissive draw, and ends with the matching full-target color and depth resolve. The benchmark records unsupported targets, off-target or late draws, missing or multiple explicit resolves and disjoint queries. A missing explicit resolve produces no resolve timing.
+
+Run 273 sampled a 20-second warmed native 4K desk turn on the promoted default build `619f7924`. All 75 split frames and explicit resolves passed the instrument's boundary checks. The separate timing distributions were as follows.
+
+| Stage                  | GPU P50 | GPU P95 |
+| ---------------------- | ------: | ------: |
+| Inclusive main color   | 5.83 ms | 6.33 ms |
+| Opaque color           | 5.37 ms | 5.91 ms |
+| Translucent color      | 0.16 ms | 0.73 ms |
+| 4× MSAA beauty resolve | 0.22 ms | 0.23 ms |
+| Downstream AO/output   | 1.37 ms | 1.43 ms |
+
+The run submitted 127.25 FPS. The same browser's unloaded control reached 128.30 callbacks per second. Preserve the native targets and separate the browser cadence from actual display timing before comparing this submission rate to the 144 Hz release target. The split measurements put most of the main GPU time in opaque color drawing.
 
 ## UHD 770 desk GPU attribution
 

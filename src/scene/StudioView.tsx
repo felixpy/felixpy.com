@@ -1433,24 +1433,42 @@ function CameraRig(
 }
 
 function StudioRoom({
-  firstFrame,
   nativeLow,
   setLowScale,
   ...props
 }: RigProps & {
-  firstFrame: ReturnType<typeof roomFirstFrame>;
   setLowScale: (scale: number) => void;
 }) {
   const gl = useThree((state) => state.gl);
   const [startup] = useState(() => {
     const query = new URLSearchParams(location.search);
+    const progressive =
+      query.get('studio-high-startup') !== 'legacy' &&
+      !query.has('studio-warmup') &&
+      props.environment.quality === 'high' &&
+      gl.extensions.has('KHR_parallel_shader_compile') &&
+      gl.extensions.has('EXT_color_buffer_float');
+    const preview = query.get('studio-preview');
+    const previewTextures = query.get('studio-preview-textures');
+    const uploadOrder = query.get('studio-preview-upload-order');
+    const firstFrame = roomFirstFrame({
+      warmPreview: preview === 'warm',
+      warmOled: preview === 'oled',
+      stagedTextures: previewTextures === 'staged',
+      inputPriorityTextures:
+        previewTextures === 'input-priority' || (progressive && previewTextures === null),
+      preferVisibleTextures: uploadOrder === 'in-view' || (progressive && uploadOrder === null),
+      warmBuffers: query.get('studio-buffers') === 'warm',
+    });
     const rearMode = query.get('studio-rear');
     const waterMotion = query.get('studio-water-motion');
     const deferWaterMotion = waterMotion !== 'eager';
     const waterfront = query.get('studio-waterfront');
     return {
+      firstFrame,
+      progressive,
       environment: props.environment,
-      earlyRear: rearMode === 'early' || rearMode === 'idle',
+      earlyRear: rearMode === 'early' || rearMode === 'idle' || (progressive && rearMode === null),
       sliced: query.get('studio-build') === 'sliced',
       simpleLow: query.get('studio-low-shading') === 'simple',
       options: {
@@ -1468,6 +1486,7 @@ function StudioRoom({
       },
     };
   });
+  const { firstFrame } = startup;
   const [assembly, setAssembly] = useState<Assembly | null>(() => {
     if (startup.sliced) return null;
     firstFrame.warm(gl);
@@ -1557,6 +1576,7 @@ function StudioRoom({
       />
       <Finish
         firstFrame={firstFrame}
+        progressiveStartup={startup.progressive}
         night={props.environment.night}
         onInteractive={showRoom}
         look={props.environment.roomLook}
@@ -1581,19 +1601,6 @@ export default function StudioView(props: Props) {
   const preparedReflection = useRef<PreparedReflection | null>(null);
   const [phoneHeld, setPhoneHeld] = useState(false);
   const firstPicture = useRef<FirstPicture>('loading');
-  const [firstFrame] = useState(() => {
-    const options = new URLSearchParams(location.search);
-    const preview = options.get('studio-preview');
-    const previewTextures = options.get('studio-preview-textures');
-    return roomFirstFrame({
-      warmPreview: preview === 'warm',
-      warmOled: preview === 'oled',
-      stagedTextures: previewTextures === 'staged',
-      inputPriorityTextures: previewTextures === 'input-priority',
-      preferVisibleTextures: options.get('studio-preview-upload-order') === 'in-view',
-      warmBuffers: options.get('studio-buffers') === 'warm',
-    });
-  });
   const [nativeLow] = useState(
     () => new URLSearchParams(location.search).get('studio-low') === 'native',
   );
@@ -1648,7 +1655,6 @@ export default function StudioView(props: Props) {
         }}
       >
         <StudioRoom
-          firstFrame={firstFrame}
           {...props}
           mapMarker={mapMarker}
           firstPicture={firstPicture}

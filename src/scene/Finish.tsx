@@ -37,6 +37,7 @@ export function Finish({
   onInteractive,
   night,
   firstFrame,
+  progressiveStartup,
 }: {
   enabled: boolean;
   look: RoomLook;
@@ -52,6 +53,7 @@ export function Finish({
   onInteractive: () => void;
   night: boolean;
   firstFrame: ReturnType<typeof roomFirstFrame>;
+  progressiveStartup: boolean;
 }) {
   const { gl, scene, camera, size, viewport } = useThree();
   const grade = useMemo(roomColorGrade, []);
@@ -60,7 +62,12 @@ export function Finish({
     if (nativeLow && (mode === 'coarse' || mode === 'wide'))
       return roomDepthPrefill({ wide: mode === 'wide' });
   }, [nativeLow]);
-  const warmup = useMemo(() => new URLSearchParams(location.search).get('studio-warmup'), []);
+  const warmupOverride = useMemo(
+    () => new URLSearchParams(location.search).get('studio-warmup'),
+    [],
+  );
+  const progressive = progressiveStartup && enabled;
+  const warmup = warmupOverride ?? (progressive ? 'isolated-catch-up' : null);
   const warmWorkbench = warmup === 'workbench';
   const pacing = warmup === 'paced' || warmup === 'adaptive' ? warmup : undefined;
   const catchUp = warmup === 'catch-up';
@@ -275,6 +282,7 @@ export function Finish({
             isolatedCatchUp ? 'isolated-catch-up' : pacing,
             undefined,
             keepPreviewPrograms,
+            progressive,
           );
           performance.mark('studio-room-shader-warm-start');
           if (isolatedCatchUp) performance.mark('studio-room-shader-catch-up-start');
