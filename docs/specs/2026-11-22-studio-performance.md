@@ -680,16 +680,17 @@ Run 284 measured 60 seconds of steady camera motion after entering the close-win
 
 All 8,641 recorded main-color frames used a 3840 × 2160 drawing buffer and 4× MSAA beauty target. The 8,640 intervals yielded 144.00 submissions per second, P95/P99 of 7.0/7.1 ms and a 7.2 ms maximum. The same-process blank-page control measured 142.72 animation callbacks per second, with a 7.1 ms P99. Inclusive main-color GPU P95 was 3.91 ms and downstream P95 was 1.63 ms across 255 samples. The 254 valid split samples measured opaque, translucent and resolve P95 at 2.09, 1.06 and 0.80 ms respectively. No browser or shader errors were recorded. This covers a steady close-window rain route at native size. Physical presentation, entry latency and the broader release matrix are separate checks.
 
-### Native 4K workbench and cabinet close-ups
+### Native 4K close-ups
 
-Runs 303–304 used default build `a95214b5` and the RTX 4090 native 4K profile. They revalidated 136 HTTP responses each, entered the named close-up and recorded 60 seconds of camera motion after the route settled. All main-color samples used a 3840 × 2160 drawing buffer and 4× MSAA beauty target. Reproduce with `4k 303 --warm --route=workbench --seconds=60 --raf-control` and `4k 304 --warm --route=cabinet --seconds=60 --raf-control`.
+Runs 303–304 and 308 used default build `a95214b5` and the RTX 4090 native 4K profile. They revalidated 136 HTTP responses each, entered the named close-up and recorded 60 seconds of camera motion after the route settled. All main-color samples used a 3840 × 2160 drawing buffer and 4× MSAA beauty target. Use `--warm --seconds=60 --raf-control` with `--route=workbench`, `--route=cabinet` or `--route=case`.
 
 | Route     | Room readiness | Submitted FPS | Interval P95 / P99 | Longest interval | Blank-page callbacks |
 | --------- | -------------: | ------------: | -----------------: | ---------------: | -------------------: |
 | Workbench |         4.40 s |        143.93 |       7.0 / 7.1 ms |          14.0 ms |           144.00 FPS |
 | Cabinet   |         4.17 s |        143.95 |       7.0 / 7.1 ms |          13.9 ms |           143.79 FPS |
+| PC case   |         4.24 s |        143.55 |       7.0 / 7.1 ms |          27.8 ms |           144.05 FPS |
 
-Both steady samples cleared the tolerated average submission cadence with no recorded browser issues. Manual desktop testing also reported smooth interaction. First-turn timing is covered separately above. A non-interactive Windows display check confirmed the current native signal at 3840 × 2160 and 143.999 Hz. Distinct physical presents still need a foreground capture.
+All three steady samples cleared the tolerated average submission cadence with no recorded browser issues. Manual desktop testing also reported smooth interaction. First-turn timing is covered separately above. A non-interactive Windows display check confirmed the current native signal at 3840 × 2160 and 143.999 Hz. Distinct physical presents still need a foreground capture.
 
 Run 305 repeated the desk route for 60 seconds on the same build, with a warm reload and a prime turn. At native 4K and 4× MSAA it submitted 138.98 FPS, with frame-interval P95/P99 of 7.0/13.9 ms versus 7.0/7.1 ms on the 144.00 FPS blank control. The longest scene interval was 562.5 ms and overlapped a 565 ms main-thread task after room readiness; no resource response finished during that interval. The run established the average cadence on the current desk build. The long-task source and proposed frame-time gates remain open. Run 306 measured the cold loader on the same build. The longest observed interval between changed compositor screenshots was 235 ms, while the longest main-thread animation callback gap was 915 ms.
 
