@@ -26,14 +26,14 @@ vec3 reflectedRoomDirection(vec3 origin, vec3 ray, float roughness) {
 }
 `;
 
-export function projectRoomReflections(shader: { fragmentShader: string }) {
+export function projectRoomReflections(shader: { fragmentShader: string }, shared = false) {
+  const direction = 'reflectedRoomDirection(studioPosition, reflectVec, roughness)';
+  const sample = shared ? '(studioProjectReflections ? ' + direction + ' : reflectVec)' : direction;
   const chunk = ShaderChunk.envmap_physical_pars_fragment;
   shader.fragmentShader = shader.fragmentShader.replace(
     '#include <envmap_physical_pars_fragment>',
-    projection +
-      chunk.replace(
-        'envMapRotation * reflectVec,',
-        'envMapRotation * reflectedRoomDirection(studioPosition, reflectVec, roughness),',
-      ),
+    (shared ? 'uniform bool studioProjectReflections;\n' : '') +
+      projection +
+      chunk.replace('envMapRotation * reflectVec,', 'envMapRotation * ' + sample + ','),
   );
 }

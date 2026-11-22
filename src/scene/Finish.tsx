@@ -11,6 +11,15 @@ import { roomFirstFrame } from './room-first-frame';
 
 export type FirstPicture = 'loading' | 'interactive' | 'preparing' | 'drawn';
 
+function occlusionWarmup(occlusion?: GTAOPass) {
+  return occlusion
+    ? [
+        { material: occlusion.gtaoMaterial, target: occlusion.gtaoRenderTarget },
+        { material: occlusion.pdMaterial, target: occlusion.pdRenderTarget },
+      ]
+    : [];
+}
+
 export function Finish({
   enabled,
   look,
@@ -42,6 +51,7 @@ export function Finish({
   const grade = useMemo(roomColorGrade, []);
   const warmup = useMemo(() => new URLSearchParams(location.search).get('studio-warmup'), []);
   const pacing = warmup === 'paced' || warmup === 'adaptive' ? warmup : undefined;
+  const catchUp = warmup === 'catch-up';
   useEffect(() => () => firstFrame.dispose(), [firstFrame]);
   useEffect(() => () => grade.dispose(), [grade]);
   const pipeline = useRef<{
@@ -55,6 +65,15 @@ export function Finish({
   const preparation = useRef<ReturnType<typeof roomWarmup> | null>(null);
   const scannedRevision = useRef(-1);
   const sample = useRef({ frames: 0, slowFrames: 0, elapsed: 0, headroom: 0 });
+
+  useEffect(() => {
+    if (!catchUp) return;
+    return () => {
+      preparation.current?.dispose();
+      preparation.current = null;
+      shaders.current = 'cold';
+    };
+  }, [catchUp]);
 
   useEffect(() => {
     if (!enabled || !gl.extensions.has('EXT_color_buffer_float')) return;
@@ -170,16 +189,13 @@ export function Finish({
       const parallel = gl.extensions.has('KHR_parallel_shader_compile');
       if ((warmup === 'incremental' || pacing) && parallel) {
         if (!preparation.current) {
-          const passes = active
-            ? [
-                {
-                  material: active.occlusion.gtaoMaterial,
-                  target: active.occlusion.gtaoRenderTarget,
-                },
-                { material: active.occlusion.pdMaterial, target: active.occlusion.pdRenderTarget },
-              ]
-            : [];
-          preparation.current = roomWarmup(gl, scene, camera, passes, pacing);
+          preparation.current = roomWarmup(
+            gl,
+            scene,
+            camera,
+            occlusionWarmup(active?.occlusion),
+            pacing,
+          );
           performance.mark('studio-room-shader-warm-start');
         }
         const preview = () => firstFrame.draw(gl, scene, camera, night, look);
@@ -202,16 +218,32 @@ export function Finish({
         }
         if (shaders.current !== 'ready' && parallel) {
           shaders.current = 'pending';
-          const pending = roomWarmup(gl, scene, camera);
+          const pending = roomWarmup(
+            gl,
+            scene,
+            camera,
+            catchUp ? occlusionWarmup(active?.occlusion) : undefined,
+            catchUp ? 'catch-up' : undefined,
+          );
           preparation.current = pending;
-          scannedRevision.current = detailRevision.current;
+          scannedRevision.current = catchUp ? -1 : detailRevision.current;
           performance.mark('studio-room-shader-warm-start');
           const finish = () => {
+            if (preparation.current !== pending) return;
             shaders.current = 'ready';
-            performance.mark('studio-room-shader-warm-end');
+            performance.mark(
+              catchUp ? 'studio-room-shader-catch-up-start' : 'studio-room-shader-warm-end',
+            );
           };
           void pending.front(active?.beauty ?? null).then(finish, finish);
           return;
+        }
+        if (catchUp && preparation.current) {
+          if (!preparation.current.prepareVisible(active?.beauty ?? null, detailRevision.current)) {
+            firstFrame.draw(gl, scene, camera, night, look);
+            return;
+          }
+          performance.mark('studio-room-shader-warm-end');
         }
       }
       shaders.current = 'ready';

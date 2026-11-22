@@ -24,6 +24,7 @@ function oakWorktop(
     normalScale: new T.Vector2(0.37, 0.37),
     clearcoat: 0.085,
     clearcoatRoughness: 0.57,
+    userData: { studioMatte: true },
   });
   oak.name = 'White-oiled oak · long grain';
   const thickness = 0.038,

@@ -7,6 +7,7 @@ import { windowSunGLSL } from './window-sun';
 import { deskOcclusionGLSL } from './desk-occlusion';
 import { desk } from './layout';
 import { cullRoomDirectLighting } from './room-direct-lighting';
+import { matteRoomLighting } from './room-matte-lighting';
 
 export const visibilityGrid = {
   origin: [-1.375, -0.125, -0.6875],
@@ -34,9 +35,15 @@ export function roomVisibility(
   const uniform = { value: texture(new Uint8Array([128, 128, 128, 255]), 1, 1, 1) };
   const restore: Array<() => void> = [];
   const seen = new Set<T.MeshStandardMaterial>();
-  const cullLighting =
+  const sharedReflections =
     typeof location !== 'undefined' &&
-    new URLSearchParams(location.search).get('studio-lighting') === 'culled';
+    new URLSearchParams(location.search).get('studio-reflections') === 'shared';
+  const lighting =
+    typeof location === 'undefined'
+      ? null
+      : new URLSearchParams(location.search).get('studio-lighting');
+  const matteLighting = lighting === 'matte';
+  const cullLighting = matteLighting || lighting === 'culled';
   let cullDirectLights = cullLighting && initial.quality === 'low';
   const lightEvaluation = T.ShaderChunk.lights_fragment_begin
     .replace(
@@ -69,9 +76,14 @@ export function roomVisibility(
         continue;
       seen.add(material);
       const compile = material.onBeforeCompile;
+      const matte =
+        matteLighting &&
+        material.userData.studioMatte === true &&
+        compile === T.Material.prototype.onBeforeCompile;
       const originalKey = material.customProgramCacheKey;
       const cacheKey = material.customProgramCacheKey();
       const localReflections = material.metalness > 0.1 || material.roughness < 0.46;
+      const reflectionProjection = { value: localReflections };
       restore.push(() => {
         material.dispose();
         material.onBeforeCompile = compile;
@@ -82,11 +94,13 @@ export function roomVisibility(
       material.customProgramCacheKey = () =>
         cacheKey +
         '-studio-room-visibility-' +
-        Number(localReflections) +
-        (cullDirectLights ? '-culled' : '');
+        (sharedReflections ? 'shared' : Number(localReflections)) +
+        (cullDirectLights ? (matte ? '-matte' : '-culled') : '');
       material.onBeforeCompile = (shader, renderer) => {
         compile.call(material, shader, renderer);
-        if (localReflections) projectRoomReflections(shader);
+        if (sharedReflections) shader.uniforms.studioProjectReflections = reflectionProjection;
+        if (localReflections || sharedReflections)
+          projectRoomReflections(shader, sharedReflections);
         shader.uniforms.roomVisibility = uniform;
         shader.uniforms.roomBounce = bounce.field;
         shader.uniforms.roomBounceStrength = bounce.strength;
@@ -101,7 +115,10 @@ export function roomVisibility(
         `,
           );
         const fragment = cullDirectLights
-          ? cullRoomDirectLighting(shader.fragmentShader, lightEvaluation)
+          ? cullRoomDirectLighting(
+              matte ? matteRoomLighting(shader.fragmentShader) : shader.fragmentShader,
+              lightEvaluation,
+            )
           : shader.fragmentShader.replace('#include <lights_fragment_begin>', lightEvaluation);
         shader.fragmentShader =
           'varying vec3 studioPosition;\nuniform highp sampler3D roomVisibility;\nuniform highp sampler3D roomBounce;\nuniform float roomBounceStrength;\nuniform vec2 windowSlats;\n' +

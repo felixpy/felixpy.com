@@ -20,7 +20,7 @@ type LinkedProgram = NonNullable<WebGLRenderer['info']['programs']>[number] & {
   isReady?: () => boolean;
 };
 type WarmupPass = { material: Material; target: WebGLRenderTarget };
-type WarmupPacing = 'paced' | 'adaptive';
+type WarmupMode = 'paced' | 'adaptive' | 'catch-up';
 
 const pacedProgramLimit = 2;
 const pacedFrameBudget = 3;
@@ -42,9 +42,10 @@ export function roomWarmup(
   scene: Scene,
   camera: Camera,
   passes: WarmupPass[] = [],
-  pacing?: WarmupPacing,
+  mode?: WarmupMode,
 ) {
-  const pacePrograms = pacing !== undefined;
+  const catchUp = mode === 'catch-up';
+  const pacePrograms = mode === 'paced' || mode === 'adaptive';
   let seen = new WeakMap<Renderable, string>();
   const materials = new WeakMap<Material, Texture[]>();
   const maps = new Set<Texture>();
@@ -56,7 +57,9 @@ export function roomWarmup(
   const view = new Frustum();
   const projection = new Matrix4();
   const trackedMaterials = new WeakMap<Material, { version: number; revision: number }>();
-  const knownPrograms = new WeakSet<LinkedProgram>(pacePrograms ? (gl.info.programs ?? []) : []);
+  const knownPrograms = new WeakSet<LinkedProgram>(
+    pacePrograms || catchUp ? (gl.info.programs ?? []) : [],
+  );
   const programs = new Set<LinkedProgram>();
   let partial = new WeakMap<Renderable, { version: string; nextMaterial: number }>();
   let visible: Renderable[] = [];
@@ -70,10 +73,11 @@ export function roomWarmup(
   let programLimit = pacedProgramLimit;
   let lastSubmission: number | undefined;
   let steadyFor = 0;
+  let disposed = false;
 
   function budgetAfterDraw() {
     const now = performance.now();
-    if (pacing === 'adaptive') {
+    if (mode === 'adaptive') {
       const interval = lastSubmission === undefined ? 0 : now - lastSubmission;
       lastSubmission = now;
       const previous = programLimit;
@@ -96,6 +100,7 @@ export function roomWarmup(
     } else if (tracked.version !== material.version) {
       tracked.version = material.version;
       tracked.revision++;
+      if (catchUp) materials.delete(material);
     }
     return tracked;
   }
@@ -160,6 +165,21 @@ export function roomWarmup(
     return textures.size === 0;
   }
 
+  function updateContext(target: WebGLRenderTarget | null, visibleLights: string[]) {
+    const lightKey = visibleLights.join(',');
+    if (environment !== scene.environment || surface !== target || lights !== lightKey) {
+      seen = new WeakMap();
+      partial = new WeakMap();
+      environment = scene.environment;
+      surface = target;
+      lights = lightKey;
+    }
+  }
+
+  function lightVersion(light: Light) {
+    return `${light.id}/${Number(light.castShadow)}`;
+  }
+
   function updateVisible(target: WebGLRenderTarget | null, revision: number, now: number) {
     scene.updateMatrixWorld();
     view.setFromProjectionMatrix(
@@ -170,19 +190,12 @@ export function roomWarmup(
     scene.traverseVisible((object) => {
       if (!object.layers.test(camera.layers)) return;
       if (object instanceof Light) {
-        lightsInView.push(`${object.id}/${Number(object.castShadow)}`);
+        lightsInView.push(lightVersion(object));
       } else if (renderable(object) && (!object.frustumCulled || view.intersectsObject(object))) {
         candidates.push(object);
       }
     });
-    const lightKey = lightsInView.join(',');
-    if (environment !== scene.environment || surface !== target || lights !== lightKey) {
-      seen = new WeakMap();
-      partial = new WeakMap();
-      environment = scene.environment;
-      surface = target;
-      lights = lightKey;
-    }
+    updateContext(target, lightsInView);
     visible = candidates.filter((object) => seen.get(object) !== visibleVersion(object));
     visibleOffset = 0;
     visibleAt = now;
@@ -237,6 +250,10 @@ export function roomWarmup(
     try {
       gl.setRenderTarget(target);
       group.children.push(...batch);
+      if (catchUp)
+        group.traverse((object) => {
+          if (renderable(object)) visibleVersion(object);
+        });
       const compiled = gl.compile(group, camera, scene);
       for (const material of compiled) {
         const tracked = trackedMaterials.get(material);
@@ -249,15 +266,18 @@ export function roomWarmup(
     }
   }
 
-  function compileVisible(target: WebGLRenderTarget | null) {
-    const end = Math.min(visibleOffset + 32, visible.length);
-    const batch = visible.slice(visibleOffset, end);
-    visibleOffset = end;
+  function compileVisibleBatch(target: WebGLRenderTarget | null, batch: Renderable[]) {
     compileObjects(target, batch);
     for (const object of batch) {
       seen.set(object, visibleVersion(object));
       collectMaps(object, frontMaps);
     }
+  }
+
+  function compileVisible(target: WebGLRenderTarget | null) {
+    const end = Math.min(visibleOffset + 32, visible.length);
+    compileVisibleBatch(target, visible.slice(visibleOffset, end));
+    visibleOffset = end;
   }
 
   function compilePaced(
@@ -370,19 +390,39 @@ export function roomWarmup(
     uploadFront: () => upload(frontMaps, 3),
     prepareVisible,
     async front(target: WebGLRenderTarget | null) {
-      scene.updateMatrixWorld();
-      scan(
-        new Frustum().setFromProjectionMatrix(
-          new Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse),
-        ),
-      );
+      if (catchUp) {
+        updateVisible(target, -1, performance.now());
+        for (const object of visible) {
+          frontQueue.push(object);
+          collectMaps(object, frontMaps);
+        }
+      } else {
+        scene.updateMatrixWorld();
+        scan(
+          new Frustum().setFromProjectionMatrix(
+            new Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse),
+          ),
+        );
+      }
       const batches: Promise<unknown>[] = [];
       for (let index = 0; index < frontQueue.length; index += 48) {
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        if (disposed) return;
+        const batch = frontQueue.slice(index, index + 48);
+        if (catchUp) {
+          const visibleLights: string[] = [];
+          scene.traverseVisible((object) => {
+            if (object instanceof Light && object.layers.test(camera.layers))
+              visibleLights.push(lightVersion(object));
+          });
+          updateContext(target, visibleLights);
+          compileVisibleBatch(target, batch);
+          continue;
+        }
         const previous = gl.getRenderTarget();
         try {
           gl.setRenderTarget(target);
-          group.children.push(...frontQueue.slice(index, index + 48));
+          group.children.push(...batch);
           batches.push(gl.compileAsync(group, camera, scene));
         } finally {
           group.children.length = 0;
@@ -390,7 +430,19 @@ export function roomWarmup(
         }
       }
       frontQueue.length = 0;
+      if (catchUp) {
+        visible = [];
+        visibleAt = Number.NEGATIVE_INFINITY;
+      }
       await Promise.all(batches);
+    },
+    dispose() {
+      disposed = true;
+      frontQueue.length = queue.length = 0;
+      maps.clear();
+      frontMaps.clear();
+      programs.clear();
+      visible = [];
     },
     scan: () => scan(),
     step(target: WebGLRenderTarget | null) {

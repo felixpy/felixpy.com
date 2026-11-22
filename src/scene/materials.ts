@@ -14,6 +14,7 @@ function ashFinishes(albedo: T.Texture, normalMap: T.Texture, roughnessMap: T.Te
     clearcoat: 0.17,
     clearcoatRoughness: 0.41,
     normalScale: new T.Vector2(0.65, 0.65),
+    userData: { studioMatte: true },
   });
   const woodDark = wood.clone();
   woodDark.color.set('#baaa95');
@@ -109,6 +110,7 @@ export function materials(loader: T.TextureLoader) {
     roughnessMap: wallRoughness,
     normalMap: wallNormal,
     normalScale: new T.Vector2(0.41, 0.41),
+    userData: { studioMatte: true },
   });
   const brush = micro('metal-brush-normal');
   const brushedMetal = (color: string, roughness: number, metalness: number) =>
@@ -136,6 +138,7 @@ export function materials(loader: T.TextureLoader) {
       roughness: 0.69,
       metalness: 0,
       normalMap: micro('limestone-normal'),
+      userData: { studioMatte: true },
     }),
     cloth,
     carbon: weave('carbon'),
