@@ -110,12 +110,21 @@ export function collectionVitrine(
     '100-400 S · gold contact pads',
   ]);
   const cabinetInverse = unit.matrixWorld.clone();
+  const mark =
+    typeof location !== 'undefined' &&
+    new URLSearchParams(location.search).get('studio-vitrine-timing') === 'on'
+      ? (phase: string, startTime?: number) =>
+          performance.mark(`studio-vitrine-${phase}`, { startTime })
+      : undefined;
   deferRoomDetail(() =>
     loadDisplayModel(unit, '/media/models/vitrine-inventory.glb', manager, {
+      mark,
       mounted(scene) {
         scene.traverse(spots.illuminate);
+        mark?.('lights-end');
         const parts = [...scene.children];
         scene.updateWorldMatrix(true, true);
+        mark?.('lens-attach-start');
         for (const lens of parts) {
           const target = lenses.find((item) => item.variant === lens.userData.opticalVariant);
           if (!target) continue;
@@ -140,6 +149,7 @@ export function collectionVitrine(
             });
           }
         }
+        mark?.('lens-attach-end');
       },
       mesh(part) {
         const source = part.material;

@@ -399,6 +399,24 @@ Runs 187–188 and 191–192 used one native 1080p UHD 770 build (StudioView SHA
 
 The lamp and postcard links left the first full draw in both orders. Whole-room readiness advanced 1.34–1.89 seconds. One separate full-screen grade program still linked at the transition. The first-input interval distributions contain only 18–22 samples and show long pauses on every visit. Keep live preparation optional until it passes the motion and cold/warm checks on further routes. The regression fixture exercises a camera change, a new mounted object and a material change while another batch is linking, and checks render-target restoration.
 
+### Loader, first turn and lighting preparation
+
+Runs 193–197 used the same native 1080p UHD 770 build (StudioView SHA-256 prefix `a032d999`) for desk input with wide prefill. The texture-order variant enabled gesture-priority preview uploads and in-view order on top of live-front warmup. Runs 196–197 used isolated catch-up with resident-map pruning and the same preview upload flags. The four-second delay applied to input after the existing loader removal.
+
+| Run and preparation  | Input delay requested | Texture uploads overlapping press | Move to changed submit | Whole room ready | First-input interval P95 / max |
+| -------------------- | --------------------: | --------------------------------: | ---------------------: | ---------------: | -----------------------------: |
+| 193, live front      |                     0 |                          359.6 ms |                10.2 ms |          13.48 s |                 138.9 / 632 ms |
+| 194, live and staged |                     0 |                           15.3 ms |                 464 ms |          12.74 s |               152.7 / 2,424 ms |
+| 195, live and staged |                   4 s |                           23.7 ms |                89.7 ms |          12.68 s |                 243 / 2,222 ms |
+| 196, isolated staged |                     0 |                           15.5 ms |               465.3 ms |          14.41 s |                97.4 / 270.8 ms |
+| 197, isolated staged |                   4 s |                              0 ms |                  84 ms |          13.88 s |               145.8 / 708.4 ms |
+
+On immediate staged runs 194 and 196 the move arrived during a 335–342 ms task with three draws to a 256 × 256 target. The two slowest draws were `PMREMEquirectangularToCubemap` and `PMREMGGXConvolution`, the initial reflection probe. The delayed routes avoided that first dispatch stall and still had later long intervals. Runs 198–200 replayed the live-front staged path at native 1080p in a single diagnostic build (StudioView SHA-256 prefix `0f3e19cc`) with shader checks enabled. The trial generated the same low-quality reflection probe while the loader was still attached. It moved the probe outside the first-input window. Loader removal moved from 2.51 to 2.66 seconds, the first changed view from 3.16 to 3.38 seconds, whole-room readiness from 13.23 to 13.37 seconds, and the longest first-input interval from 590 to 1,097 ms. Moving the whole synchronous probe to the loader offered no end-to-end gain in this pair. A separate opaque preview program discarded the unused cutoff check on eligible surfaces. With early reflection enabled in both runs, that variant showed a similar first response and a longer maximum interval (1,875 ms). Both trials were removed.
+
+`--vitrine-timing` records fetch, unpack, GLTF parse, mesh setup, lighting and lens attachment for the rear collection cabinet. `body-end` uses the matching Resource Timing entry when available. Fetching and decompression can overlap, so `body-end` through `buffer-ready` measures the remaining work after network delivery. These spans target rear assembly tasks outside the render and texture instrumentation.
+
+Run 203 verified these marks on native UHD 770 with staged preview and live-front preparation (StudioView SHA-256 prefix `b9d1f176`). Fetch start to response end was 255 ms, response end to unpacked buffer was 106 ms, parse spanned 818 ms, and mesh setup through mount took 3 ms after parse. The parse interval overlaps preview renders, shader preparation and browser long tasks. A CPU profile or scoped decode comparison is needed to distinguish GLTF/Meshopt/image work from the asynchronous waits before changing model scheduling.
+
 ## Idle-aware catch-up
 
 `--idle-catch-up` keeps isolated preparation and permits up to three preparation frames before a quiet preview. It prioritizes the preview when 50 ms has elapsed since the preceding preview and restores alternating preparation and preview on input or visible movement. A single blocking render or warmup call can exceed that interval. Runs 140–143 used one native 4K RTX 4090 workbench build, StudioView SHA-256 prefix `ef5db8ab`. Each comparison used in-view uploads, gesture priority and detail on inspection.
@@ -453,6 +471,8 @@ Runs 184–186 used the same native 4K 4× MSAA build (StudioView SHA-256 prefix
 | 186, stock        |        71.36 FPS |            17.2 ms |     14.87 / 17.67 ms |                            18.01 ms |             20.9 / 27.7 ms |
 
 The paired sample counts were 60, 60 and 59 overall and 14, 14 and 15 in the far-right band. Sky clear lowered overall paired P95 in these visits while the far-right GPU tail and browser intervals stayed similar. Leave the comparison optional. Across the three visits, thirteen WDDM samples per measured route found Chrome 3D utilization medians of 37.2–39.5% and peaks for the combined other processes below 0.3%. This visit reproduced the slow regime with little competing work on the observed 3D engine. It leaves CPU submission, driver scheduling, other engines and compositor timing open.
+
+Runs 201–202 made an adjacent same-host regression check at native 4K with 4× MSAA, ferry prewarm, one prime desk turn and ten seconds of measured motion. The older `9fe40ab2` and build `a032d999` from revision `9fde900` submitted 137.69 and 141.10 FPS respectively. The interval P95 was 7.1 and 7.0 ms, with P99 of 13.9 ms in both. This pair reproduced fast behavior on both bundles. Runs 164 and 176 already reproduced both speed regimes on `9fe40ab2` alone. A stable 144 FPS result and the reason for the intermittent slow regime remain open.
 
 ## UHD 770 desk GPU attribution
 

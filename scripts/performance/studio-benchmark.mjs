@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { chromium } from '@playwright/test';
@@ -52,6 +52,7 @@ const experiments = {
   '--worker-parts': ['studio-parts', 'worker'],
   '--worker-meshopt': ['studio-meshopt', 'worker'],
   '--priority-rear': ['studio-rear', 'priority'],
+  '--vitrine-timing': ['studio-vitrine-timing', 'on'],
   '--early-rear': ['studio-rear', 'early'],
   '--native-low': ['studio-low', 'native'],
   '--sliced-build': ['studio-build', 'sliced'],
@@ -130,7 +131,7 @@ Use --dist=<directory> to serve an alternate production build.
 Experiment switches: ${Object.keys(experiments).join(', ')}.
 Build first with npm run build. Named adapter checks use installed Chrome on Windows and ANGLE D3D11.
 On other operating systems, --current-adapter leaves the graphics backend to installed Chrome.
-Local results are grouped by commit in the output directory. Matching run IDs are replaced.`;
+Local results are grouped by commit. Long Windows paths use a shorter filename with the same run ID.`;
 
 function options(args) {
   const captured = new Set(args.filter((arg) => arg.startsWith('--')));
@@ -1593,7 +1594,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         multiSubdrawsMax: Math.max(0, ...raw.drawCalls.map(({ multiSubdraws }) => multiSubdraws)),
       }),
     };
-    const stem = join(
+    let stem = join(
       directory,
       [
         captureProfile && 'loader-profile',
@@ -1630,6 +1631,10 @@ async function measure({ base, directory, head, name, run, settings }) {
         .filter(Boolean)
         .join('-'),
     );
+    if (process.platform === 'win32' && resolve(stem + '.trace.json.gz').length >= 260) {
+      const fingerprint = createHash('sha256').update(stem).digest('hex').slice(0, 12);
+      stem = join(directory, `${name}-${route}-${fingerprint}-${run}`);
+    }
     const frontMs = raw.marks['studio-room-material-prep-end'];
     const rearMs = raw.marks['studio-room-rear-ready'];
     const shadedMs = raw.marks['studio-room-shaded'];

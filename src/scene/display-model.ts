@@ -6,6 +6,7 @@ import { packedBuffer } from './packed-buffer';
 type ModelSetup = {
   mesh?: (mesh: T.Mesh) => void;
   mounted?: (scene: T.Group) => void;
+  mark?: (phase: string, startTime?: number) => PerformanceMark;
 };
 
 export function deferredDisplayModel(parent: T.Group, path: string, setup: ModelSetup = {}) {
@@ -35,12 +36,26 @@ export function loadDisplayModel(
   setup: ModelSetup = {},
 ) {
   const loader = new GLTFLoader(manager).setMeshoptDecoder(displayMeshoptDecoder());
+  const { mark } = setup;
   async function mount() {
     const authoring =
       import.meta.env.DEV && new URLSearchParams(location.search).get('review') === 'authoring';
-    const response = await fetch(manager.resolveURL(authoring ? path : path + '.gz'));
+    const url = manager.resolveURL(authoring ? path : path + '.gz');
+    const fetchStart = mark?.('fetch-start').startTime;
+    const response = await fetch(url);
+    mark?.('fetch-headers');
     const buffer = await packedBuffer(response);
+    mark?.('buffer-ready');
+    if (mark && fetchStart !== undefined) {
+      const resource = performance.getEntriesByName(response.url, 'resource').at(-1) as
+        | PerformanceResourceTiming
+        | undefined;
+      if (resource && resource.startTime >= fetchStart && resource.responseEnd > 0)
+        mark('body-end', resource.responseEnd);
+    }
+    mark?.('parse-start');
     const { scene } = await loader.parseAsync(buffer, T.LoaderUtils.extractUrlBase(path));
+    mark?.('parse-end');
     scene.traverse((part) => {
       if (!(part instanceof T.Mesh)) return;
       if (part instanceof T.InstancedMesh) part.userData.exportInstalledInstances = true;
@@ -48,6 +63,7 @@ export function loadDisplayModel(
       part.receiveShadow = true;
       setup.mesh?.(part);
     });
+    mark?.('mesh-setup-end');
     parent.add(scene);
     if (setup.mounted) {
       const products = [...scene.children];
@@ -57,6 +73,7 @@ export function loadDisplayModel(
       }
     }
     if (scene.parent) scene.updateWorldMatrix(true, true, true);
+    mark?.('mount-end');
   }
   manager.itemStart(path);
   const mounting = mount();
