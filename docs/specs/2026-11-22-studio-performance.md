@@ -384,6 +384,21 @@ The first full draw in run 182 took 1.58 seconds. Two newly linked programs expl
 
 Run 183 added the existing `--warm-workbench` and cut the first full draw to 634 ms. The lamp and postcard links were absent from that draw. The pegboard outside the scoped roots still took 586 ms on first use. Whole-room readiness moved from 13.45 to 13.26 seconds, and post-input interval P95 rose from 229.2 to 340.3 ms. Keep scoped preparation optional. Its shorter final draw tests the cause of the hitch, and moving that work into the existing queue still leaves long intervals during the first input.
 
+### Reconciling the startup view
+
+`--live-front-warmup` extends native low default warmup with the active camera frustum and detail revision. After the original front batches have been submitted, it checks for newly visible or changed geometry/material combinations while shader links are still in flight. It submits at most four candidates in one additional pending batch and checks the live view before the first complete draw. The original texture path, render target, light context and picking stay in use.
+
+Runs 187–188 and 191–192 used one native 1080p UHD 770 build (StudioView SHA-256 prefix `97c23021`) for an immediate desk turn with lean lighting, matte finishes, window scissoring, window-only water and wide depth prefill. Each pair reversed the order of stock and live warmup.
+
+| Run and front preparation | Whole room ready | First full draw | Newly linked PBR programs on that draw | First-input interval P95 / max |
+| ------------------------- | ---------------: | --------------: | -------------------------------------: | -----------------------------: |
+| 187, stock                |          20.24 s |        2,096 ms |                                      2 |               1,618 / 1,618 ms |
+| 188, live                 |          18.90 s |          104 ms |                                      0 |               1,285 / 1,389 ms |
+| 191, live                 |          18.34 s |          111 ms |                                      0 |               1,041 / 1,646 ms |
+| 192, stock                |          20.23 s |        2,914 ms |                                      3 |               1,208 / 1,938 ms |
+
+The lamp and postcard links left the first full draw in both orders. Whole-room readiness advanced 1.34–1.89 seconds. One separate full-screen grade program still linked at the transition. The first-input interval distributions contain only 18–22 samples and show long pauses on every visit. Keep live preparation optional until it passes the motion and cold/warm checks on further routes. The regression fixture exercises a camera change, a new mounted object and a material change while another batch is linking, and checks render-target restoration.
+
 ## Idle-aware catch-up
 
 `--idle-catch-up` keeps isolated preparation and permits up to three preparation frames before a quiet preview. It prioritizes the preview when 50 ms has elapsed since the preceding preview and restores alternating preparation and preview on input or visible movement. A single blocking render or warmup call can exceed that interval. Runs 140–143 used one native 4K RTX 4090 workbench build, StudioView SHA-256 prefix `ef5db8ab`. Each comparison used in-view uploads, gesture priority and detail on inspection.
@@ -424,6 +439,20 @@ Run 176 replayed the same `9fe40ab2` bundle for 20 seconds with WDDM sampling, a
 Pairing same-frame query results by submission ordinal in run 176 gives 6.81/7.54 ms GPU P50/P95 across main and downstream draws. Views from center toward the tower accounted for 63 of the 67 paired samples above 6.94 ms and 55 of the 56 submission intervals above 10 ms. The view bands use replayed pointer motion, so the eased camera lags the commanded heading. Compare these bands on the next native 4K render change and measure physical presentation separately.
 
 Room readiness on run 176 was 17.27 seconds. The room shader warm-up marks bracketed 13.13 seconds before the first full draw. The interval includes preparation and waiting between submitted work. Measure program link and readiness-poll counts before attributing its duration to repeated compilation or to actual compiler latency.
+
+### Pose-matched 4K comparisons
+
+GPU timing captures the primary frame index with every valid elapsed query and the actual camera yaw for every primary frame. `node scripts/performance/studio-view-timing.mjs BASELINE.json CANDIDATE.json` checks comparable native High desk runs, pairs main and downstream queries by index, and reports overall metrics and six fixed yaw bands. Negative yaw turns right toward the tower. The paired sums cover the measured passes, separate from browser composition and presentation.
+
+Runs 184–186 used the same native 4K 4× MSAA build (StudioView SHA-256 prefix `6643401a`), a prime desk turn with ferry warmup and 14 seconds of measured motion. They ran stock, sky clear and stock in that order. Sky clear activated and the equivalent ending pose dropped from 519 to 518 draws. The three visits all ran in the slower regime.
+
+| Run and draw mode | Warm submissions | CPU submission P95 | Paired GPU P50 / P95 | Paired GPU P95, yaw below −0.42 rad | Browser interval P95 / P99 |
+| ----------------- | ---------------: | -----------------: | -------------------: | ----------------------------------: | -------------------------: |
+| 184, stock        |        72.29 FPS |            17.8 ms |     13.67 / 17.96 ms |                            17.96 ms |             20.9 / 27.6 ms |
+| 185, sky clear    |        71.96 FPS |            16.9 ms |     14.60 / 16.80 ms |                            18.01 ms |             21.0 / 27.6 ms |
+| 186, stock        |        71.36 FPS |            17.2 ms |     14.87 / 17.67 ms |                            18.01 ms |             20.9 / 27.7 ms |
+
+The paired sample counts were 60, 60 and 59 overall and 14, 14 and 15 in the far-right band. Sky clear lowered overall paired P95 in these visits while the far-right GPU tail and browser intervals stayed similar. Leave the comparison optional. Across the three visits, thirteen WDDM samples per measured route found Chrome 3D utilization medians of 37.2–39.5% and peaks for the combined other processes below 0.3%. This visit reproduced the slow regime with little competing work on the observed 3D engine. It leaves CPU submission, driver scheduling, other engines and compositor timing open.
 
 ## UHD 770 desk GPU attribution
 
@@ -491,6 +520,12 @@ Runs 173–175 compared stock wide prefill with two trials on a single build (St
 | 175, merged board |               1,043 |       31.57 ms |          35.43 ms |        28.11 FPS |      62.5 / 110.6 ms |        13.31 s |
 
 All three visits completed without browser or shader errors. The changes had little effect on cadence or its long intervals. Room readiness was later in the diffuse trial, concurrent with the additional shader variants. Both trials were removed. A larger reduction in visible color work or a reduction in first-use program work remains an open direction.
+
+### Low-quality screen grade
+
+`--gpu-low-grade` adds an elapsed GPU query for the non-neutral low path's native framebuffer copy and full-screen grade quad on the same sampled frames as the main-color query. It uses the copied texture to identify the grade draw. Runs 189–190 compared the existing curve calculation with evaluating only the active segment for each color channel. Both used the same native 1080p UHD 770 wide-prefill build (StudioView SHA-256 prefix `97c23021`), a prime desk turn and 20 pairs of valid GPU queries. Both ran without shader compile errors.
+
+Grade GPU P50/P95 went from 1.21/1.28 to 1.04/1.13 ms. Main-color GPU P95 was 34.90 and 35.01 ms. Warm submission rates were 27.92 and 28.08 FPS, with browser interval P95 of 69.5 and 70.0 ms. The small isolated savings left the room cadence effectively unchanged. The segment trial was removed, and the timer remains available for wider changes to the low output path.
 
 `scripts/performance/studio-witness.mjs` validates a completed `studio-dxgi-roi-v1` file offline. It checks QPC order and marker CRC and distinguishes repeated serials, skipped serials and missed acquisitions. Synthetic covered-window tests passed. A two-second PresentMon preflight targeting the invoking process exited with code 1 before producing a CSV under the current user token. A headed GPU process and joint PresentMon and desktop witness capture are still required for physical calibration.
 

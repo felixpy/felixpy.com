@@ -22,6 +22,13 @@ type LinkedProgram = NonNullable<WebGLRenderer['info']['programs']>[number] & {
 };
 type WarmupPass = { material: Material; target: WebGLRenderTarget };
 type WarmupMode = 'paced' | 'adaptive' | 'catch-up' | 'isolated-catch-up';
+type LiveFront = {
+  submitted: Set<string>;
+  context: string;
+  linking: boolean;
+  revision: number;
+  scannedAt: number;
+};
 
 const pacedProgramLimit = 2;
 const pacedFrameBudget = 3;
@@ -29,6 +36,8 @@ const adaptiveProgramLimit = 4;
 const steadyInterval = 8.5;
 const fallbackInterval = 16.7;
 const steadyWindow = 750;
+const liveFrontBatchLimit = 4;
+const liveFrontScanInterval = 100;
 
 function renderable(object: Object3D): object is Renderable {
   return object instanceof Mesh || object instanceof Line || object instanceof Points;
@@ -83,6 +92,7 @@ export function roomWarmup(
   let steadyFor = 0;
   let disposed = false;
   let warmingSubtrees = false;
+  let liveFront: LiveFront | undefined;
 
   function budgetAfterDraw() {
     const now = performance.now();
@@ -126,6 +136,101 @@ export function roomWarmup(
         })
         .join(',')
     );
+  }
+
+  function frontVersion(object: Renderable) {
+    const plainMesh =
+      object.constructor === Mesh && object.onBeforeRender === Mesh.prototype.onBeforeRender;
+    return `${plainMesh ? 'mesh' : object.id}/${visibleVersion(object)}`;
+  }
+
+  function updateFrontContext(target: WebGLRenderTarget | null, front: LiveFront) {
+    const visibleLights: string[] = [];
+    scene.traverseVisible((object) => {
+      if (object instanceof Light && object.layers.test(camera.layers))
+        visibleLights.push(lightVersion(object));
+    });
+    const context = [
+      target?.texture.id,
+      scene.environment?.id,
+      camera.layers.mask,
+      gl.shadowMap.enabled,
+      gl.toneMapping,
+      ...visibleLights,
+    ].join('/');
+    if (front.context === context) return;
+    front.context = context;
+    front.submitted.clear();
+  }
+
+  function compileFrontBatch(target: WebGLRenderTarget | null, batch: Renderable[]) {
+    const front = liveFront;
+    if (front) {
+      updateFrontContext(target, front);
+      for (const object of batch) visibleVersion(object);
+    }
+    const previous = gl.getRenderTarget();
+    try {
+      gl.setRenderTarget(target);
+      group.children.push(...batch);
+      const linking = gl.compileAsync(group, camera, scene);
+      if (front) {
+        for (const object of batch) {
+          for (const material of Array.isArray(object.material)
+            ? object.material
+            : [object.material])
+            trackedMaterials.get(material)!.version = material.version;
+          front.submitted.add(frontVersion(object));
+        }
+      }
+      return linking;
+    } finally {
+      group.children.length = 0;
+      gl.setRenderTarget(previous);
+    }
+  }
+
+  function reconcileFront(target: WebGLRenderTarget | null, revision: number, final = false) {
+    const front = liveFront;
+    if (!front || frontQueue.length || disposed) return true;
+    if (front.linking) return false;
+    const now = performance.now();
+    if (!final && front.revision === revision && now - front.scannedAt < liveFrontScanInterval)
+      return true;
+    front.revision = revision;
+    front.scannedAt = now;
+    scene.updateMatrixWorld();
+    view.setFromProjectionMatrix(
+      projection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse),
+    );
+    updateFrontContext(target, front);
+    const batch: Renderable[] = [];
+    const selected = new Set<string>();
+    scene.traverseVisible((object) => {
+      if (
+        batch.length === liveFrontBatchLimit ||
+        !renderable(object) ||
+        !object.layers.test(camera.layers) ||
+        (object.frustumCulled && !view.intersectsObject(object))
+      )
+        return;
+      const version = frontVersion(object);
+      if (front.submitted.has(version) || selected.has(version)) return;
+      selected.add(version);
+      batch.push(object);
+    });
+    if (!batch.length) return true;
+    front.linking = true;
+    const finish = () => {
+      front.linking = false;
+    };
+    try {
+      void compileFrontBatch(target, batch).then(finish, finish);
+    } catch {
+      liveFront = undefined;
+      return true;
+    }
+    return false;
   }
 
   function collectMaps(object: Renderable, destination: Set<Texture>) {
@@ -457,7 +562,8 @@ export function roomWarmup(
   return {
     uploadFront: () => upload(frontMaps, 3),
     prepareVisible,
-    async front(target: WebGLRenderTarget | null) {
+    reconcileFront,
+    async front(target: WebGLRenderTarget | null, live = false) {
       if (catchUp) {
         updateVisible(target, -1, performance.now());
         for (const object of visible) {
@@ -465,6 +571,15 @@ export function roomWarmup(
           collectMaps(object, frontMaps);
         }
       } else {
+        if (live) {
+          liveFront = {
+            submitted: new Set(),
+            context: '',
+            linking: false,
+            revision: -1,
+            scannedAt: Number.NEGATIVE_INFINITY,
+          };
+        }
         scene.updateMatrixWorld();
         scan(
           new Frustum().setFromProjectionMatrix(
@@ -487,15 +602,7 @@ export function roomWarmup(
           compileVisibleBatch(target, batch);
           continue;
         }
-        const previous = gl.getRenderTarget();
-        try {
-          gl.setRenderTarget(target);
-          group.children.push(...batch);
-          batches.push(gl.compileAsync(group, camera, scene));
-        } finally {
-          group.children.length = 0;
-          gl.setRenderTarget(previous);
-        }
+        batches.push(compileFrontBatch(target, batch));
       }
       frontQueue.length = 0;
       if (catchUp) {
@@ -506,6 +613,7 @@ export function roomWarmup(
     },
     dispose() {
       disposed = true;
+      liveFront = undefined;
       frontQueue.length = queue.length = 0;
       maps.clear();
       frontMaps.clear();
@@ -514,6 +622,7 @@ export function roomWarmup(
     },
     scan: () => scan(),
     step(target: WebGLRenderTarget | null) {
+      liveFront = undefined;
       if (pacePrograms) {
         const until = budgetAfterDraw();
         trackPrograms();

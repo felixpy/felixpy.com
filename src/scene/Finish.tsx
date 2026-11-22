@@ -65,6 +65,14 @@ export function Finish({
   const pacing = warmup === 'paced' || warmup === 'adaptive' ? warmup : undefined;
   const catchUp = warmup === 'catch-up';
   const isolatedCatchUp = warmup === 'isolated-catch-up';
+  const liveFront = useMemo(
+    () =>
+      nativeLow &&
+      !enabled &&
+      warmup === null &&
+      new URLSearchParams(location.search).get('studio-warmup-live') === 'front',
+    [enabled, nativeLow, warmup],
+  );
   useEffect(() => () => firstFrame.dispose(), [firstFrame]);
   useEffect(() => () => grade.dispose(), [grade]);
   useEffect(() => () => prefill?.dispose(), [prefill]);
@@ -114,14 +122,14 @@ export function Finish({
   }, [camera, enabled, gl, scene, warmWorkbench, workbench]);
 
   useEffect(() => {
-    if (!catchUp && !isolatedCatchUp) return;
+    if (!catchUp && !isolatedCatchUp && !liveFront) return;
     return () => {
       preparation.current?.dispose();
       preparation.current = null;
       shaders.current = 'cold';
       previewNext.current = true;
     };
-  }, [camera, catchUp, enabled, gl, grade, isolatedCatchUp, scene]);
+  }, [camera, catchUp, enabled, gl, grade, isolatedCatchUp, liveFront, scene]);
 
   useEffect(() => {
     if (!enabled || !gl.extensions.has('EXT_color_buffer_float')) return;
@@ -276,7 +284,15 @@ export function Finish({
         performance.mark('studio-room-shader-warm-end');
       } else {
         const mapsReady = preparation.current?.uploadFront() ?? true;
-        if (shaders.current === 'pending' || !mapsReady) {
+        const liveReady =
+          !liveFront ||
+          (preparation.current?.reconcileFront(
+            active?.beauty ?? null,
+            detailRevision.current,
+            shaders.current === 'ready',
+          ) ??
+            true);
+        if (shaders.current === 'pending' || !mapsReady || !liveReady) {
           firstFrame.draw(gl, scene, camera, night, look);
           return;
         }
@@ -299,7 +315,7 @@ export function Finish({
               catchUp ? 'studio-room-shader-catch-up-start' : 'studio-room-shader-warm-end',
             );
           };
-          void pending.front(active?.beauty ?? null).then(finish, finish);
+          void pending.front(active?.beauty ?? null, liveFront).then(finish, finish);
           return;
         }
         if (catchUp && preparation.current) {

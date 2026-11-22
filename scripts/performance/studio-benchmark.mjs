@@ -75,6 +75,7 @@ const experiments = {
   '--catch-up-warmup': ['studio-warmup', 'catch-up'],
   '--isolated-catch-up': ['studio-warmup', 'isolated-catch-up'],
   '--resident-warmup-maps': ['studio-warmup-maps', 'resident'],
+  '--live-front-warmup': ['studio-warmup-live', 'front'],
   '--warm-workbench': ['studio-warmup', 'workbench'],
   '--adaptive-warmup': ['studio-warmup', 'adaptive'],
   '--culled-lights': ['studio-lighting', 'culled'],
@@ -100,6 +101,7 @@ Use --steady-profile to profile CPU work during the warmed desk turn.
 Use --gpu-timing to sample main-color GPU work during the final steady route, including any depth prefill.
 Add --gpu-panorama to alternate whole-room queries with queries around the panorama draw.
 Add --gpu-downstream to also time GTAO and final output on the high-quality path.
+Add --gpu-low-grade to time the low-quality framebuffer copy and room-grade draw.
 Add --gpu-depth-prepass to alternate inclusive and split depth/color samples on the low-quality path.
 Add --gpu-color-passes to alternate inclusive and opaque/translucent draw samples on the low-quality path.
 Use --opaque-near-first to measure a front-to-back opaque draw order in the replay.
@@ -141,6 +143,7 @@ function options(args) {
   const gpuTiming = captured.delete('--gpu-timing');
   const gpuPanorama = captured.delete('--gpu-panorama');
   const gpuDownstream = captured.delete('--gpu-downstream');
+  const gpuLowGrade = captured.delete('--gpu-low-grade');
   const gpuDepthPrepass = captured.delete('--gpu-depth-prepass');
   const gpuColorPasses = captured.delete('--gpu-color-passes');
   const opaqueNearFirst = captured.delete('--opaque-near-first');
@@ -189,6 +192,7 @@ function options(args) {
     (gpuPanorama && !gpuTiming) ||
     (gpuDownstream &&
       (!gpuTiming || gpuPanorama || names.some((name) => profiles[name]?.quality !== 'high'))) ||
+    (gpuLowGrade && (!gpuTiming || names.some((name) => profiles[name]?.quality !== 'low'))) ||
     (gpuDepthPrepass &&
       (!gpuTiming || gpuPanorama || names.some((name) => profiles[name]?.quality !== 'low'))) ||
     (gpuColorPasses &&
@@ -236,6 +240,7 @@ function options(args) {
     gpuTiming,
     gpuPanorama,
     gpuDownstream,
+    gpuLowGrade,
     gpuDepthPrepass,
     gpuColorPasses,
     opaqueNearFirst,
@@ -300,6 +305,7 @@ function installProbe({
   gpuTiming,
   gpuPanorama,
   gpuDownstream,
+  gpuLowGrade,
   gpuDepthPrepass,
   gpuColorPasses,
   opaqueNearFirst,
@@ -322,6 +328,7 @@ function installProbe({
     roomFrames: [],
     submissions: [],
     rotations: [],
+    ...(gpuTiming && { cameraYaws: [] }),
     loaderFrames: [],
     loaderProgress: [],
     resolutions: {},
@@ -489,10 +496,11 @@ function installProbe({
     const timer = gl.getExtension('EXT_disjoint_timer_query_webgl2');
     if (!timer) return;
     const pending = [];
-    const makeTiming = () => ({ durations: [], discarded: 0 });
+    const makeTiming = () => ({ durations: [], frameIndices: [], discarded: 0 });
     const timings = { main: (sample.mainColorGpu = makeTiming()) };
     if (gpuPanorama) timings.panorama = sample.panoramaGpu = makeTiming();
     if (gpuDownstream) timings.downstream = sample.downstreamGpu = makeTiming();
+    if (gpuLowGrade) timings.grade = sample.lowGradeGpu = makeTiming();
     if (gpuDepthPrepass) {
       timings.depth = sample.depthOnlyGpu = makeTiming();
       timings.color = sample.colorAfterDepthGpu = makeTiming();
@@ -514,8 +522,9 @@ function installProbe({
         return true;
       }
       while (pending.length && gl.getQueryParameter(pending[0].query, gl.QUERY_RESULT_AVAILABLE)) {
-        const { query, result } = pending.shift();
+        const { query, result, index } = pending.shift();
         result.durations.push(gl.getQueryParameter(query, gl.QUERY_RESULT) / 1e6);
+        result.frameIndices.push(index);
         gl.deleteQuery(query);
       }
       return pending.length === 0;
@@ -546,10 +555,11 @@ function installProbe({
       panoramaFrame,
       splitDepthFrame,
       colorPassFrame,
-      begin(stage = 'main') {
+      begin(stage = 'main', index = sample.roomFrames.length) {
         const result = timings[stage];
         const selected =
           stage === 'downstream' ||
+          stage === 'grade' ||
           (sample.roomFrames.length % 17 === 0 &&
             (stage === 'main'
               ? !panoramaFrame() && !splitDepthFrame() && !colorPassFrame()
@@ -559,7 +569,7 @@ function installProbe({
         const query = gl.createQuery();
         if (!query) return null;
         gl.beginQuery(timer.TIME_ELAPSED_EXT, query);
-        openQuery = { query, result };
+        openQuery = { query, result, index };
         return openQuery;
       },
       end,
@@ -801,6 +811,18 @@ function installProbe({
     }
     let depthQuery, depthDrawnAt;
     let downstreamQuery, downstreamFrame;
+    let gradeFrame, gradeIndex, gradeQuery, gradeTexture;
+    if (gpu && gpuLowGrade) {
+      const copy = renderer.copyFramebufferToTexture;
+      renderer.copyFramebufferToTexture = function (texture, ...args) {
+        if (!texture.isFramebufferTexture || gradeFrame !== document.timeline.currentTime)
+          return copy.call(this, texture, ...args);
+        gradeFrame = undefined;
+        gradeTexture = texture;
+        gradeQuery = gpu.begin('grade', gradeIndex);
+        return copy.call(this, texture, ...args);
+      };
+    }
     sample.project = (name) => {
       const object = world?.getObjectByName(name);
       if (!object || !roomCamera) return null;
@@ -824,6 +846,10 @@ function installProbe({
       )
         world = scene;
       const frame = document.timeline.currentTime;
+      if (gradeQuery && sample.roomFrames.at(-1) !== frame) {
+        gpu.end(gradeQuery, true);
+        gradeQuery = gradeTexture = undefined;
+      }
       if (depthQuery && depthDrawnAt !== frame) {
         gpu.end(depthQuery, true);
         depthQuery = undefined;
@@ -837,6 +863,12 @@ function installProbe({
         scene.isMesh &&
         camera.isOrthographicCamera &&
         scene.material.name === 'OutputShader' &&
+        !renderer.getRenderTarget();
+      const gradeOutput =
+        gradeQuery &&
+        scene.isMesh &&
+        camera.isOrthographicCamera &&
+        scene.material.uniforms?.tDiffuse?.value === gradeTexture &&
         !renderer.getRenderTarget();
       const room = world === scene && camera.isPerspectiveCamera && !camera.parent?.isCubeCamera;
       if (room) roomCamera = camera;
@@ -905,6 +937,10 @@ function installProbe({
           gpu.end(downstreamQuery, !complete);
           downstreamQuery = undefined;
         }
+        if (gradeOutput) {
+          gpu.end(gradeQuery, !complete);
+          gradeQuery = gradeTexture = undefined;
+        }
         if (primary && colorWork) {
           const { query, stage, ...work } = colorWork;
           if (query) gpu.end(query, !complete);
@@ -928,9 +964,17 @@ function installProbe({
           downstreamQuery = gpu.begin('downstream');
           downstreamFrame = frame;
         }
+        if (query && gpuLowGrade && !target) {
+          gradeFrame = frame;
+          gradeIndex = sample.roomFrames.length;
+        }
         sample.roomFrames.push(frame);
         sample.submissions.push(performance.now() - start);
         sample.rotations.push(camera.quaternion.y);
+        if (gpuTiming) {
+          const { x, y, z, w } = camera.quaternion;
+          sample.cameraYaws.push(Math.atan2(2 * (w * y + x * z), 1 - 2 * (x * x + y * y)));
+        }
         sample.draws = renderer.info.render.calls;
         sample.tris = renderer.info.render.triangles;
         const gl = renderer.getContext();
@@ -1139,6 +1183,7 @@ async function sampleDesk(
       sample.roomFrames = [];
       sample.submissions = [];
       sample.rotations = [];
+      if (sample.cameraYaws) sample.cameraYaws.length = 0;
       sample.resolutions = {};
       if (sample.depthPrefillFrames !== undefined) sample.depthPrefillFrames = 0;
       if (sample.depthPrefillWork) sample.depthPrefillWork.length = 0;
@@ -1292,6 +1337,7 @@ async function measure({ base, directory, head, name, run, settings }) {
     gpuTiming,
     gpuPanorama,
     gpuDownstream,
+    gpuLowGrade,
     gpuDepthPrepass,
     gpuColorPasses,
     opaqueNearFirst,
@@ -1404,6 +1450,7 @@ async function measure({ base, directory, head, name, run, settings }) {
       gpuTiming,
       gpuPanorama,
       gpuDownstream,
+      gpuLowGrade,
       gpuDepthPrepass,
       gpuColorPasses,
       opaqueNearFirst,
@@ -1554,6 +1601,7 @@ async function measure({ base, directory, head, name, run, settings }) {
         gpuTiming && 'gpu-timing',
         gpuPanorama && 'gpu-panorama',
         gpuDownstream && 'gpu-downstream',
+        gpuLowGrade && 'gpu-low-grade',
         gpuDepthPrepass && 'gpu-depth-prepass',
         gpuColorPasses && 'gpu-color-passes',
         opaqueNearFirst && 'opaque-near-first',
@@ -1627,6 +1675,7 @@ async function measure({ base, directory, head, name, run, settings }) {
       [gpuDepthPrepass, 'colorAfterDepthGpuMs', raw.colorAfterDepthGpu],
       [gpuColorPasses, 'opaqueColorGpuMs', raw.opaqueColorGpu],
       [gpuColorPasses, 'translucentColorGpuMs', raw.translucentColorGpu],
+      [gpuLowGrade, 'lowGradeGpuMs', raw.lowGradeGpu],
     ]) {
       if (!enabled) continue;
       if (rawTiming.durations.length < 5)

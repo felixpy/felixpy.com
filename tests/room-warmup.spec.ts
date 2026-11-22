@@ -190,6 +190,85 @@ test('catch-up warms newly visible meshes and late material revisions before the
   }
 });
 
+test('live front warms the current view while the initial front batch is linking', async () => {
+  const scene = new Scene();
+  const camera = new PerspectiveCamera(50, 1, 0.1, 100);
+  const geometry = new BoxGeometry(0.2, 0.2, 0.2);
+  const beauty = new WebGLRenderTarget(1, 1);
+  const previous = new WebGLRenderTarget(1, 1);
+  const materials = new Set<MeshBasicMaterial>();
+  function mesh(x: number, material = new MeshBasicMaterial()) {
+    materials.add(material);
+    const object = new Mesh(geometry, material);
+    object.position.set(x, 0, -4);
+    scene.add(object);
+    return object;
+  }
+  const stable = mesh(-0.2);
+  const changed = mesh(0.2);
+  const outside = mesh(2.6);
+  mesh(2.8, outside.material);
+  camera.updateMatrixWorld();
+
+  let target: WebGLRenderTarget | null = previous;
+  const compiled: number[][] = [];
+  const link: ((value: Object3D) => void)[] = [];
+  const renderer = {
+    shadowMap: { enabled: false },
+    getRenderTarget: () => target,
+    setRenderTarget(next: WebGLRenderTarget | null) {
+      target = next;
+    },
+    compileAsync(batch: Object3D, actualCamera: Object3D, actualScene: Object3D) {
+      expect(target === beauty && actualCamera === camera && actualScene === scene).toBe(true);
+      compiled.push(batch.children.map((object) => object.id));
+      return new Promise<Object3D>((resolve) => link.push(resolve));
+    },
+  };
+  const warmup = roomWarmup(renderer as unknown as WebGLRenderer, scene, camera);
+  const originalFrame = globalThis.requestAnimationFrame;
+  const frames: FrameRequestCallback[] = [];
+  globalThis.requestAnimationFrame = (callback) => {
+    return frames.push(callback);
+  };
+  try {
+    const initial = warmup.front(beauty, true);
+    expect(warmup.reconcileFront(beauty, 0)).toBe(true);
+    frames.shift()!(performance.now());
+    await Promise.resolve();
+    expect(compiled).toEqual([[stable.id, changed.id]]);
+    expect(target === previous).toBe(true);
+
+    camera.rotation.y = -0.4;
+    camera.updateMatrixWorld();
+    changed.material.alphaTest = 0.5;
+    const mounted = mesh(2.4);
+    expect(warmup.reconcileFront(beauty, 1)).toBe(false);
+    expect(compiled).toEqual([
+      [stable.id, changed.id],
+      [changed.id, outside.id, mounted.id],
+    ]);
+    expect(target === previous).toBe(true);
+
+    link[0](scene);
+    await initial;
+    expect(warmup.reconcileFront(beauty, 1, true)).toBe(false);
+    link[1](scene);
+    await Promise.resolve();
+    expect(warmup.reconcileFront(beauty, 1, true)).toBe(true);
+    expect(compiled).toHaveLength(2);
+  } finally {
+    warmup.dispose();
+    if (originalFrame) globalThis.requestAnimationFrame = originalFrame;
+    else Reflect.deleteProperty(globalThis, 'requestAnimationFrame');
+    for (const resolve of link) resolve(scene);
+    for (const material of materials) material.dispose();
+    geometry.dispose();
+    beauty.dispose();
+    previous.dispose();
+  }
+});
+
 test('isolated catch-up separates compiles, reflection and texture uploads', async () => {
   const scene = new Scene();
   const camera = new PerspectiveCamera(50, 1, 0.1, 100);
