@@ -643,6 +643,12 @@ Run 273 sampled a 20-second warmed native 4K desk turn on the promoted default b
 
 The run submitted 127.25 FPS. The same browser's unloaded control reached 128.30 callbacks per second. Preserve the native targets and separate the browser cadence from actual display timing before comparing this submission rate to the 144 Hz release target. The split measurements put most of the main GPU time in opaque color drawing.
 
+### Native 4K rainy window
+
+Run 284 measured 60 seconds of steady camera motion after entering the close-window view on the promoted default build `619f7924`. The cold visit used the night rain fixture and confirmed both the rain setting and window mode. The stock pane-center click timed out in run 283. In the measured run, the replay used the existing window interaction test's glass point, 0.166 m outside the west wall at height 1.42 m and room depth 0.85 m, and verified the window interaction cue before clicking. The initial view turned by 241 CSS pixels toward the window. The timing window began after close-window entry and the steady replay's two-second lead-in.
+
+All 8,641 recorded main-color frames used a 3840 × 2160 drawing buffer and 4× MSAA beauty target. The 8,640 intervals yielded 144.00 submissions per second, P95/P99 of 7.0/7.1 ms and a 7.2 ms maximum. The same-process blank-page control measured 142.72 animation callbacks per second, with a 7.1 ms P99. Inclusive main-color GPU P95 was 3.91 ms and downstream P95 was 1.63 ms across 255 samples. The 254 valid split samples measured opaque, translucent and resolve P95 at 2.09, 1.06 and 0.80 ms respectively. No browser or shader errors were recorded. This covers a steady close-window rain route at native size. Physical presentation, entry latency and the broader release matrix are separate checks.
+
 ## UHD 770 desk GPU attribution
 
 Runs 106–107 used native 1920 × 1080 with matte and lean lighting, scissor, window-only water and depth prefill. `--gpu-panorama` alternates whole main-color queries with queries around the panorama draw on separate frames. On the stock opaque order, GPU P95 was 39.64 ms inclusive and 0.98 ms for the panorama alone, with 14 samples each. The panorama query covers that single draw and its result is a sampled cost ceiling for savings on the photographed exterior, with other scene work still in the inclusive measurement. Near-first opaque sorting moved inclusive P95 to 40.74 ms and did not close the 30 FPS frame budget gap. It remains a benchmark diagnostic.
