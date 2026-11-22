@@ -678,6 +678,17 @@ Run 284 measured 60 seconds of steady camera motion after entering the close-win
 
 All 8,641 recorded main-color frames used a 3840 × 2160 drawing buffer and 4× MSAA beauty target. The 8,640 intervals yielded 144.00 submissions per second, P95/P99 of 7.0/7.1 ms and a 7.2 ms maximum. The same-process blank-page control measured 142.72 animation callbacks per second, with a 7.1 ms P99. Inclusive main-color GPU P95 was 3.91 ms and downstream P95 was 1.63 ms across 255 samples. The 254 valid split samples measured opaque, translucent and resolve P95 at 2.09, 1.06 and 0.80 ms respectively. No browser or shader errors were recorded. This covers a steady close-window rain route at native size. Physical presentation, entry latency and the broader release matrix are separate checks.
 
+### Native 4K workbench and cabinet close-ups
+
+Runs 303–304 used default build `a95214b5` and the RTX 4090 native 4K profile. They revalidated 136 HTTP responses each, entered the named close-up and recorded 60 seconds of camera motion after the route settled. All main-color samples used a 3840 × 2160 drawing buffer and 4× MSAA beauty target. Reproduce with `4k 303 --warm --route=workbench --seconds=60 --raf-control` and `4k 304 --warm --route=cabinet --seconds=60 --raf-control`.
+
+| Route     | Room readiness | Submitted FPS | Interval P95 / P99 | Longest interval | Blank-page callbacks |
+| --------- | -------------: | ------------: | -----------------: | ---------------: | -------------------: |
+| Workbench |         4.40 s |        143.93 |       7.0 / 7.1 ms |          14.0 ms |           144.00 FPS |
+| Cabinet   |         4.17 s |        143.95 |       7.0 / 7.1 ms |          13.9 ms |           143.79 FPS |
+
+Both steady samples cleared the tolerated average submission cadence with no recorded browser issues. Manual desktop testing also reported smooth interaction. First-turn timing is covered separately above. A non-interactive Windows display check confirmed the current native signal at 3840 × 2160 and 143.999 Hz. Distinct physical presents still need a foreground capture.
+
 ## UHD 770 desk GPU attribution
 
 Runs 106–107 used native 1920 × 1080 with matte and lean lighting, scissor, window-only water and depth prefill. `--gpu-panorama` alternates whole main-color queries with queries around the panorama draw on separate frames. On the stock opaque order, GPU P95 was 39.64 ms inclusive and 0.98 ms for the panorama alone, with 14 samples each. The panorama query covers that single draw and its result is a sampled cost ceiling for savings on the photographed exterior, with other scene work still in the inclusive measurement. Near-first opaque sorting moved inclusive P95 to 40.74 ms and did not close the 30 FPS frame budget gap. It remains a benchmark diagnostic.
