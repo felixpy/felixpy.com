@@ -1,6 +1,6 @@
 # Studio performance standards
 
-Use these criteria when changing room rendering, asset loading, graphics defaults or inspection. The hardware targets are product goals. The percentile thresholds are proposed engineering acceptance gates. Record the decision and supporting measurements when changing them. The [development plan](README.md) records the measured baseline and experiments.
+Use these criteria when changing room rendering, asset loading, graphics defaults or inspection. The hardware targets are product goals. The percentile thresholds are proposed engineering acceptance gates. Record the decision and supporting measurements when changing them. The [development plan](specs/2026-11-22-studio-performance.md) records the measured baseline and experiments.
 
 ## Product targets
 

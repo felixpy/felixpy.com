@@ -1,6 +1,6 @@
 # Studio performance development plan
 
-The website code baseline is `5ce54d92feea442a2611f74c93cece7a5d59c80b` on `codex/studio-remake-checkpoint`, measured on 22 November 2026. The [performance standards](standards.md) define hardware targets, frame budgets and visual acceptance. Update the measurements and open experiments here as work lands.
+The website code baseline is `5ce54d92feea442a2611f74c93cece7a5d59c80b` on `codex/studio-remake-checkpoint`, measured on 22 November 2026. The [performance standards](../performance-standards.md) define hardware targets, frame budgets and visual acceptance. Update the measurements and open experiments here as work lands.
 
 ## Measured starting point
 

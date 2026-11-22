@@ -21,6 +21,6 @@ The website accepts reviewed exports as inputs. The editable art workspace owns 
 
 ## Maintenance checks
 
-The [Studio performance spec](../specs/2026-11-22-studio-performance/README.md) records the measured baseline and next experiments. Its [standards](../specs/2026-11-22-studio-performance/standards.md) define hardware and visual acceptance.
+The [Studio performance spec](specs/2026-11-22-studio-performance.md) records the measured baseline and next experiments. The [performance standards](performance-standards.md) define hardware and visual acceptance.
 
 Run `npm run build` and `npm run test:ci` from the website checkout. For navigation and lighting changes, also run `npm test -- tests/bookshelf-view.spec.ts tests/phone-home.spec.ts`. Set `STUDIO_TEST_PORT` to an unused port to run against a fresh local server. Production smoke checks should request media from the built static site because the development server also supports authoring previews.
