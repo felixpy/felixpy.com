@@ -1,4 +1,5 @@
 import * as T from 'three';
+import { assetUrl } from '../app/asset-url';
 import type { Environment } from '../app/environment';
 import { biography, books, publicProfiles } from '../content/profile';
 import { remoteKeys } from '../app/environment';
@@ -81,7 +82,7 @@ export function buildStudio(manager: T.LoadingManager) {
   const loader = new T.TextureLoader(manager);
   const p = materials(loader);
   const photo = (src: string) => {
-    const texture = loader.load(src);
+    const texture = loader.load(assetUrl(src));
     texture.colorSpace = T.SRGBColorSpace;
     texture.anisotropy = 8;
     return texture;

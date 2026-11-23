@@ -1,4 +1,5 @@
 import * as T from 'three';
+import { assetUrl } from '../app/asset-url';
 import type { Environment } from '../app/environment';
 import { canvasTexture, group, mesh } from './geometry';
 import { panoramaMaterial, panoramaMeshName, panoramaPoint, waterfrontPoint } from './window-depth';
@@ -73,14 +74,14 @@ function waterfront(
   glass: ReturnType<typeof buildRainGlass>,
 ) {
   function loadPlate(asset: string) {
-    const color = loader.load('/media/panoramas/' + asset + '.webp');
+    const color = loader.load(assetUrl('/media/panoramas/' + asset + '.webp'));
     color.colorSpace = T.SRGBColorSpace;
     color.anisotropy = 8;
     return color;
   }
   function loadCity(city: Environment['city']) {
     const { clear, overcast, night, depth: asset, near, far, waterline, upright } = cities[city];
-    const depth = loader.load('/media/panoramas/' + asset + '-depth.png');
+    const depth = loader.load(assetUrl('/media/panoramas/' + asset + '-depth.png'));
     depth.generateMipmaps = false;
     depth.minFilter = T.LinearFilter;
     const range = new T.Vector2(near, far);

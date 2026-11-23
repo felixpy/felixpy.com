@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { assetUrl } from '../../../app/asset-url';
 import { tracks } from './library';
 
 const defaultVolume = 0.5;
@@ -45,7 +46,7 @@ export function useStudioMusic(enabled = true) {
       setElapsed(0);
       setDuration(0);
       setFailed(false);
-      player.src = '/media/audio/music/' + tracks[next].file + '.mp3';
+      player.src = assetUrl('/media/audio/music/' + tracks[next].file + '.mp3');
     }
     if (document.hidden) return;
     void player.play().catch((error: DOMException) => {
@@ -91,6 +92,7 @@ export function useStudioMusic(enabled = true) {
   useEffect(() => {
     if (!enabled) return;
     const player = new Audio();
+    player.crossOrigin = 'anonymous';
     player.volume = volume;
     player.muted = muted;
     player.loop = repeat;

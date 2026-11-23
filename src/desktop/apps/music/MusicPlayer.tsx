@@ -14,6 +14,7 @@ import {
   VolumeX,
 } from 'lucide-react';
 import { useRef, useState, type CSSProperties } from 'react';
+import { assetUrl } from '../../../app/asset-url';
 import { local, type Locale } from '../../../app/locale';
 import Shader from '../../../spectral/Shader';
 import musicRoom from '../../../spectral/shaders/music-room.glsl?raw';
@@ -51,7 +52,7 @@ export function MusicPlayer({
     return (
       <div className="spectral-record" aria-hidden="true">
         <img
-          src="/media/interface/vinyl-record.webp"
+          src={assetUrl('/media/interface/vinyl-record.webp')}
           alt=""
           width={900}
           height={900}
@@ -302,7 +303,12 @@ export function MusicPlayer({
           </div>
           <footer className="spectral-mini">
             <div className="spectral-mini-identity">
-              <img src="/media/interface/vinyl-record.webp" alt="" width={56} height={56} />
+              <img
+                src={assetUrl('/media/interface/vinyl-record.webp')}
+                alt=""
+                width={56}
+                height={56}
+              />
               <div>
                 <strong>{track.name}</strong>
                 <small>{collection}</small>

@@ -1,6 +1,11 @@
 {
   "cleanUrls": true,
   "trailingSlash": false,
+  "git": {
+    "deploymentEnabled": {
+      "codex/felix-r2-publish": false
+    }
+  },
   "redirects": [
     {
       "source": "/:path*",

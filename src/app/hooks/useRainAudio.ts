@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { assetUrl } from '../asset-url';
 
 export function useRainAudio(raining: boolean, closeToWindow: boolean, blinds: boolean) {
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -6,7 +7,7 @@ export function useRainAudio(raining: boolean, closeToWindow: boolean, blinds: b
   settings.current = { raining, closeToWindow, blinds };
   const sync = useRef<(() => void) | null>(null);
   useEffect(() => {
-    const player = new Audio('/media/audio/ambience/rain-window.ogg');
+    const player = new Audio(assetUrl('/media/audio/ambience/rain-window.ogg'));
     player.preload = 'none';
     player.loop = true;
     audio.current = player;

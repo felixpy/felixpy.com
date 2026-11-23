@@ -2,6 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Connect, HtmlTagDescriptor, Plugin } from 'vite';
 import AboutPage from '../../src/about/AboutPage';
+import { assetUrl } from '../../src/app/asset-url';
 import { aboutPage as page, shareImage, siteOrigin } from '../../src/content/about';
 import { profile, publicProfiles } from '../../src/content/profile';
 
@@ -13,7 +14,7 @@ function serveCleanAboutUrls(req: Connect.IncomingMessage, _: unknown, next: Con
   next();
 }
 
-export function renderAboutPages(): Plugin {
+export function renderAboutPages(assetBase: string): Plugin {
   return {
     name: 'render-about-pages',
     configureServer(server) {
@@ -26,7 +27,7 @@ export function renderAboutPages(): Plugin {
       if (path !== `${page.path}.html`) return;
 
       const canonical = siteOrigin + page.path;
-      const image = siteOrigin + shareImage;
+      const image = assetBase ? assetUrl(shareImage, assetBase) : siteOrigin + shareImage;
       const person = {
         '@context': 'https://schema.org',
         '@type': 'ProfilePage',

@@ -1,0 +1,62 @@
+name: Stage site with R2
+
+on:
+  push:
+    branches: [codex/felix-r2-publish]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: felixpy-production
+  cancel-in-progress: false
+
+jobs:
+  stage:
+    if: github.ref_name == 'codex/felix-r2-publish' || github.ref_name == 'dev'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      VITE_ASSET_BASE_URL: https://assets.felixpy.com/felix-studio/
+      SITE_ORIGIN: https://felixpy.com
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: npm
+      - name: Install Vercel CLI
+        run: npm install --global vercel@66.6.0
+      - name: Load production settings
+        run: vercel pull --yes --environment=production
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      - name: Build production output
+        run: vercel build --prod
+      - name: Check current branch before R2 upload
+        run: test "$GITHUB_SHA" = "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$GITHUB_REF_NAME" --jq '.object.sha')"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Publish assets and remove them from Vercel output
+        run: node scripts/deploy/r2-assets.mjs .vercel/output/static
+        env:
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_REQUEST_CHECKSUM_CALCULATION: WHEN_REQUIRED
+          AWS_RESPONSE_CHECKSUM_VALIDATION: WHEN_REQUIRED
+      - name: Stage and check cross-origin delivery
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          deployment="$(vercel deploy --prebuilt --prod --skip-domain --yes --json)"
+          url="$(jq -er '(.deployment // .) | .url | select(test("^https://[a-z0-9-]+\\.vercel\\.app$"))' <<< "$deployment")"
+          printf 'Staged deployment: %s\n' "$url" >> "$GITHUB_STEP_SUMMARY"
+          headers="$(curl --fail --silent --show-error --head --header "Origin: $url" "${VITE_ASSET_BASE_URL}media/credits.txt" | tr -d '\r')"
+          grep -Fix "access-control-allow-origin: *" <<< "$headers" ||
+            grep -Fix "access-control-allow-origin: $url" <<< "$headers"

@@ -1,4 +1,5 @@
 import * as T from 'three';
+import { assetUrl } from '../app/asset-url';
 import { canvasTexture, random, surface } from './geometry';
 
 function noiseField(seed: number, size = 128) {
@@ -200,7 +201,7 @@ function matteGrain(
 
 export function materials(loader: T.TextureLoader) {
   const loadColor = (source: string) => {
-    const texture = loader.load(source);
+    const texture = loader.load(assetUrl(source));
     texture.colorSpace = T.SRGBColorSpace;
     texture.anisotropy = 8;
     return texture;
@@ -209,8 +210,8 @@ export function materials(loader: T.TextureLoader) {
   mural.wrapS = T.MirroredRepeatWrapping;
   const floor = new T.MeshStandardMaterial({
     map: loadColor('/media/materials/pine-floor-color.webp'),
-    normalMap: loader.load('/media/materials/pine-floor-normal.webp'),
-    roughnessMap: loader.load('/media/materials/pine-floor-roughness.webp'),
+    normalMap: loader.load(assetUrl('/media/materials/pine-floor-normal.webp')),
+    roughnessMap: loader.load(assetUrl('/media/materials/pine-floor-roughness.webp')),
     normalScale: new T.Vector2(0.64, 0.64),
     roughness: 0.83,
     color: '#dcd1c4',

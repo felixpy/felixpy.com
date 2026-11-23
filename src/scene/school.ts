@@ -1,4 +1,5 @@
 import * as T from 'three';
+import { assetUrl } from '../app/asset-url';
 import { biography, profile } from '../content/profile';
 import { box, canvasTexture, group, mesh, random, surface } from './geometry';
 import type { Palette } from './materials';
@@ -153,16 +154,19 @@ function studentCard(loader: T.TextureLoader) {
     ctx.quadraticCurveTo(848, 529, 852, 494);
     ctx.stroke();
   });
-  new T.ImageLoader(loader.manager).load('/media/graphics/beihang-emblem.jpg', (image) => {
-    const ctx = (texture.image as HTMLCanvasElement).getContext('2d')!;
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(90, 55, 42, 0, Math.PI * 2);
-    ctx.clip();
-    ctx.drawImage(image, 48, 13, 84, 84);
-    ctx.restore();
-    texture.needsUpdate = true;
-  });
+  new T.ImageLoader(loader.manager).load(
+    assetUrl('/media/graphics/beihang-emblem.jpg'),
+    (image) => {
+      const ctx = (texture.image as HTMLCanvasElement).getContext('2d')!;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(90, 55, 42, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(image, 48, 13, 84, 84);
+      ctx.restore();
+      texture.needsUpdate = true;
+    },
+  );
   return texture;
 }
 

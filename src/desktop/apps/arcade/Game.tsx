@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { assetUrl } from '../../../app/asset-url';
 import { local, type Locale } from '../../../app/locale';
 import {
   advance,
@@ -252,8 +253,9 @@ export default function Game({
     const ctx = canvas.current?.getContext('2d');
     if (!ctx) return;
     const sector = new Image();
+    sector.crossOrigin = 'anonymous';
     sector.onload = () => draw(ctx, flight.current, sector);
-    sector.src = '/media/arcade/orbital-sector.webp';
+    sector.src = assetUrl('/media/arcade/orbital-sector.webp');
     draw(ctx, flight.current);
     let frame = 0,
       last = performance.now();
