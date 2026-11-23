@@ -28,11 +28,10 @@ export function monitor(parent: T.Object3D, p: Palette, manager: T.LoadingManage
   const { screenBar, codexMicro } = galleryDisplay(monitor, p, outerHeight, y, manager, parent);
   const time = { value: 0 };
   const clock = oledClock();
-  const displayGlass = new T.MeshPhysicalMaterial({
+  const displayGlass = new T.MeshStandardMaterial({
     color: '#05090d',
-    roughness: 0.54,
-    clearcoat: 0.1,
-    clearcoatRoughness: 0.38,
+    roughness: 0.42,
+    metalness: 0.06,
   });
   Object.assign(displayGlass, { oledTime: time, oledClock: clock.texture });
   displayGlass.onBeforeCompile = (shader) => {

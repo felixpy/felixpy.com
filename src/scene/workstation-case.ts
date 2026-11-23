@@ -156,7 +156,7 @@ export function workstationCase(
   const cardBounce = new T.PointLight('#ef6daf', 0, 0.19, 2);
   cardBounce.name = 'Astral edge lighting on the PSU shroud';
   cardBounce.position.set(-0.087, -0.061, -0.11);
-  unit.add(radiatorBounce, intakeBounce, cardBounce);
+  // Micro bounce PointLights replaced by emissive RGB guides + caseReflections (keeps NUM_POINT_LIGHTS lean)
   return {
     unit: assembly,
     showPower,

@@ -1072,22 +1072,25 @@ function CameraRig(
         if (ancestor === null) visibleArrival = true;
       }
       model.mountedDetails.length = 0;
-      if (props.nativeLow) roomMeshes.current?.refresh();
+      roomMeshes.current?.refresh();
       if (visibleArrival) {
         props.detailRevision.current++;
         shadowWarmup.current = 2;
       }
     }
-    const low = load.complete && env.quality === 'low';
-    if (props.nativeLow && low) {
+    const authoring =
+      import.meta.env.DEV && new URLSearchParams(location.search).get('review') === 'authoring';
+    const roomLodActive =
+      !authoring &&
+      load.complete &&
+      (isStation(current) || atWindow(current) || current === 'computer' || current === 'case');
+    if (roomLodActive) {
       const detail =
         inspection.current?.target.object ??
         (current === 'case' ? caseView.current.object : undefined);
       roomMeshes.current?.select(true, detail);
     } else {
-      roomMeshes.current?.select(
-        low && (isStation(current) || atWindow(current) || current === 'computer'),
-      );
+      roomMeshes.current?.select(false);
     }
     const cached = scratch.current;
     const ease = env.reducedMotion ? 1 : 1 - Math.exp(-delta * 10.5);

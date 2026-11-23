@@ -71,12 +71,11 @@ export function workbenchFixture(
   grain.anisotropy = 4;
   const finishes = {
     alloy: surface('#c5c8c5', 0.25, 0.96),
-    extrusion: new T.MeshPhysicalMaterial({
+    extrusion: new T.MeshStandardMaterial({
       color: '#c1c4c2',
       roughnessMap: grain,
       metalness: 0.96,
       roughness: 0.4,
-      anisotropy: 0.16,
     }),
     satin: surface('#bec1be', 0.36, 0.84),
     steel: surface('#a5a8a7', 0.25, 0.87),
@@ -119,7 +118,6 @@ export function ceilingFixture(parent: T.Object3D) {
   const outlet = group(unit, 'Ceiling diffuser outlet', [0, -0.093, 0]);
   const cove = new T.PointLight('#ffe3b9', 0, 2.4, 2);
   cove.position.set(0, -0.095, 0);
-  unit.add(cove);
   return { opal, halo, shell, reflector, outlet, cove };
 }
 

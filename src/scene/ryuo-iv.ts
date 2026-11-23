@@ -52,15 +52,13 @@ function amoled() {
     ctx.fillText('RYUO IV', 438, 185);
   });
   eye.dispose();
-  const material = new T.MeshPhysicalMaterial({
+  const material = new T.MeshStandardMaterial({
     color: '#23334a',
     map,
     emissiveMap: map,
     emissive: '#ffffff',
     emissiveIntensity: 1.6,
-    roughness: 0.22,
-    clearcoat: 0.52,
-    clearcoatRoughness: 0.2,
+    roughness: 0.18,
   });
   const ctx = map.image.getContext('2d')!;
   const background = ctx.getImageData(430, 100, 155, 68);

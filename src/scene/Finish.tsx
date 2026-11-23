@@ -66,7 +66,11 @@ export function Finish({
     () => new URLSearchParams(location.search).get('studio-warmup'),
     [],
   );
-  const progressive = progressiveStartup && enabled;
+  const legacyGtao = useMemo(
+    () => new URLSearchParams(location.search).get('studio-gtao') === 'legacy',
+    [],
+  );
+  const progressive = progressiveStartup && enabled && legacyGtao;
   const warmup = warmupOverride ?? (progressive ? 'isolated-catch-up' : null);
   const warmWorkbench = warmup === 'workbench';
   const pacing = warmup === 'paced' || warmup === 'adaptive' ? warmup : undefined;
@@ -154,7 +158,7 @@ export function Finish({
   }, [camera, catchUp, enabled, gl, grade, isolatedCatchUp, keepPreviewPrograms, liveFront, scene]);
 
   useEffect(() => {
-    if (!enabled || !gl.extensions.has('EXT_color_buffer_float')) return;
+    if (!enabled || !legacyGtao || !gl.extensions.has('EXT_color_buffer_float')) return;
     const options = new URLSearchParams(location.search);
     const fusedOutput = options.get('studio-output') !== 'legacy';
     const depth = new DepthTexture(1, 1);
@@ -182,7 +186,7 @@ export function Finish({
       beauty.dispose();
       composite?.dispose();
     };
-  }, [camera, enabled, gl, grade, scene]);
+  }, [camera, enabled, gl, grade, legacyGtao, scene]);
 
   useEffect(() => {
     const active = pipeline.current;

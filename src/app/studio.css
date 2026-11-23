@@ -283,7 +283,7 @@ button:disabled {
   color: #f1f1f4;
   border-bottom: 1px solid #ffffff24;
   box-shadow: 0 2px 9px #04050744;
-  backdrop-filter: blur(18px) saturate(0.72);
+  background: rgba(14, 16, 20, 0.82);
   font-size: clamp(11px, 2.75cqh, 14px);
 }
 .menu-bar > .tooltip-anchor,
@@ -322,7 +322,7 @@ button:disabled {
   background: #fafaffed;
   color: #252a30;
   box-shadow: 0 9px 25px #080c1652;
-  backdrop-filter: blur(22px);
+  background: rgba(14, 16, 20, 0.86);
 }
 .desktop[data-reduced-motion='false'] .menu-dropdown {
   animation: menu-reveal 150ms cubic-bezier(0.18, 0.7, 0.22, 1) both;
@@ -413,7 +413,7 @@ button:disabled {
   border-radius: 19px;
   border: 1px solid #eff4ff40;
   background: #e7edf144;
-  backdrop-filter: blur(22px);
+  background: rgba(14, 16, 20, 0.86);
   box-shadow: 0 5px 18px #07111d55;
 }
 .dock-button {

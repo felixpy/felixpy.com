@@ -16,14 +16,12 @@ function oakWorktop(
     return texture;
   });
   maps[0].colorSpace = T.SRGBColorSpace;
-  const oak = new T.MeshPhysicalMaterial({
+  const oak = new T.MeshStandardMaterial({
     map: maps[0],
     normalMap: maps[1],
     roughnessMap: maps[2],
-    roughness: 0.95,
+    roughness: 0.88,
     normalScale: new T.Vector2(0.37, 0.37),
-    clearcoat: 0.085,
-    clearcoatRoughness: 0.57,
     userData: { studioMatte: true },
   });
   oak.name = 'White-oiled oak · long grain';

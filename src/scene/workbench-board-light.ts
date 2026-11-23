@@ -17,17 +17,11 @@ export function workbenchBoardLight(bench: T.Group, manager: T.LoadingManager) {
   optic.position.copy(outlet);
   optic.quaternion.setFromUnitVectors(new T.Vector3(0, 0, -1), aim.clone().sub(outlet).normalize());
   const wash = new T.SpotLight('#ffd3a1', 0, 1.26, 0.99, 0.86, 2);
-  wash.castShadow = true;
+  wash.castShadow = false;
   wash.name = 'Mondrian tool board wash';
   wash.position.copy(outlet);
   wash.target.position.copy(aim);
-  wash.shadow.mapSize.set(512, 512);
-  wash.shadow.camera.near = 0.035;
-  wash.shadow.camera.far = wash.distance;
-  wash.shadow.bias = -0.00012;
-  wash.shadow.normalBias = 0.0007;
-  wash.shadow.intensity = 0;
-  unit.add(optic, wash, wash.target);
+  unit.add(wash, wash.target);
   let lens: T.MeshStandardMaterial | undefined;
   let power = false;
 

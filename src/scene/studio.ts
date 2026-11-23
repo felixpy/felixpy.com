@@ -947,19 +947,9 @@ export function* buildStudioSteps(
   const screenFill = new T.RectAreaLight('#c3d9ef', 1.75, display.width, display.height);
   screenFill.position.set(display.x, display.y, display.z + 0.016);
   screenFill.rotation.y = Math.PI;
-  root.add(
-    hemisphere,
-    windowLight,
-    windowLight.target,
-    aperture,
-    warm,
-    warm.target,
-    upper,
-    upper.target,
-    screenFill,
-  );
+  root.add(hemisphere, windowLight, windowLight.target, warm, warm.target, upper, upper.target);
   const benchLight = new T.SpotLight('#ffe9cd', 2.7, 1.85, 1.13, 0.76, 2);
-  benchLight.castShadow = true;
+  benchLight.castShadow = false;
   benchLight.shadow.mapSize.set(512, 512);
   benchLight.shadow.camera.near = 0.045;
   benchLight.shadow.camera.far = 1.85;

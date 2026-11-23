@@ -1,12 +1,23 @@
-import { Component, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import {
+  Component,
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
 import { pressRemote, type Environment } from './environment';
 import { deterministicReview, loadEnvironment, saveEnvironment } from './environment-preferences';
 import { graphicsDevice } from './graphics-device';
 import { isMobileDevice } from './mobile-device';
 import { lightForTarget, toggleHomeLight, type HomeLightId } from './home-lights';
 import type { AppID, InspectionLink, Mode, StudioControls, Target } from '../scene/interaction';
-import Desktop, { type ComputerSession } from '../desktop/Desktop';
+import type { ComputerSession } from '../desktop/Desktop';
 import Profile from '../desktop/apps/Profile';
+
+const Desktop = lazy(() => import('../desktop/Desktop'));
 import { useStudioMusic } from '../desktop/apps/music/useStudioMusic';
 import LoadingScreen from './ui/LoadingScreen';
 import FpsMeter from './ui/FpsMeter';
@@ -79,8 +90,9 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
   useEffect(() => {
     if (!webGL) return;
     let active = true;
-    void Promise.all([loadStudio(), prepareFonts()]).then(
-      ([module]) => {
+    void prepareFonts();
+    void loadStudio().then(
+      (module) => {
         if (active) setStudio(module);
       },
       () => {
@@ -183,15 +195,17 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
 
   const simple = (
     <main className="compact-studio">
-      <Desktop
-        compact
-        request={request}
-        session={computerSession}
-        setSession={setComputerSession}
-        environment={environment}
-        setEnvironment={updateEnvironment}
-        music={music}
-      />
+      <Suspense fallback={null}>
+        <Desktop
+          compact
+          request={request}
+          session={computerSession}
+          setSession={setComputerSession}
+          environment={environment}
+          setEnvironment={updateEnvironment}
+          music={music}
+        />
+      </Suspense>
       <FpsMeter />
     </main>
   );
@@ -316,17 +330,21 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
           />
         )}
         <div ref={screen} className="screen-anchor" data-visible="false" data-interactive="false">
-          <Desktop
-            request={request}
-            session={computerSession}
-            setSession={setComputerSession}
-            compact={false}
-            visible={mode === 'computer'}
-            environment={environment}
-            setEnvironment={updateEnvironment}
-            music={music}
-            onExit={() => controls.current?.exit()}
-          />
+          {(mode === 'computer' || request.sequence > 0) && (
+            <Suspense fallback={null}>
+              <Desktop
+                request={request}
+                session={computerSession}
+                setSession={setComputerSession}
+                compact={false}
+                visible={mode === 'computer'}
+                environment={environment}
+                setEnvironment={updateEnvironment}
+                music={music}
+                onExit={() => controls.current?.exit()}
+              />
+            </Suspense>
+          )}
         </div>
       </main>
     </RendererBoundary>
