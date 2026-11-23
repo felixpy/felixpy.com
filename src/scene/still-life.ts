@@ -5,13 +5,11 @@ import { loadDisplayModel } from './display-model';
 import lunaSections from './kinto-luna-sections.json';
 
 function blownGlass(color: string, opacity: number) {
-  return new T.MeshPhysicalMaterial({
+  return new T.MeshStandardMaterial({
     color,
     roughness: 0.14,
-    clearcoat: 1,
-    clearcoatRoughness: 0.08,
-    metalness: 0.04,
-    envMapIntensity: 1.5,
+    metalness: 0.06,
+    envMapIntensity: 1.65,
     transparent: true,
     opacity,
     depthWrite: false,
@@ -114,14 +112,13 @@ export function lunaVase(parent: T.Object3D, position: XYZ) {
   }
   const glass = blownGlass('#c7a781', 0.31);
   glass.name = 'Brown soda glass · KINTO 20332';
-  glass.ior = 1.515;
   glass.roughness = 0.075;
   const water = blownGlass('#dce5df', 0.12);
   water.name = 'Water · 36 mm fill';
-  water.ior = 1.333;
   water.metalness = 0;
   water.roughness = 0.055;
   for (const layer of [glass, water]) {
+    layer.customProgramCacheKey = () => 'blown-glass-fresnel';
     layer.onBeforeCompile = (shader) => {
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <opaque_fragment>',

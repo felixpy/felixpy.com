@@ -2,11 +2,13 @@ import {
   Component,
   lazy,
   Suspense,
+  useCallback,
   useEffect,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
+  type RefObject,
 } from 'react';
 import { pressRemote, type Environment } from './environment';
 import { deterministicReview, loadEnvironment, saveEnvironment } from './environment-preferences';
@@ -17,7 +19,8 @@ import type { AppID, InspectionLink, Mode, StudioControls, Target } from '../sce
 import type { ComputerSession } from '../desktop/Desktop';
 import Profile from '../desktop/apps/Profile';
 
-const Desktop = lazy(() => import('../desktop/Desktop'));
+const loadDesktop = () => import('../desktop/Desktop');
+const Desktop = lazy(loadDesktop);
 import { useStudioMusic } from '../desktop/apps/music/useStudioMusic';
 import LoadingScreen from './ui/LoadingScreen';
 import FpsMeter from './ui/FpsMeter';
@@ -47,6 +50,58 @@ class RendererBoundary extends Component<
   }
 }
 
+type HoverCueHandle = {
+  update: (text: string, point?: { x: number; y: number }) => void;
+};
+
+function HoverCue({
+  ready,
+  handleRef,
+}: {
+  ready: boolean;
+  handleRef: RefObject<HoverCueHandle | null>;
+}) {
+  const [text, setText] = useState('');
+  const cue = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    handleRef.current = {
+      update(nextText, point) {
+        if (point && cue.current) {
+          cue.current.style.setProperty(
+            '--cue-x',
+            Math.max(16, Math.min(window.innerWidth - 240, point.x + 17)) + 'px',
+          );
+          cue.current.style.setProperty(
+            '--cue-y',
+            Math.max(16, Math.min(window.innerHeight - 58, point.y + 18)) + 'px',
+          );
+        }
+        setText((current) => (current === nextText ? current : nextText));
+      },
+    };
+    return () => {
+      handleRef.current = null;
+    };
+  }, [handleRef]);
+
+  return (
+    <div
+      className="world-cue"
+      ref={cue}
+      aria-live="polite"
+      style={{ '--cue-x': '50%', '--cue-y': '54%' } as CSSProperties}
+    >
+      {ready && text && (
+        <>
+          <kbd>E</kbd>
+          <span>{text}</span>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function App({ prepareFonts }: { prepareFonts: () => Promise<unknown> }) {
   const [mobile] = useState(() => isMobileDevice(navigator));
   const [graphics] = useState(() => (mobile ? null : graphicsDevice()));
@@ -71,9 +126,8 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
     environment.blinds,
   );
   const [hint, setHint] = useState('');
-  const [hoverHint, setHoverHint] = useState('');
   const [inspectionLink, setInspectionLink] = useState<InspectionLink>();
-  const cue = useRef<HTMLDivElement>(null);
+  const hoverCue = useRef<HoverCueHandle>(null);
   const inspectionAnchor = useRef<HTMLAnchorElement>(null);
   const objectCaption = useRef<HTMLDivElement>(null);
   const [request, setRequest] = useState<{ id?: AppID; sequence: number }>({ sequence: 0 });
@@ -93,7 +147,10 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
     void prepareFonts();
     void loadStudio().then(
       (module) => {
-        if (active) setStudio(module);
+        if (active) {
+          setStudio(module);
+          void loadDesktop();
+        }
       },
       () => {
         if (active) setStudioUnavailable(true);
@@ -127,7 +184,7 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
     document.documentElement.lang = environment.locale === 'zh' ? 'zh-Hans' : 'en';
     document.title = environment.locale === 'zh' ? 'Felix Yang · 工作室' : 'Felix Yang — Studio';
     setHint('');
-    setHoverHint('');
+    hoverCue.current?.update('');
   }, [environment.locale]);
 
   const updateEnvironment = (patch: Partial<Environment>) =>
@@ -138,24 +195,14 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
     }));
   function handleMode(next: Mode, app?: AppID, link?: InspectionLink) {
     setMode(next);
-    setHoverHint('');
+    hoverCue.current?.update('');
     setInspectionLink(link);
     if (next === 'computer' && app)
       setRequest((prev) => ({ id: app, sequence: prev.sequence + 1 }));
   }
-  function handleHover(text: string, point?: { x: number; y: number }) {
-    if (point && cue.current) {
-      cue.current.style.setProperty(
-        '--cue-x',
-        Math.max(16, Math.min(window.innerWidth - 240, point.x + 17)) + 'px',
-      );
-      cue.current.style.setProperty(
-        '--cue-y',
-        Math.max(16, Math.min(window.innerHeight - 58, point.y + 18)) + 'px',
-      );
-    }
-    setHoverHint(text);
-  }
+  const handleHover = useCallback((text: string, point?: { x: number; y: number }) => {
+    hoverCue.current?.update(text, point);
+  }, []);
   function toggleLight(id: HomeLightId) {
     setEnvironment((current) => toggleHomeLight(current, id));
   }
@@ -268,19 +315,7 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
             <kbd>Esc</kbd> {t('Return to the computer desk', '回到电脑桌')}
           </div>
         )}
-        <div
-          className="world-cue"
-          ref={cue}
-          aria-live="polite"
-          style={{ '--cue-x': '50%', '--cue-y': '54%' } as CSSProperties}
-        >
-          {ready && hoverHint && (
-            <>
-              <kbd>E</kbd>
-              <span>{hoverHint}</span>
-            </>
-          )}
-        </div>
+        <HoverCue ready={ready} handleRef={hoverCue} />
         <div
           className="object-caption"
           ref={objectCaption}
@@ -330,7 +365,7 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
           />
         )}
         <div ref={screen} className="screen-anchor" data-visible="false" data-interactive="false">
-          {(mode === 'computer' || request.sequence > 0) && (
+          {(studio !== null || mode === 'computer' || request.sequence > 0) && (
             <Suspense fallback={null}>
               <Desktop
                 request={request}

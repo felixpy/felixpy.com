@@ -1,4 +1,6 @@
 import * as T from 'three';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { canvasTexture, group, mesh, surface, type XYZ } from './geometry';
 import type { Locale } from '../app/locale';
 import type { Palette } from './materials';
@@ -6,6 +8,8 @@ import { installMotherboard } from './motherboard';
 import { fittedCable, pcPowerHarness } from './case-interior-parts';
 import { ryuoIV } from './ryuo-iv';
 import { deferredDisplayModel, loadDisplayModel } from './display-model';
+import { packedBuffer } from './packed-buffer';
+import { disposeSubtree } from './engine/hero-lru';
 import { galleryDisplay } from './gallery-display';
 import { astralGraphics } from './astral-graphics';
 import { workstationCase } from './workstation-case';
@@ -34,6 +38,7 @@ export function monitor(parent: T.Object3D, p: Palette, manager: T.LoadingManage
     metalness: 0.06,
   });
   Object.assign(displayGlass, { oledTime: time, oledClock: clock.texture });
+  displayGlass.customProgramCacheKey = () => 'lg-oled-display';
   displayGlass.onBeforeCompile = (shader) => {
     shader.uniforms.flowTime = time;
     shader.uniforms.oledClock = { value: clock.texture };
@@ -91,11 +96,75 @@ function chassisFan(
   return unit;
 }
 
+const GLB_MAGIC = 0x46546c67; // 'glTF' little-endian
+
+const LIVE_TOWER_MESH_NAMES = new Set([
+  'GR701 port tempered glass',
+  'GR701 starboard tempered glass',
+  'GR701 front assembly · light',
+  'Thor 1600W Titanium III • aura',
+  'Thor OLED power draw',
+]);
+
+async function tryLoadOptionalGlb(path: string): Promise<T.Group | null> {
+  if (typeof fetch !== 'function') return null;
+  for (const candidate of [path + '.gz', path]) {
+    try {
+      const response = await fetch(candidate);
+      if (!response.ok) continue;
+      const contentType = response.headers.get('content-type') ?? '';
+      if (contentType.startsWith('text/')) continue;
+      const buffer = await packedBuffer(response);
+      if (buffer.byteLength < 12) continue;
+      if (new DataView(buffer).getUint32(0, true) !== GLB_MAGIC) continue;
+      await MeshoptDecoder.ready;
+      const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+      const { scene } = await loader.parseAsync(buffer, T.LoaderUtils.extractUrlBase(path));
+      return scene;
+    } catch {
+      // Optional asset absent or unavailable — fall back silently to full assembly.
+    }
+  }
+  return null;
+}
+
+function isInsideNamedAncestor(
+  node: T.Object3D,
+  ancestorName: string,
+  stopAt: T.Object3D,
+): boolean {
+  for (let cur: T.Object3D | null = node; cur && cur !== stopAt; cur = cur.parent) {
+    if (cur.name === ancestorName) return true;
+  }
+  return false;
+}
+
+function isLiveTowerMesh(part: T.Mesh, towerRoot: T.Object3D): boolean {
+  if (LIVE_TOWER_MESH_NAMES.has(part.name)) return true;
+  if (isInsideNamedAncestor(part, 'ROG Hyperion GR701 chassis', towerRoot)) return true;
+  if (isInsideNamedAncestor(part, 'Fan rotor', towerRoot)) return true;
+  if (
+    isInsideNamedAncestor(part, 'ROG Ryuo IV · curved 6.67-inch AMOLED and cold plate', towerRoot)
+  ) {
+    const mat = part.material;
+    if (!Array.isArray(mat) && mat instanceof T.MeshStandardMaterial && mat.emissiveMap) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export type TowerOptions = {
+  roomLod?: boolean;
+  mounted?: (scene: T.Group) => void;
+};
+
 export function tower(
   parent: T.Object3D,
   p: Palette,
   aura: T.MeshStandardMaterial[],
   manager: T.LoadingManager,
+  options: TowerOptions = {},
 ) {
   const details = productDetail();
   const { unit, updateLightGuide, showPower, accents } = workstationCase(
@@ -201,12 +270,77 @@ export function tower(
   const support = group(unit, 'ROG Herculx XH01', [-0.0789, -0.1685, -0.074]);
   support.rotation.y = -Math.PI / 2;
   loadDisplayModel(support, '/media/models/rog-herculx-xh01.glb', manager, { mesh: registerLight });
+
+  const authoring =
+    import.meta.env.DEV &&
+    typeof location !== 'undefined' &&
+    new URLSearchParams(location.search).get('review') === 'authoring';
+  const roomLodGroup = group(unit, 'GR701 room LOD');
+  roomLodGroup.visible = false;
+  let roomLodReady = false;
+  let roomLodApplied = false;
+  let inspectingCase = false;
+  const swappedHidden = new Set<T.Object3D>();
+
+  function applyRoomLodVisibility(useRoomLod: boolean, forceSweep = false) {
+    if (!roomLodReady) return;
+    if (useRoomLod === roomLodApplied && !forceSweep) return;
+    if (useRoomLod) {
+      unit.traverse((node) => {
+        if (node === roomLodGroup || isInsideNamedAncestor(node, roomLodGroup.name, unit)) return;
+        if (!(node instanceof T.Mesh) || !node.visible) return;
+        if (isLiveTowerMesh(node, unit)) return;
+        node.visible = false;
+        swappedHidden.add(node);
+      });
+      roomLodGroup.visible = true;
+      roomLodApplied = true;
+    } else {
+      roomLodGroup.visible = false;
+      for (const node of swappedHidden) node.visible = true;
+      swappedHidden.clear();
+      roomLodApplied = false;
+    }
+  }
+
+  function selectDetail(inspecting: boolean) {
+    if (inspectingCase === inspecting) return;
+    inspectingCase = inspecting;
+    if (inspecting) {
+      applyRoomLodVisibility(false);
+      details.select(true);
+    } else {
+      details.select(false);
+      if (roomLodReady) applyRoomLodVisibility(true);
+    }
+  }
+
+  if (options.roomLod && !authoring) {
+    void tryLoadOptionalGlb('/media/models/gr701-room.glb').then((lodScene) => {
+      if (!lodScene) return;
+      lodScene.traverse((part) => {
+        if (!(part instanceof T.Mesh)) return;
+        part.castShadow = !(part.material instanceof T.Material && part.material.transparent);
+        part.receiveShadow = true;
+        registerLight(part);
+      });
+      roomLodGroup.add(lodScene);
+      roomLodReady = true;
+      applyRoomLodVisibility(!inspectingCase, true);
+      lodScene.updateWorldMatrix(true, true, true);
+      options.mounted?.(lodScene);
+    });
+  }
+
   return {
     unit,
     updateLightGuide,
     updateTelemetry,
     setComponentLights,
-    selectDetail: details.select,
+    selectDetail,
+    refreshRoomLod() {
+      if (roomLodReady && !inspectingCase) applyRoomLodVisibility(true, true);
+    },
     fanGuides: [exhaustBlades],
     reflections,
   };
@@ -232,11 +366,14 @@ export function keyboard(
   const details = productDetail();
   const switches = group(unit, 'Azoth switch assembly');
   details.close(switches);
-  const prepareSwitches = deferredDisplayModel(
+  let loadSwitches = deferredDisplayModel(
     switches,
     '/media/models/rog-azoth-extreme-switches.glb',
-    { mounted: detailMounted },
+    {
+      mounted: detailMounted,
+    },
   );
+  const prepareSwitches = (loaderManager?: T.LoadingManager) => loadSwitches(loaderManager);
   if (switches.visible) void prepareSwitches(manager);
   aura.forEach((light, index) => {
     const suffix = String(index).padStart(2, '0');
@@ -262,7 +399,19 @@ export function keyboard(
     unit,
     legendMaterials,
     badge,
+    switches,
     prepareSwitches,
+    evictSwitches() {
+      details.select(false);
+      disposeSubtree(switches, { keepRoot: true });
+      loadSwitches = deferredDisplayModel(
+        switches,
+        '/media/models/rog-azoth-extreme-switches.glb',
+        {
+          mounted: detailMounted,
+        },
+      );
+    },
     selectDetail(inspecting: boolean) {
       details.select(inspecting);
       if (inspecting) void prepareSwitches();

@@ -11,7 +11,9 @@ export function cabinetSpots(unit: T.Group, manager: T.LoadingManager) {
     return new T.Vector3(edge, 2 * Math.cos(halfPowerAngle) - edge, peak);
   });
   const power = { value: 0.55 };
-  const visibility = { value: null as T.Texture | null };
+  const visibilityFallback = new T.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+  visibilityFallback.needsUpdate = true;
+  const visibility = { value: visibilityFallback as T.Texture };
   const visibilityReady = { value: 0 };
   const inverse = new T.Matrix4();
   const finishes = new WeakMap<T.Material, T.Material>();
@@ -27,9 +29,10 @@ export function cabinetSpots(unit: T.Group, manager: T.LoadingManager) {
     }
     const finish = source.clone();
     const receiver = obj.userData.caseShadowReceiver as 'floor' | 'back' | undefined;
+    const receiverMode = receiver === 'floor' ? 1 : receiver === 'back' ? 2 : 0;
     const cacheKey = source.customProgramCacheKey();
     const compile = source.onBeforeCompile;
-    finish.customProgramCacheKey = () => cacheKey + '-cabinet-' + (receiver ?? 'object');
+    finish.customProgramCacheKey = () => cacheKey + '-cabinet';
     finish.onBeforeCompile = (shader, renderer) => {
       compile.call(finish, shader, renderer);
       shader.uniforms.caseEmitters = { value: centers };
@@ -39,7 +42,8 @@ export function cabinetSpots(unit: T.Group, manager: T.LoadingManager) {
       shader.uniforms.caseToWorld = { value: unit.matrixWorld };
       shader.uniforms.caseFromWorld = { value: inverse };
       shader.uniforms.caseVisibility = visibility;
-      if (receiver === 'floor') shader.uniforms.caseVisibilityReady = visibilityReady;
+      shader.uniforms.caseVisibilityReady = visibilityReady;
+      shader.uniforms.caseReceiverMode = { value: receiverMode };
       shader.vertexShader =
         'uniform mat4 caseFromWorld; varying vec3 casePoint;\n' +
         shader.vertexShader.replace(
@@ -47,23 +51,24 @@ export function cabinetSpots(unit: T.Group, manager: T.LoadingManager) {
           `#include <project_vertex>
           casePoint = (caseFromWorld * vec4(cameraPosition + transpose(mat3(viewMatrix)) * mvPosition.xyz, 1.)).xyz;`,
         );
-      if (receiver === 'floor') {
-        shader.fragmentShader = shader.fragmentShader.replace(
-          '#include <aomap_fragment>',
-          `#include <aomap_fragment>
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <aomap_fragment>',
+        `#include <aomap_fragment>
+        if (caseReceiverMode > 0.5 && caseReceiverMode < 1.5) {
           vec2 floorUV = vec2(casePoint.x / 1.145 + 0.5,
                             0.25 * clamp((casePoint.z - 0.0195) / 0.351, 0.001, 0.999));
           float contactVisibility = mix(1.0, texture2D(caseVisibility, floorUV).b, caseVisibilityReady);
           reflectedLight.indirectDiffuse *= contactVisibility;
-          reflectedLight.indirectSpecular *= contactVisibility;`,
-        );
-      }
+          reflectedLight.indirectSpecular *= contactVisibility;
+        }`,
+      );
       shader.fragmentShader =
         `varying vec3 casePoint;
         uniform mat4 caseToWorld; uniform vec3 caseEmitters[5], caseAxes[5], caseOptics[5];
         uniform float caseDimmer;
-        ${receiver ? 'uniform sampler2D caseVisibility;' : ''}
-        ${receiver === 'floor' ? 'uniform float caseVisibilityReady;' : ''}
+        uniform sampler2D caseVisibility;
+        uniform float caseVisibilityReady;
+        uniform float caseReceiverMode;
         ` +
         shader.fragmentShader.replace(
           '#include <lights_fragment_begin>',
@@ -72,15 +77,13 @@ export function cabinetSpots(unit: T.Group, manager: T.LoadingManager) {
         if (caseDimmer > 0.001 && casePoint.z > 0.019 && casePoint.z < 0.35 &&
             abs(casePoint.x) < 0.565 && casePoint.y > 0.5195 && casePoint.y < 1.2851) {
           bool upper = casePoint.y >= 0.965;
-          ${
-            receiver
-              ? `float atlasV = ${
-                  receiver === 'floor'
-                    ? '0.25*clamp((casePoint.z-0.0195)/0.351,0.001,0.999)'
-                    : '(upper ? 0.625 + 0.375*clamp((casePoint.y-0.965)/0.320,0.001,0.999) : 0.25 + 0.375*clamp((casePoint.y-0.520)/0.445,0.001,0.999))'
-                };
-          vec3 visibleFromEmitter = texture2D(caseVisibility, vec2(casePoint.x/1.145 + 0.5, atlasV)).rgb;`
-              : ''
+          vec3 visibleFromEmitter = vec3(1.0);
+          if (caseReceiverMode > 0.5) {
+            float atlasV = caseReceiverMode < 1.5
+              ? 0.25 * clamp((casePoint.z - 0.0195) / 0.351, 0.001, 0.999)
+              : (upper ? 0.625 + 0.375 * clamp((casePoint.y - 0.965) / 0.320, 0.001, 0.999)
+                       : 0.25 + 0.375 * clamp((casePoint.y - 0.520) / 0.445, 0.001, 0.999));
+            visibleFromEmitter = texture2D(caseVisibility, vec2(casePoint.x / 1.145 + 0.5, atlasV)).rgb;
           }
           for (int emitter = 0; emitter < 5; ++emitter) {
             if (upper != (emitter < 3)) continue;
@@ -92,7 +95,7 @@ export function cabinetSpots(unit: T.Group, manager: T.LoadingManager) {
             IncidentLight displayLight;
             displayLight.direction = mat3(viewMatrix) * mat3(caseToWorld) * toward;
             displayLight.color = vec3(1.0,0.723,0.423) * (caseDimmer*optic.z*beam/r2);
-            ${receiver ? 'displayLight.color *= visibleFromEmitter[emitter < 3 ? emitter : emitter-3];' : ''}
+            displayLight.color *= visibleFromEmitter[emitter < 3 ? emitter : emitter-3];
             displayLight.visible = true;
             RE_Direct(displayLight,geometryPosition,geometryNormal,geometryViewDir,geometryClearcoatNormal,material,reflectedLight);
           }
@@ -108,12 +111,11 @@ export function cabinetSpots(unit: T.Group, manager: T.LoadingManager) {
   function load() {
     unit.updateWorldMatrix(true, false);
     inverse.copy(unit.matrixWorld).invert();
-    visibility.value = new T.TextureLoader(manager).load(
-      '/media/lighting/cabinet-spot-visibility.png',
-      () => {
-        visibilityReady.value = 1;
-      },
-    );
+    new T.TextureLoader(manager).load('/media/lighting/cabinet-spot-visibility.png', (loaded) => {
+      visibilityFallback.dispose();
+      visibility.value = loaded;
+      visibilityReady.value = 1;
+    });
     return loadDisplayModel(unit, '/media/models/c1-mini-lc.glb', manager, {
       mesh(part) {
         part.castShadow = false;

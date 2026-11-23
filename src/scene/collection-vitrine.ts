@@ -57,16 +57,16 @@ export function collectionVitrine(
   const back = print(unit, w - 0.03, 0.765, [0, 0.901, 0.0305], backing);
   back.castShadow = false;
   back.userData.caseShadowReceiver = 'back';
-  const glass = new T.MeshPhysicalMaterial({
+  const glass = new T.MeshStandardMaterial({
     color: '#dff2eb',
     transparent: true,
     opacity: 0.026,
-    roughness: 0.18,
+    roughness: 0.16,
     metalness: 0,
-    specularIntensity: 0.18,
-    clearcoat: 0.035,
+    envMapIntensity: 0.5,
     depthWrite: false,
   });
+  glass.customProgramCacheKey = () => 'vitrine-glass';
   glass.onBeforeCompile = (shader) => {
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <opaque_fragment>',
@@ -158,6 +158,7 @@ export function collectionVitrine(
           /^Z(\d+)(?:-\d+)? entrance pupil/.exec(source.name);
         if (pupil) {
           source.side = T.DoubleSide;
+          source.customProgramCacheKey = () => 'nikkor-entrance-pupil';
           source.onBeforeCompile = (shader) => {
             shader.uniforms.pupilFocalLength = { value: Number(pupil[1]) / 1000 };
             const telephoto = /^Z(?:70-200|100-400) /.test(source.name);
@@ -213,11 +214,15 @@ export function collectionVitrine(
           )
         ) {
           if (!finishes.has(source)) {
+            source.customProgramCacheKey = () => 'nikkor-optical-baffle';
             source.onBeforeCompile = (shader) => {
-              shader.fragmentShader = shader.fragmentShader.replace(
-                '#include <opaque_fragment>',
-                'outgoingLight *= vec3(0.037, 0.050, 0.056);\n#include <opaque_fragment>',
-              );
+              shader.uniforms.opticalDarken = { value: new T.Vector3(0.037, 0.05, 0.056) };
+              shader.fragmentShader =
+                'uniform vec3 opticalDarken;\n' +
+                shader.fragmentShader.replace(
+                  '#include <opaque_fragment>',
+                  'outgoingLight *= opticalDarken;\n#include <opaque_fragment>',
+                );
             };
             finishes.set(source, source);
           }
@@ -243,6 +248,7 @@ export function collectionVitrine(
               ? ['#b0c2ac', '#cfb295', '#9eb6bb', '#c3a9b5']
               : coatingTints;
             shader.uniforms.coatingTint = { value: new T.Color(tints[layer]) };
+            shader.uniforms.coatingCalibrated = { value: calibratedGlass ? 1 : 0 };
             shader.vertexShader = shader.vertexShader
               .replace(
                 '#include <common>',
@@ -255,7 +261,7 @@ export function collectionVitrine(
             shader.fragmentShader = shader.fragmentShader
               .replace(
                 '#include <common>',
-                '#include <common>\nuniform mat4 cabinetInverse; uniform vec3 coatingTint; uniform vec3 caseSpotCenters[3]; uniform vec3 caseSpotAxes[3]; uniform float casePower; varying vec3 cellPosition; varying vec3 glassWorld;',
+                '#include <common>\nuniform mat4 cabinetInverse; uniform vec3 coatingTint; uniform float coatingCalibrated; uniform vec3 caseSpotCenters[3]; uniform vec3 caseSpotAxes[3]; uniform float casePower; varying vec3 cellPosition; varying vec3 glassWorld;',
               )
               .replace(
                 '#include <opaque_fragment>',
@@ -280,26 +286,23 @@ export function collectionVitrine(
                 vec2 screen = abs((glassWorld + bounce * toScreen).xy-vec2(${display.x},${display.y}));
                 vec2 oled = 1.0-smoothstep(vec2(${display.width / 2 - 0.03},${display.height / 2 - 0.03}),
                   vec2(${display.width / 2},${display.height / 2}),screen);
-                ${
-                  calibratedGlass
-                    ? `float gain = 0.022 + 0.18 * pow(1.0-abs(dot(normal,normalize(vViewPosition))), 3.0);
-                #ifdef ENVMAP_TYPE_CUBE_UV
-                  vec3 coat = textureCubeUV(envMap, envMapRotation * bounce, 0.075).rgb * envMapIntensity;
-                  outgoingLight += coatingTint * coat * gain;
-                #endif
-                float toOak = (0.0305-cellPosition.z) / min(-0.0001,cabinetRay.z);
-                vec2 oak = abs((cellPosition + toOak*cabinetRay).xy - vec2(0.,1.126));
-                float backing = (1.0-smoothstep(0.52,0.59,oak.x)) * (1.0-smoothstep(0.13,0.18,oak.y));
-                outgoingLight += coatingTint * vec3(0.15,0.115,0.085) * gain * backing * step(cabinetRay.z,0.0);`
-                    : ''
+                if (coatingCalibrated > 0.5) {
+                  float gain = 0.022 + 0.18 * pow(1.0-abs(dot(normal,normalize(vViewPosition))), 3.0);
+                  #ifdef ENVMAP_TYPE_CUBE_UV
+                    vec3 coat = textureCubeUV(envMap, envMapRotation * bounce, 0.075).rgb * envMapIntensity;
+                    outgoingLight += coatingTint * coat * gain;
+                  #endif
+                  float toOak = (0.0305-cellPosition.z) / min(-0.0001,cabinetRay.z);
+                  vec2 oak = abs((cellPosition + toOak*cabinetRay).xy - vec2(0.,1.126));
+                  float backing = (1.0-smoothstep(0.52,0.59,oak.x)) * (1.0-smoothstep(0.13,0.18,oak.y));
+                  outgoingLight += coatingTint * vec3(0.15,0.115,0.085) * gain * backing * step(cabinetRay.z,0.0);
                 }
                 outgoingLight += coatingTint * (caseReflection * casePower * 0.95 + vec3(0.064,0.092,0.12) *
                   opening.x*opening.y*mullion*step(bounce.x,0.0) + vec3(.036,.050,.058)*oled.x*oled.y*step(bounce.z,0.0));
                 #include <opaque_fragment>`,
               );
           };
-          finish.customProgramCacheKey = () =>
-            calibratedGlass ? 'nikkor-calibrated-zoom' : 'nikkor-coating';
+          finish.customProgramCacheKey = () => 'nikkor-vitrine-coating';
           finishes.set(source, finish);
         }
         part.material = finish;

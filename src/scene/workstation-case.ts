@@ -31,6 +31,7 @@ export function workstationCase(
     opacity: 0.115,
     depthWrite: false,
   });
+  glass.customProgramCacheKey = () => 'gr701-tempered-glass';
   glass.onBeforeCompile = (shader) => {
     shader.fragmentShader = shader.fragmentShader
       .replace(
@@ -48,8 +49,10 @@ export function workstationCase(
       );
   };
   const glassPanel = box(unit, [0.004, 0.524, 0.487], [-w / 2 + 0.011, 0, -0.0505], glass, 0.001);
+  glassPanel.name = 'GR701 port tempered glass';
   glassPanel.castShadow = false;
   const rightGlass = glass.clone();
+  rightGlass.customProgramCacheKey = glass.customProgramCacheKey;
   rightGlass.onBeforeCompile = glass.onBeforeCompile;
   rightGlass.opacity = 0.29;
   const glassDoor = box(

@@ -59,5 +59,41 @@ Profiling of the baseline build (`codex/studio-remake-checkpoint`, commit `86a40
 ```powershell
 npm run build
 npm run test:ci
-node scripts/performance/studio-benchmark.mjs 4k 1 --seconds=10 --gpu-timing --gpu-downstream --draw-calls --screenshot
+node scripts/performance/studio-benchmark.mjs 4k 1 --seconds=10 --gpu-timing --draw-calls --screenshot --check-shaders
+node scripts/performance/studio-benchmark.mjs uhd-native 1 --seconds=10 --gpu-timing --draw-calls --screenshot --check-shaders
 ```
+
+## Delivered results and provenance
+
+### Art-to-web asset provenance
+
+- **Art repository:** `felix-studio-art` (branch `perf/cook-pipeline-overhaul`, commit `91fcea3216f4a84839446e6d5cedfdfd468001b4`, zero `.blend` source masters modified)
+- **Source assembly:** `scenes/studio/felix-studio-assembled.blend`
+
+| Export                                         | Generator                                  |     Bytes | SHA-256                                                            |
+| ---------------------------------------------- | ------------------------------------------ | --------: | ------------------------------------------------------------------ |
+| `public/media/lighting/room-contact-ao.png`    | `pipeline/bake/bake-room-contact-ao.py`    |   266,189 | `9e22a98155ff4f9725a43b344ab6f26aedde30423012838bb55fc40a3e8eea01` |
+| `public/media/lighting/room-rect-lightmap.png` | `pipeline/bake/bake-room-rect-lightmap.py` |   981,082 | `813ac50fe882a7812ce58a34ee419e1fcb259649632506c04e453b94d67de732` |
+| `public/media/lighting/room-rear-lightmap.png` | `pipeline/bake/bake-room-rear-lightmap.py` | 1,938,062 | `17767e46f27c5b58808445afdaa0909454afd91a74a58e0baebeb3a6cb31a196` |
+| `public/media/models/gr701-room.glb`           | `pipeline/cook/cook-gr701-room-lod.py`     | 2,228,172 | `ebac895b52c418ee743a4f7d51de389eb48cf6eb9ddbf335502221d94e44bcff` |
+
+### Verified hardware benchmark matrix
+
+| Metric                         | Baseline (`86a4068`) RTX 4090 4K |       Overhaul RTX 4090 4K (`run 16`) |    Overhaul RTX 4090 1440p (`run 10`) | Overhaul Intel UHD 770 1080p (`run 11`) |
+| ------------------------------ | -------------------------------: | ------------------------------------: | ------------------------------------: | --------------------------------------: |
+| Steady FPS (desk route)        |                           123.68 |          **143.25** (144.00 day/case) |    **143.50** (144.00 cabinet/window) |     **21.86** (vs 14.69 baseline, +49%) |
+| Frame P50 / P95 / Max (ms)     |                7.0 / 13.9 / 34.7 | **6.9 / 7.0 / 13.9** (`over33_4 = 0`) | **6.9 / 7.0 / 14.0** (`over33_4 = 0`) |      **41.8 / 55.7 / 152.7** (P95 -53%) |
+| Main-color GPU P50 / P95 (ms)  |         5.48 / 14.4 (+1.87 GTAO) |     **4.84 / 6.35** (0.00 downstream) |                       **4.66 / 5.61** |                       **44.70 / 48.61** |
+| Primary submit P95 (ms)        |                             13.2 |                        **6.8** (-48%) |                               **6.2** |                                 **7.8** |
+| Shader programs                |                              151 |                        **100** (-34%) |                               **100** |                                 **101** |
+| Triangles (desk view)          |                        1,733,529 |                    **988,756** (-43%) |                           **988,756** |                             **986,320** |
+| Indexed draw calls P50         |             1,020+ (1,188 total) |                 **855** (1,019 total) |                               **855** |                                 **736** |
+| Initial shading readiness (ms) |                           17,479 |               **5,936** (3.0× faster) |                             **5,630** |              **6,296** (vs 11.4–13.9 s) |
+| Shader compile issues          |                                0 |                                 **0** |                                 **0** |                                   **0** |
+
+### Verification summary
+
+- `npm run build` (`tsc --noEmit` + Vite production build): passed cleanly.
+- `npm run test:ci`: **69 / 69** passed (`35.1 s`).
+- Targeted `@webgl` Playwright suite (`studio.spec.ts`, `room-picking.spec.ts`, `rear-loading.spec.ts`, `workstation-fit.spec.ts`, `case-accent-lighting.spec.ts`, `room-warmup.spec.ts`, `studio-gpu-color-passes.spec.mjs`): all passed.
+- 5-camera visual regression verified via full-resolution screenshots: Desk (night & daylight), PC Tower close-up (`case` Hero swap), East Workbench (`bench` seated), South Collection Cabinet (`cabinet`), and West Window (`window`), plus Intel UHD 770 native 1080p render.

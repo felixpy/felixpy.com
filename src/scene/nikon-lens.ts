@@ -6,6 +6,8 @@ import { display, windowOpening } from './layout';
 import { coatingLayers, coatingTints, nikkorCoating } from './nikkor-coating';
 import { productDetail } from './product-detail';
 
+const darkenedBaffles = new WeakSet<T.Material>();
+
 function mountedOptics(part: T.Mesh) {
   const source = part.material;
   if (!(source instanceof T.MeshStandardMaterial)) return;
@@ -14,12 +16,19 @@ function mountedOptics(part: T.Mesh) {
       source.name,
     )
   ) {
-    source.onBeforeCompile = (shader) => {
-      shader.fragmentShader = shader.fragmentShader.replace(
-        '#include <opaque_fragment>',
-        'outgoingLight *= vec3(0.070, 0.080, 0.085);\n#include <opaque_fragment>',
-      );
-    };
+    if (!darkenedBaffles.has(source)) {
+      darkenedBaffles.add(source);
+      source.customProgramCacheKey = () => 'nikkor-optical-baffle';
+      source.onBeforeCompile = (shader) => {
+        shader.uniforms.opticalDarken = { value: new T.Vector3(0.07, 0.08, 0.085) };
+        shader.fragmentShader =
+          'uniform vec3 opticalDarken;\n' +
+          shader.fragmentShader.replace(
+            '#include <opaque_fragment>',
+            'outgoingLight *= opticalDarken;\n#include <opaque_fragment>',
+          );
+      };
+    }
     return;
   }
   if (source.name.startsWith('Z24-70 entrance pupil')) {

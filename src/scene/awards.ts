@@ -75,12 +75,11 @@ function photography(trophy: T.Group, p: Palette) {
   const aperture = new T.Path();
   aperture.absarc(0, 0.073, 0.026, 0, Math.PI * 2, true);
   shape.holes.push(aperture);
-  const glass = new T.MeshPhysicalMaterial({
+  const glass = new T.MeshStandardMaterial({
     color: '#60938e',
-    roughness: 0.18,
-    metalness: 0.21,
-    clearcoat: 0.89,
-    clearcoatRoughness: 0.09,
+    roughness: 0.12,
+    metalness: 0.25,
+    envMapIntensity: 1.35,
     transparent: true,
     opacity: 0.76,
   });

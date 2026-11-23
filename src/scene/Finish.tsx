@@ -4,6 +4,7 @@ import { DepthTexture, HalfFloatType, WebGLRenderTarget, type Object3D } from 't
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import type { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import type { RoomLook } from '../app/environment';
+import { detectGraphicsProfile, type GraphicsTier } from '../app/graphics-device';
 import { roomColorGrade } from './room-color-grade';
 import { roomWarmup } from './room-warmup';
 import { roomOcclusion } from './room-occlusion';
@@ -55,7 +56,8 @@ export function Finish({
   firstFrame: ReturnType<typeof roomFirstFrame>;
   progressiveStartup: boolean;
 }) {
-  const { gl, scene, camera, size, viewport } = useThree();
+  const { gl, scene, camera, size, viewport, setDpr } = useThree();
+  const device = useMemo(() => detectGraphicsProfile(gl.getContext()), [gl]);
   const grade = useMemo(roomColorGrade, []);
   const prefill = useMemo(() => {
     const mode = new URLSearchParams(location.search).get('studio-depth-prefill');
@@ -70,7 +72,12 @@ export function Finish({
     () => new URLSearchParams(location.search).get('studio-gtao') === 'legacy',
     [],
   );
-  const progressive = progressiveStartup && enabled && legacyGtao;
+  const useLegacyGtao =
+    enabled &&
+    legacyGtao &&
+    device.allowOffscreenGtao &&
+    gl.extensions.has('EXT_color_buffer_float');
+  const progressive = progressiveStartup && useLegacyGtao;
   const warmup = warmupOverride ?? (progressive ? 'isolated-catch-up' : null);
   const warmWorkbench = warmup === 'workbench';
   const pacing = warmup === 'paced' || warmup === 'adaptive' ? warmup : undefined;
@@ -86,11 +93,12 @@ export function Finish({
   );
   const keepPreviewPrograms = useMemo(
     () =>
-      nativeLow &&
-      !enabled &&
-      new URLSearchParams(location.search).get('studio-tea-warmup') !== 'legacy',
-    [enabled, nativeLow],
+      !useLegacyGtao && new URLSearchParams(location.search).get('studio-tea-warmup') !== 'legacy',
+    [useLegacyGtao],
   );
+  const activeTier = useRef<GraphicsTier>(device.tier);
+  const wasInComputer = useRef(false);
+  const lastLook = useRef<RoomLook>(look);
   useEffect(() => () => firstFrame.dispose(), [firstFrame]);
   useEffect(() => () => grade.dispose(), [grade]);
   useEffect(() => () => prefill?.dispose(), [prefill]);
@@ -158,7 +166,23 @@ export function Finish({
   }, [camera, catchUp, enabled, gl, grade, isolatedCatchUp, keepPreviewPrograms, liveFront, scene]);
 
   useEffect(() => {
-    if (!enabled || !legacyGtao || !gl.extensions.has('EXT_color_buffer_float')) return;
+    gl.domElement.dataset.graphicsTier = activeTier.current;
+    const onVisibility = () => {
+      if (!document.hidden) {
+        sample.current.frames =
+          sample.current.slowFrames =
+          sample.current.elapsed =
+          sample.current.headroom =
+            0;
+        lastRoomFrame.current = 0;
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [gl]);
+
+  useEffect(() => {
+    if (!useLegacyGtao) return;
     const options = new URLSearchParams(location.search);
     const fusedOutput = options.get('studio-output') !== 'legacy';
     const depth = new DepthTexture(1, 1);
@@ -186,7 +210,7 @@ export function Finish({
       beauty.dispose();
       composite?.dispose();
     };
-  }, [camera, enabled, gl, grade, legacyGtao, scene]);
+  }, [camera, gl, grade, scene, useLegacyGtao]);
 
   useEffect(() => {
     const active = pipeline.current;
@@ -199,6 +223,7 @@ export function Finish({
   }, [camera, enabled, gl, scene, size.width, size.height, viewport.dpr]);
 
   useFrame(({ clock }, delta) => {
+    if (document.hidden) return;
     if (firstPicture.current === 'interactive' && !roomVisible) return;
     if (firstPicture.current === 'loading' || firstPicture.current === 'interactive') {
       if (firstFrame.preparing(gl, scene, camera)) return;
@@ -215,31 +240,55 @@ export function Finish({
     if (firstPicture.current === 'drawn' && !roomVisible) return;
     const now = clock.elapsedTime;
     const inComputer = screen.current?.dataset.interactive === 'true';
-    if (inComputer && now - lastRoomFrame.current < 0.16) return;
+    const lookChanged = look !== lastLook.current;
+    if (lookChanged) lastLook.current = look;
+    if (wasInComputer.current !== inComputer) {
+      wasInComputer.current = inComputer;
+      if (!inComputer) lastRoomFrame.current = 0;
+    }
+    if (inComputer && !lookChanged && now - lastRoomFrame.current < 0.25) return;
     lastRoomFrame.current = now;
-    if (
-      !enabled &&
-      !nativeLow &&
-      firstPicture.current === 'drawn' &&
-      !inComputer &&
-      !document.hidden
-    ) {
+    if (firstPicture.current === 'drawn' && !inComputer && !nativeLow && delta < 0.1) {
       const timing = sample.current;
       timing.elapsed += delta;
       if (delta > 1 / 42) timing.slowFrames++;
-      if (++timing.frames >= 3 && timing.elapsed >= 0.75) {
+      if (!enabled) {
+        if (++timing.frames >= 3 && timing.elapsed >= 0.75) {
+          const average = timing.elapsed / timing.frames;
+          const floorScale = device.minScale;
+          if (average > 1 / 42 && timing.slowFrames * 2 >= timing.frames) {
+            const next = Math.max(
+              floorScale,
+              Math.floor(viewport.dpr * Math.sqrt(1 / 50 / average) * 8) / 8,
+            );
+            if (next < viewport.dpr) setLowScale(next);
+            timing.headroom = 0;
+          } else if (average < 1 / 55 && viewport.dpr < 1) {
+            timing.headroom += timing.elapsed;
+            if (timing.headroom >= 8) {
+              setLowScale(Math.min(1, viewport.dpr + 0.125));
+              timing.headroom = 0;
+            }
+          } else timing.headroom = 0;
+          timing.frames = timing.slowFrames = timing.elapsed = 0;
+        }
+      } else if (++timing.frames >= 8 && timing.elapsed >= 1.2) {
         const average = timing.elapsed / timing.frames;
-        if (average > 1 / 42 && timing.slowFrames * 2 >= timing.frames) {
-          const next = Math.max(
-            0.5,
-            Math.floor(viewport.dpr * Math.sqrt(1 / 50 / average) * 8) / 8,
-          );
-          if (next < viewport.dpr) setLowScale(next);
+        const ceilingDpr = Math.min(window.devicePixelRatio || 1, device.maxDpr, 1.5);
+        if (average > 1 / 38 && timing.slowFrames * 2 >= timing.frames) {
+          if (activeTier.current === 'ultra') activeTier.current = 'high';
+          else if (activeTier.current === 'high') activeTier.current = 'balanced';
+          gl.domElement.dataset.graphicsTier = activeTier.current;
+          if (viewport.dpr > 1) {
+            setDpr(Math.max(1, Math.floor(viewport.dpr * 8 - 1) / 8));
+          }
           timing.headroom = 0;
-        } else if (average < 1 / 55 && viewport.dpr < 1) {
+        } else if (average < 1 / 55 && viewport.dpr < ceilingDpr) {
           timing.headroom += timing.elapsed;
           if (timing.headroom >= 8) {
-            setLowScale(Math.min(1, viewport.dpr + 0.125));
+            setDpr(Math.min(ceilingDpr, viewport.dpr + 0.125));
+            activeTier.current = device.tier;
+            gl.domElement.dataset.graphicsTier = activeTier.current;
             timing.headroom = 0;
           }
         } else timing.headroom = 0;

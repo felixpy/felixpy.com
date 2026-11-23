@@ -66,6 +66,7 @@ function pellicle(seat: boolean) {
     metalness: 0.03,
   });
   weave.forceSinglePass = true;
+  weave.customProgramCacheKey = () => 'aeron-pellicle';
   weave.onBeforeCompile = (shader) => {
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <map_fragment>',

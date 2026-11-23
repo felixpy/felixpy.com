@@ -153,11 +153,11 @@ function activeGuide(unit: T.Group, material: T.Material, height: number) {
 }
 
 function glazing(color: string, minimum: number) {
-  const material = new T.MeshPhysicalMaterial({
+  const material = new T.MeshStandardMaterial({
     color,
-    roughness: 0.11,
-    metalness: 0.12,
-    clearcoat: 0.85,
+    roughness: 0.08,
+    metalness: 0.16,
+    envMapIntensity: 1.35,
     transparent: true,
     opacity: minimum,
     depthWrite: false,
@@ -167,12 +167,10 @@ function glazing(color: string, minimum: number) {
   material.onBeforeCompile = (shader) => {
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <opaque_fragment>',
-      'diffuseColor.a = min(0.96, ' +
-        minimum.toFixed(3) +
-        ' + 0.48 * pow(1.0 - abs(dot(normalize(normal), normalize(vViewPosition))), 3.0));\n#include <opaque_fragment>',
+      'diffuseColor.a = min(0.96, opacity + 0.48 * pow(1.0 - abs(dot(normalize(normal), normalize(vViewPosition))), 3.0));\n#include <opaque_fragment>',
     );
   };
-  material.customProgramCacheKey = () => 'enclosure-' + minimum;
+  material.customProgramCacheKey = () => 'enclosure-glazing';
   return material;
 }
 

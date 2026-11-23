@@ -145,11 +145,11 @@ function rearControls(
 }
 
 function topControls(camera: T.Group, p: Palette) {
-  const lcd = new T.MeshPhysicalMaterial({
+  const lcd = new T.MeshStandardMaterial({
     color: '#182025',
-    roughness: 0.23,
-    clearcoat: 0.78,
-    clearcoatRoughness: 0.13,
+    roughness: 0.14,
+    metalness: 0.08,
+    envMapIntensity: 1.25,
   });
   box(camera, [0.035, 0.00065, 0.019], [-0.046, 0.04265, -0.012], p.black, 0.00025);
   box(camera, [0.028, 0.00045, 0.0156], [-0.043, 0.04299, -0.012], lcd, 0.0002);
