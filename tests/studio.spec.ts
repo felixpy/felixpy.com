@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { devices, expect, test, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import {
   DoubleSide,
@@ -1819,7 +1819,12 @@ test('the loader advances before the room arrives and completes after it is read
 test('mobile opens the public profile directly and computes experience from July 2014', async ({
   page,
 }) => {
-  await page.addInitScript(() => {
+  const studioRequests: string[] = [];
+  page.on('request', (request) => {
+    if (/room-parts\.bpk|\/StudioView\./.test(request.url())) studioRequests.push(request.url());
+  });
+  await page.addInitScript((userAgent) => {
+    Object.defineProperty(navigator, 'userAgent', { value: userAgent });
     HTMLCanvasElement.prototype.getContext = new Proxy(HTMLCanvasElement.prototype.getContext, {
       apply(getContext, canvas, args) {
         if (args[0] === 'webgl2') {
@@ -1829,7 +1834,7 @@ test('mobile opens the public profile directly and computes experience from July
         return Reflect.apply(getContext, canvas, args);
       },
     });
-  });
+  }, devices['iPhone 13'].userAgent);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.clock.setFixedTime(new Date('2027-06-20T12:00:00Z'));
@@ -1849,8 +1854,59 @@ test('mobile opens the public profile directly and computes experience from July
   await expect(page.getByText('13 years', { exact: true })).toBeVisible();
   await expect(page.locator('html')).not.toHaveAttribute('data-studio-graphics-probed', 'true');
   await page.setViewportSize({ width: 1100, height: 780 });
-  await expect(page.locator('.compact-studio')).toBeVisible();
-  await expect(page.locator('html')).toHaveAttribute('data-studio-graphics-probed', 'true');
+  await expect(page.locator('.mobile-home')).toBeVisible();
+  await expect(page.locator('.compact-studio, .studio')).toHaveCount(0);
+  await expect(page.locator('html')).not.toHaveAttribute('data-studio-graphics-probed', 'true');
+  expect(studioRequests).toEqual([]);
+});
+
+test('a wide iPad with a desktop UA still opens the public profile', async ({ page }) => {
+  await page.setViewportSize({ width: 1366, height: 1024 });
+  await page.addInitScript((userAgent) => {
+    Object.defineProperties(navigator, {
+      userAgent: { value: userAgent },
+      maxTouchPoints: { value: 5 },
+    });
+  }, devices['Desktop Safari'].userAgent);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  await expect(page.locator('.mobile-home')).toBeVisible();
+  await expect(page.locator('head > link[href$="room-parts.bpk"]')).toHaveCount(0);
+});
+
+test('a small desktop keeps the 3D scene and computer open across resizes @webgl', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 640, height: 360 });
+  await start(page);
+  const canvas = page.locator('.studio-canvas canvas');
+  const initialCanvas = await canvas.elementHandle();
+  await expect(canvas).toBeVisible();
+  await expect(page.locator('head > link[href$="room-parts.bpk"]')).toHaveCount(1);
+
+  const entry = page.locator('.keyboard-entry');
+  await entry.focus();
+  await entry.press('Enter');
+  const studio = page.locator('.studio');
+  const screen = page.locator('.screen-anchor');
+  await expect(studio).toHaveAttribute('data-mode', 'computer');
+  await expect(screen).toHaveAttribute('data-interactive', 'true', { timeout: 20_000 });
+  await page.getByRole('button', { name: 'Orbital Patrol', exact: true }).click();
+  const close = page.getByRole('button', { name: 'Close Orbital Patrol' });
+  await expect(close).toBeInViewport();
+
+  for (const viewport of [
+    { width: 1280, height: 800 },
+    { width: 640, height: 360 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect(studio).toHaveAttribute('data-mode', 'computer');
+    await expect(close).toBeInViewport();
+    await expect(page.locator('.mobile-home, .studio-loading')).toHaveCount(0);
+    expect(await canvas.evaluate((node, previous) => node === previous, initialCanvas)).toBe(true);
+  }
+  await close.click();
+  await expect(close).toHaveCount(0);
 });
 
 test('the music collection shares playback state and the computer keeps portrait game controls', async ({
