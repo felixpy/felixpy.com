@@ -1,0 +1,96 @@
+name: Publish site with R2
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: felixpy-production
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      VITE_ASSET_BASE_URL: https://assets.felixpy.com/felix-studio/
+      SITE_ORIGIN: https://felixpy.com
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: npm
+      - name: Install Vercel CLI
+        run: npm install --global vercel@66.6.0
+      - name: Load production settings
+        run: vercel pull --yes --environment=production
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      - name: Build production output
+        run: vercel build --prod
+      - name: Check current branch before R2 upload
+        run: test "$GITHUB_SHA" = "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$GITHUB_REF_NAME" --jq '.object.sha')"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Publish assets and remove them from Vercel output
+        run: node scripts/deploy/r2-assets.mjs .vercel/output/static
+        env:
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_REQUEST_CHECKSUM_CALCULATION: WHEN_REQUIRED
+          AWS_RESPONSE_CHECKSUM_VALIDATION: WHEN_REQUIRED
+      - name: Stage and check cross-origin delivery
+        id: stage
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          deployment="$(vercel deploy --prebuilt --prod --skip-domain --yes --json)"
+          deployment="$(jq -cer '(.deployment // .) | select(.target == "production" and .readyState == "READY")' <<< "$deployment")"
+          id="$(jq -er '.id | select(test("^dpl_[a-zA-Z0-9]+$"))' <<< "$deployment")"
+          url="$(jq -er '.url | select(test("^https://[a-z0-9-]+\\.vercel\\.app$"))' <<< "$deployment")"
+          printf 'Staged deployment: %s\n' "$url" >> "$GITHUB_STEP_SUMMARY"
+          for origin in "$url" "https://felixpy.vercel.app"; do
+            headers="$(curl --fail --silent --show-error --head --header "Origin: $origin" "${VITE_ASSET_BASE_URL}media/credits.txt" | tr -d '\r')"
+            grep -Fix "access-control-allow-origin: *" <<< "$headers" ||
+              grep -Fix "access-control-allow-origin: $origin" <<< "$headers"
+          done
+          printf 'id=%s\n' "$id" >> "$GITHUB_OUTPUT"
+      - name: Promote the verified deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          DEPLOYMENT_ID: ${{ steps.stage.outputs.id }}
+        run: |
+          test "$GITHUB_SHA" = "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/dev" --jq '.object.sha')"
+          vercel promote "$DEPLOYMENT_ID" --yes --timeout=5m
+      - name: Verify production domains
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          DEPLOYMENT_ID: ${{ steps.stage.outputs.id }}
+        run: |
+          for domain in felixpy.com felixpy.vercel.app; do
+            assigned=''
+            for attempt in {1..6}; do
+              assigned="$(curl --fail --silent --show-error --max-time 15 \
+                --header "Authorization: Bearer $VERCEL_TOKEN" \
+                "https://api.vercel.com/v4/aliases/$domain?teamId=$VERCEL_ORG_ID" | jq -er '.deploymentId')"
+              if [[ "$assigned" == "$DEPLOYMENT_ID" ]]; then break; fi
+              sleep 5
+            done
+            test "$assigned" = "$DEPLOYMENT_ID"
+            for route in / /about; do
+              html="$(curl --fail --silent --show-error --max-time 20 "https://$domain$route?release=$GITHUB_SHA")"
+              grep -F "$VITE_ASSET_BASE_URL" <<< "$html" >/dev/null
+            done
+          done

@@ -1,4 +1,5 @@
 import * as T from 'three';
+import { assetUrl } from '../app/asset-url';
 import { box, cable, canvasTexture, group, mesh, surface, tube, type XYZ } from './geometry';
 import type { Palette } from './materials';
 
@@ -480,7 +481,7 @@ export function nikonZ8(parent: T.Object3D, p: Palette, loader: T.TextureLoader)
   );
   marking(camera, 'Nikon', 0.035, 0.011, [0.008, 0.053, 0.0244]);
   marking(camera, 'Z 8', 0.02, 0.009, [0.054, 0.028, 0.0267]);
-  const photo = loader.load('/media/photography/dalian-xinghai-bay.webp');
+  const photo = loader.load(assetUrl('/media/photography/dalian-xinghai-bay.webp'));
   photo.colorSpace = T.SRGBColorSpace;
   photo.anisotropy = 8;
   rearControls(camera, p, photo);
