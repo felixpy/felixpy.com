@@ -49,7 +49,7 @@
 .phosphor-loader .spectral-shader {
   z-index: 1;
 }
-.phosphor-loader .spectral-shader:not([data-ready]) {
+.spectral-shader:not([data-ready]) {
   visibility: hidden;
 }
 .phosphor-loader > p {
@@ -113,6 +113,11 @@
   box-shadow: 0 0 8px #8ed46342;
 }
 .phosphor-loader[data-reduced-motion='false'] .phosphor-cursor span {
+  animation: phosphor-pulse 0.8s ease-in-out alternate infinite;
+}
+.phosphor-loader[data-loader-animation='legacy'][data-reduced-motion='false']
+  .phosphor-cursor
+  span {
   animation: phosphor-blink 1.15s steps(2, jump-none) infinite;
 }
 .phosphor-percent {
@@ -128,6 +133,16 @@
 @keyframes phosphor-blink {
   to {
     opacity: 0.35;
+  }
+}
+@keyframes phosphor-pulse {
+  from {
+    opacity: 0.42;
+    transform: translate(-50%, -50%) scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.08);
   }
 }
 

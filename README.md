@@ -10,15 +10,18 @@
 
 Felix Yang’s personal site, built around an interactive 3D studio. The room runs in the browser with React, Three.js, and React Three Fiber. Phones and other compact screens open the personal profile directly.
 
-![Felix Studio’s 3D room with a computer desk, a rain-streaked window, and an illuminated PC](docs/images/felix-studio-overview.png)
+![The 48-inch LG display, Mac Studio and glass-sided ROG workstation in Felix’s ash-furnished Shanghai studio](docs/images/felix-studio-overview.png)
 
 ## Explore the studio
 
-- Look around the room, inspect objects, or switch to the workbench and window viewpoints.
+- Look around the room or move to the workbench, window, or gear wall. Click the equipment rack or shoe bench to see the entire wall, then pick up an item to inspect it.
+- The workbench holds a multimeter and a keyboard switch tester. Pick up the Nikon Z8 or iPhone 18 Pro Max at the main desk, or watch the Bambu Lab H3C print the DeepSeek Whale Girl figurine.
+- Look through the six-inch travel prints and small instant photographs above the LG display. Turn around to find the lens cabinet, camping lantern and titanium mugs.
 - Use the window remote to switch between Shanghai and New York, change weather and daylight, or adjust the blinds.
+- In the computer’s Settings, preview Cinematic, Neutral, Warm film, or Cool night and apply it to the room. The studio remembers your selection.
 - Open the computer to read the profile, play music from the playlist, or play Orbital Patrol.
 
-On desktop, drag or use the arrow keys to look around, and scroll to zoom. Click an object or press **E** to interact. Press **Esc** to put an object back or return to the previous view.
+On desktop, drag or use the arrow keys to look around, and scroll to zoom. Click an object or press **E** to interact. Press **Esc** to put an object back or return to the room.
 
 ## Run locally
 
@@ -56,7 +59,10 @@ Run `npm ci` and `npm run build` from the repository root, then publish `dist/` 
 | `src/spectral/`   | Spectral styles, shared shader renderer, and fragment shaders   |
 | `public/media/`   | Runtime media grouped by use                                    |
 | `scripts/assets/` | Optional font, map, and depth-map build tools                   |
+| `scripts/build/`  | Static-site generation and delivery of reviewed model exports   |
 | `tests/`          | Model and browser regression checks                             |
+
+This repository builds the website from reviewed exports. The art workspace holds the editable Blender scenes, reference images, export tools and modeling history. The web build runs with Node.js alone. See the [architecture guide](docs/architecture.md) for code ownership, asset delivery and verification.
 
 ## Contribute
 

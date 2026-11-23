@@ -10,18 +10,25 @@ import '@fontsource/space-grotesk/latin-600.css';
 import '@fontsource/caveat/latin-500.css';
 import './app/analytics';
 import App from './app/App';
+import { RoomLookFilters } from './scene/RoomLookFilters';
 import { printGreeting, travelPrints } from './content/travel';
 
 const root = createRoot(document.getElementById('root')!);
-const handwriting = printGreeting.zh + travelPrints.map((photo) => photo.note.zh).join('');
-const fonts = [
-  document.fonts.load('600 20px "IBM Plex Sans"'),
-  document.fonts.load('600 20px "Studio Han"', '工作室档案'),
-  document.fonts.load('500 32px Caveat'),
-  document.fonts.load('400 32px "Studio Script"', handwriting),
-];
-const fontsReady = Promise.race([
-  Promise.allSettled(fonts),
-  new Promise((resolve) => window.setTimeout(resolve, 1250)),
-]);
-root.render(<App fontsReady={fontsReady} />);
+function prepareStudioFonts() {
+  const handwriting = printGreeting.zh + travelPrints.map((photo) => photo.note.zh).join('');
+  return Promise.race([
+    Promise.allSettled([
+      document.fonts.load('600 20px "IBM Plex Sans"'),
+      document.fonts.load('600 20px "Studio Han"', '工作室档案'),
+      document.fonts.load('500 32px Caveat'),
+      document.fonts.load('400 32px "Studio Script"', handwriting),
+    ]),
+    new Promise((resolve) => window.setTimeout(resolve, 1250)),
+  ]);
+}
+root.render(
+  <>
+    <RoomLookFilters />
+    <App prepareFonts={prepareStudioFonts} />
+  </>,
+);

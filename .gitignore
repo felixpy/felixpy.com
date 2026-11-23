@@ -9,6 +9,7 @@
 /playwright-report/
 /playwright/.cache/
 /.review/
+/.references/
 /review/
 /.impeccable/
 /.superpowers/

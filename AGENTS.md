@@ -7,5 +7,6 @@
 - Pair English and Simplified Chinese site copy. English is the initial locale. Rebuild the subset fonts when new text requires additional glyphs.
 - Keep settings compatible with the existing `felix-studio-v1` storage entry. Preserve the static-site build and the compact layout when changing desktop-only behavior.
 - Group production media by purpose under `public/media/`. Record third-party sources and terms in [Media](docs/media.md) and update `public/media/credits.txt` as needed. Use `uv` for Python asset scripts and keep Python dependencies out of the global environment.
-- Keep local screenshots, recordings, authoring exports, and review material under the ignored `.review/` directory. Keep tests and maintained documentation in their own tracked directories.
+- Keep temporary screenshots, recordings, authoring exports and review material in local, untracked storage. Keep tests and maintained documentation in their tracked directories.
+- Keep long-term standards in topic-named files under `docs/` and each development plan in `docs/specs/YYYY-MM-DD-title.md`. Link the applicable standards and reproducible checks from the plan.
 - `npm ci` installs the Husky hooks. Use `npm run hooks:install` to reinstall them. Oxfmt checks staged files before committing. Use Conventional Commit subjects for commits and pull request titles.

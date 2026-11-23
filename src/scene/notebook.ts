@@ -1,20 +1,11 @@
 import * as T from 'three';
-import {
-  box,
-  canvasTexture,
-  group,
-  mesh,
-  paperGeometry,
-  print,
-  random,
-  surface,
-  tube,
-} from './geometry';
+import { blenderMesh } from './blender-mesh';
+import { canvasTexture, group, mesh, random, surface } from './geometry';
 import type { Palette } from './materials';
 
-const pageWidth = 0.118,
-  pageHeight = 0.167;
-const paperFace = 0.0034;
+const pageWidth = 0.128,
+  pageHeight = 0.182;
+const paperFace = 0.00162;
 export const notebookSignature = {
   left: (112 / 768 - 0.5) * pageWidth,
   right: (381 / 768 - 0.5) * pageWidth,
@@ -23,7 +14,7 @@ export const notebookSignature = {
   z: paperFace,
 };
 
-function writtenLeaf() {
+export function writtenLeaf() {
   return canvasTexture(768, 1088, (ctx) => {
     const stock = ctx.createLinearGradient(0, 0, 768, 1088);
     stock.addColorStop(0, '#cbb996');
@@ -37,6 +28,14 @@ function writtenLeaf() {
       ctx.fillStyle = i % 3 ? '#8a6b3910' : '#fff9e822';
       ctx.fillRect(rng() * 768, rng() * 1088, 0.5 + rng() * 2, 0.5 + rng() * 3.3);
     }
+    ctx.strokeStyle = '#aa987a75';
+    ctx.lineWidth = 0.7;
+    ctx.setLineDash([2.1, 2.8]);
+    ctx.beginPath();
+    ctx.moveTo(55, 0);
+    ctx.lineTo(55, 1088);
+    ctx.stroke();
+    ctx.setLineDash([]);
     ctx.lineWidth = 1.2;
     for (let y = 153; y < 1050; y += 56) {
       ctx.strokeStyle = '#7b919178';
@@ -80,35 +79,34 @@ function writtenLeaf() {
   });
 }
 
+function kraftGrain() {
+  return canvasTexture(384, 540, (ctx) => {
+    ctx.fillStyle = '#f1ebdf';
+    ctx.fillRect(0, 0, 384, 540);
+    const rng = random(238);
+    for (let i = 0; i < 11000; i++) {
+      ctx.fillStyle = i % 3 ? '#59462e18' : '#fff9df70';
+      ctx.fillRect(rng() * 384, rng() * 540, 0.6 + 2.5 * rng(), 0.45 + 0.7 * rng());
+    }
+  });
+}
+
 export function projectNotebook(parent: T.Group, p: Palette) {
-  const notebook = group(parent, 'FELIX · working notebook', [0.488, 0.757, 0.315]);
+  const notebook = group(parent, 'FELIX · working notebook', [0.488, 0.75482, 0.315]);
   notebook.rotation.set(-Math.PI / 2, 0, -0.18);
-  const width = pageWidth,
-    height = pageHeight;
-  box(notebook, [0.125, 0.175, 0.002], [0, 0, -0.004], surface('#625344', 0.85), 0.001);
-  box(notebook, [width, height, 0.006], [0, 0, 0], p.paper, 0.0013);
-  const edges = surface('#ae9c7d', 0.91);
-  for (const z of [-0.0021, -0.001, 0.00035, 0.00155]) {
-    box(notebook, [width - 0.003, 0.00035, 0.0002], [0, -height / 2 - 0.0003, z], edges);
-    box(notebook, [0.00025, height - 0.003, 0.00025], [width / 2 + 0.0002, 0, z], edges);
-  }
-  print(
-    notebook,
-    width,
-    height,
-    [0, 0, paperFace],
-    writtenLeaf(),
-    paperGeometry(width, height),
-  ).castShadow = false;
-  for (let i = 0; i < 7; i++) {
-    const y = -0.068 + i * 0.022;
-    const loop = mesh(notebook, new T.TorusGeometry(0.0046, 0.00075, 7, 22), p.graphite, [
-      -0.0595,
-      y,
-      0.0028,
-    ]);
-    loop.rotation.x = Math.PI / 2;
-    tube(notebook, [-0.053, y, 0.0031], [-0.053, y, 0.004], 0.0017, p.black);
+  const surfaces = {
+    'kraft-front': surface('#a1835e', 0.86),
+    'kraft-back': surface('#886d53', 0.89),
+    'paper-edge': p.paper,
+    'punch-wall': surface('#ab9b80', 0.94),
+    signed: new T.MeshStandardMaterial({ map: writtenLeaf(), roughness: 0.83 }),
+    wire: surface('#c1c7c9', 0.31, 0.83),
+  };
+  surfaces['kraft-front'].map = surfaces['kraft-back'].map = kraftGrain();
+  surfaces['kraft-front'].normalMap = surfaces['kraft-back'].normalMap = p.paper.normalMap;
+  for (const [part, finish] of Object.entries(surfaces)) {
+    const object = mesh(notebook, blenderMesh('stationery/felix-notebook-' + part), finish);
+    object.name = 'Notebook · ' + part;
   }
   return notebook;
 }

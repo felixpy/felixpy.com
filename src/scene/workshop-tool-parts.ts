@@ -1,0 +1,17 @@
+export const workshopToolParts = {
+  pegHooks: 'workshop-steel',
+  tweezerLeaves: 'workshop-black',
+  holder: 'workshop-birch',
+  bins: 'workshop-grips',
+  slottedCollars: 'workshop-collars',
+  graduations: 'workshop-etch',
+  caliperBeam: 'workshop-caliper-beam',
+  caliperJaws: 'workshop-caliper-jaws',
+  bits: 'workshop-bit-steel',
+  shankMarks: 'workshop-bit-mark',
+  ferrules: 'workshop-bit-ferrules',
+  handles: 'workshop-wera-body',
+  inlays: 'workshop-wera-grip',
+  phillipsCollars: 'workshop-wera-ph',
+  padPrinting: 'workshop-wera-print',
+} as const;

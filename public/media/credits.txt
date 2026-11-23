@@ -1,7 +1,63 @@
 Studio media credits
 
+Codex Micro by OpenAI and Work Louder. Geometry adapted from OpenAI's Bits and Bolts reference model, distributed under the Apache License 2.0. Felix Studio added six switch lights, joystick retainers and USB-C detail, adjusted the clear and frosted plastics, rebuilt the white keycap dishes with conforming legends, and optimized the web mesh.
+https://github.com/openai/mcp-extensions/tree/main/plugins/bits-and-bolts/assets/models
+https://www.worklouder.cc/codex-micro
+License: /media/licenses/openai-mcp-extensions.txt
+
+Samsung Portable SSD T7 2 TB. Original mesh and end label artwork. Samsung's Titan Gray product gallery and Gough Lui's photographs of a blue 2 TB unit informed the exterior. The model uses a studio-specific serial and matrix code.
+https://www.samsung.com/uk/business/memory-storage/portable-ssd/portable-ssdt7-mu-pc2t0t-ww/
+https://goughlui.com/2022/11/12/quick-review-samsung-portable-ssd-t7-2tb-mu-pc2t0h-ww/
+
+ProGrade Digital PG05.5 and Gold 1700 CFexpress Type B. Product and brand markings belong to ProGrade Digital. The recessed reader wordmark follows the manufacturer's product sheet. Original reader and card meshes use the compatible JST connector drawing and SD Association interface reference.
+https://progradedigital.com/wp-content/uploads/2023/05/ProGrade_PG5.5_DS_CFx_SD_reader050323.pdf
+https://shop.progradedigital.com/products/cfexpress-2-0-type-b-memory-card-gold-1700
+https://www.jst.com/wp-content/uploads/2020/12/eXCC.pdf
+https://www.sdcard.org/developers/sd-standard-overview/
+
+White Dunes — original generated desert wallpaper for the studio phone.
+
+Studio joinery and parquet — Ash Veneer by Jenelle van Heerden, Poly Haven, CC0.
+Source: https://polyhaven.com/a/ash_veneer
+License: https://creativecommons.org/publicdomain/zero/1.0/
+Color, OpenGL normal and roughness maps encoded as WebP; individual parquet boards sample the source at its original scale.
+
+Writing desk worktop — Oak Veneer 01 by Jenelle van Heerden, Poly Haven, CC0.
+Source: https://polyhaven.com/a/oak_veneer_01
+License: https://creativecommons.org/publicdomain/zero/1.0/
+The color scan was lightened to represent a white-oiled finish. The color, OpenGL normal and roughness maps were resized and encoded as WebP.
+
 ROG Scabbard II XXL Edition 20 mouse mat — ASUSTeK Computer Inc., product gallery top view.
 https://rog.asus.com/mice-mouse-pads/mouse-pads/rog-scabbard-ii-xxl-edition-20/gallery/
+
+ROG Strix Z890-A Gaming WiFi S — Fubuki character artwork, ROG logos and product markings © ASUSTeK Computer Inc. Markings on the Blender model were traced from the front and reverse product views.
+https://rog.asus.com.cn/motherboards/rog-strix/rog-strix-z890-a-gaming-wifi-s/gallery/
+
+Intel Core Ultra 9 285K — Blender geometry based on Intel's FCLGA1851 package dimensions and processor markings. Intel and Intel Core are trademarks of Intel Corporation.
+https://www.intel.com/content/www/us/en/products/sku/241060/intel-core-ultra-9-processor-285k-36m-cache-up-to-5-70-ghz/specifications.html
+https://cdrdv2-public.intel.com/834774/834774_015.pdf
+Front and reverse reference photographs by PC Guide: https://www.pcguide.com/cpu/review/intel-core-ultra-9-285k/
+
+ROG Astral GeForce RTX 5090 OC power socket and Hyperion GR701 cable routing. Original models based on ASUS product photographs and wolflsi's close-up of the card. The sleeved cable is custom to the studio.
+https://rog.asus.com/graphics-cards/graphics-cards/rog-astral/rog-astral-rtx5090-o32g-gaming/gallery/
+https://rog.asus.com/cases/rog-hyperion-gr701-model/
+https://wolflsi.pixnet.net/blog/posts/5071433772
+
+Hyperion GR701 rubber cable flaps. Model geometry and diagonal ribbing based on ASUS product views and Philipp Moosdorf's installed-system photograph for Hardwareluxx.
+ROG Hyperion GR701 removable roof filter. Original geometry measured from ASUS GR701 installation and service diagrams and checked against the official product gallery. Manufacturer artwork is retained in the local reference archive.
+ROG Hyperion GR701 cable compartment. Original geometry based on ASUS photographs of the right side with and without its glass and cable cover, and the fan/ARGB controller. Cable placement is specific to the studio installation.
+Samsung 870 EVO. Rear-tray SSDs modeled from the manufacturer’s dimensions and cover markings. The SATA leads and keyed plugs are original studio geometry. https://download.semiconductor.samsung.com/resources/data-sheet/Samsung_SSD_870_EVO_Data_Sheet_Rev1.1_230509_10129500053000.pdf
+https://rog.asus.com/cases/rog-hyperion-gr701-model/gallery/
+https://dlcdnwebimgs.asus.com/files/media/87F606EE-FB9D-483A-AE34-FC745A967C99/v2/img/hub.jpg
+https://dlcdnwebimgs.asus.com/gain/2E3D6741-2882-4E28-8C7F-B971A835E64A/w1000/h732
+https://www.hardwareluxx.de/index.php/artikel/hardware/gehaeuse/60563-asus-rog-hyperion-gr701-im-test-hype%2C-hyper%2C-hyperion.html?start=4
+
+XPG D50 Fubuki DDR5 and ROG Herculx XH01. Original Blender models from owner-supplied product views. XPG markings belong to ADATA. ROG markings and the Fubuki character belong to ASUSTeK Computer Inc.
+https://www.xpg.com/
+https://rog.asus.com/graphics-cards/accessories/rog-herculx-graphics-card-holder-model/gallery/
+
+Raspberry Pi Pico — PCB outline, drilled holes and pad geometry from the Raspberry Pi Pico R3 public design files. Raspberry Pi grants permission to use, copy, modify and distribute the design for any purpose, with or without fee.
+https://www.raspberrypi.com/products/raspberry-pi-pico/#documents
 
 New York panorama — Midtown Manhattan from Weehawken September 2021 HDR panorama
 King of Hearts, CC BY-SA 4.0
@@ -15,17 +71,34 @@ DvTor8303, CC0
 Source: https://commons.wikimedia.org/wiki/File:Pudong_Skyline_from_The_Bund_20260417.jpg
 Adaptation: resized for window projection. The clear daylight and nighttime variants were created by relighting the original with image generation.
 
-Camera playback — Xinghai Bay Bridge, Dalian, at sunset
-昆 阿, Pexels License. Cropped for the camera LCD.
-Source: https://www.pexels.com/photo/bridge-on-sea-coast-at-sunset-17557991/
-License: https://www.pexels.com/license/
+Moonlit Skyline — Nihilore, from Titan
+https://www.nihilore.com/s/Moonlit-Skyline.mp3
 
-Galactic Rap, Space Jazz, and Equatorial Complex — Kevin MacLeod (incompetech.com), CC BY 4.0
-https://incompetech.com/music/royalty-free/music.html
+A Mundane Conclusion — Nihilore
+https://www.nihilore.com/s/A-Mundane-Conclusion.mp3
+
+The Murky Deep — Nihilore
+https://www.nihilore.com/s/The-Murky-Deep.mp3
+
+Kadupul — Nihilore, from The Hermeneutic Circle
+https://www.nihilore.com/s/Nihilore-Kadupul.mp3
+
+Lore — Nihilore
+https://www.nihilore.com/s/Lore.mp3
+
+All five recordings are licensed under Creative Commons Attribution 4.0 International.
+https://www.nihilore.com/downtempo
+https://www.nihilore.com/license
 https://creativecommons.org/licenses/by/4.0/
+The complete recordings were gain-adjusted and re-encoded as 128 kbps stereo MP3 for the listening room.
 
 Rain on Window Loop — CC0
 https://opengameart.org/content/rain-on-window-loop
+
+Cork 001 — Lennart Demes, ambientCG, CC0. The pinboard uses reduced color and normal maps.
+https://ambientcg.com/view?id=Cork001
+
+Field Notes — generated food, café, street and landscape sample photographs.
 
 World atlas — Natural Earth 5.1.2, country and maritime geometries for the China point of view, public domain.
 Paper scan from World on Mercator's projection, 1847, David Rumsey Map Collection.
@@ -33,3 +106,241 @@ https://commons.wikimedia.org/wiki/File:World_on_Mercator%27s_projection,_1847.j
 
 React Bits components — David Haz. MIT + Commons Clause.
 https://github.com/DavidHDev/react-bits/blob/main/LICENSE.md
+
+Printed books
+
+Cover artwork belongs to the respective publishers, illustrators and designers. InformIT provides publisher press images and Penguin Random House provides title-promotion images. The SICP cover is reproduced under CC BY-SA 4.0, credited to Harold Abelson and Gerald Jay Sussman with Julie Sussman, MIT Press. The 1929 Faulkner jacket scan comes from Heritage Auctions via Wikimedia Commons and is in the US public domain. Karen Montgomery designed the O’Reilly jacket supplied by The Books API.
+https://creativecommons.org/licenses/by-sa/4.0/
+https://www.informit.com/press/
+https://www.penguinrandomhouse.biz/media/digital
+https://thebooksapi.com/data-licences/
+
+Code Complete — Steve McConnell. Microsoft Press, 2004. 9780735619678.
+Edition: https://www.microsoftpressstore.com/store/code-complete-9780735619678
+Cover: https://www.informit.com/ShowCover.aspx?isbn=0735619670
+
+Introduction to Algorithms — Cormen · Leiserson · Rivest · Stein. MIT Press, 2022. 9780262046305.
+Edition: https://mitpress.mit.edu/9780262046305/introduction-to-algorithms/
+Cover: https://images.penguinrandomhouse.com/cover/9780262046305
+
+Computer Systems: A Programmer’s Perspective — Randal E. Bryant · David R. O’Hallaron. Pearson, 2016. 9780134092669.
+Edition: https://csapp.cs.cmu.edu/3e/home.html
+Cover: https://www.informit.com/ShowCover.aspx?isbn=013409266X
+
+Designing Data-Intensive Applications — Martin Kleppmann. O’Reilly, 2017. 9781449373320.
+Edition: https://martin.kleppmann.com/2017/03/27/designing-data-intensive-applications.html
+Cover: https://api.thebooksapi.com/v1/covers/8434671-L.jpg?default=false
+
+Structure and Interpretation of Computer Programs — Harold Abelson · Gerald Jay Sussman · Julie Sussman. MIT Press, 1996. 9780262510875.
+Edition: https://mitpress.mit.edu/9780262510875/structure-and-interpretation-of-computer-programs/
+Cover: https://mit-press-new-us.imgix.net/covers/9780262510875.jpg?w=1400
+
+The Pragmatic Programmer — David Thomas · Andrew Hunt. Addison-Wesley, 2019. 9780135957059.
+Edition: https://pragprog.com/titles/tpp20/the-pragmatic-programmer-20th-anniversary-edition/
+Cover: https://www.informit.com/ShowCover.aspx?isbn=0135957052
+
+Ways of Seeing — John Berger. Penguin Books, 1990. 9780140135152.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780140135152
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780140135152
+
+Creativity, Inc. — Ed Catmull with Amy Wallace. Random House, 2023. 9780593594643.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780593594643
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780593594643
+
+The Sound and the Fury — William Faulkner. Jonathan Cape & Harrison Smith, 1929. First edition.
+Edition: https://en.wikisource.org/wiki/The_Sound_and_the_Fury
+Cover: https://commons.wikimedia.org/wiki/File:The_Sound_and_the_Fury_(1929_1st_ed_dust_jacket).jpg
+
+Moby-Dick — Herman Melville. Penguin Classics, 2002. 9780142437247.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780142437247
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780142437247
+White-lettered paperback, reverse and spine layout reference: https://pangobooks.com/books/00020a7c-3f63-44f5-a9b8-e77a9aea7014-x1rdBrnVNJhojTFQ7WFRTgNIqb03
+
+A Room of One’s Own — Virginia Woolf. Everyman’s Library, 2025. 9781101908501.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9781101908501
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9781101908501
+
+To the Lighthouse — Virginia Woolf. Penguin Classics, 2023. 9780143137580.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780143137580
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780143137580
+
+The Left Hand of Darkness — Ursula K. Le Guin. Ace, 1987. 9780441478125.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780441478125
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780441478125
+
+The Soul of a New Machine — Tracy Kidder. Modern Library, 1997. 9780679602613.
+Edition: https://openlibrary.org/isbn/9780679602613
+Cover: https://images.penguinrandomhouse.com/cover/9780679602613
+
+The Design of Everyday Things — Don Norman. MIT Press, 2013. 9780262525671.
+Edition: https://mitpress.mit.edu/9780262525671/the-design-of-everyday-things/
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780262525671
+
+The Personal MBA — Josh Kaufman. Portfolio, 2020. 9780525543022.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780525543022
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780525543022
+
+Interaction of Color — Josef Albers. Yale University Press, 2013. 9780300179354.
+Edition: https://yalebooks.yale.edu/book/9780300179354/interaction-of-color/
+Cover: https://yale-press-us.imgix.net/covers/9780300179354.jpg?auto=format&w=800
+
+On Weaving — Anni Albers. Princeton University Press, 2017. 9780691177854.
+Edition: https://press.princeton.edu/books/hardcover/9780691177854/on-weaving
+Cover: https://pup-assets.imgix.net/onix/images/9780691177854.jpg?w=800&fit=max
+
+Thinking with Type — Ellen Lupton. Princeton Architectural Press, 2024. 9781797226828.
+Edition: https://www.chroniclebooks.com/products/thinking-with-type-1
+Cover: https://images.penguinrandomhouse.com/cover/9781797226828
+
+Design Patterns — Erich Gamma · Richard Helm · Ralph Johnson · John Vlissides. Addison-Wesley, 1994. 9780201633610.
+Edition: https://www.informit.com/store/product.aspx?isbn=9780201633610
+Cover: https://www.informit.com/ShowCover.aspx?isbn=0201633612
+
+The Mythical Man-Month — Frederick P. Brooks Jr.. Addison-Wesley, 1995. 9780201835953.
+Edition: https://www.informit.com/store/product.aspx?isbn=9780201835953
+Cover: https://www.informit.com/ShowCover.aspx?isbn=0201835959
+
+The C Programming Language — Brian W. Kernighan · Dennis M. Ritchie. Prentice Hall, 1988. 9780131103627.
+Edition: https://www.informit.com/store/product.aspx?isbn=9780131103627
+Cover: https://www.informit.com/ShowCover.aspx?isbn=0131103628
+
+Code — Charles Petzold. Microsoft Press, 2022. 9780137909100.
+Edition: https://www.informit.com/store/product.aspx?isbn=9780137909100
+Cover: https://www.informit.com/ShowCover.aspx?isbn=0137909101
+
+Refactoring — Martin Fowler. Addison-Wesley, 2018. 9780134757599.
+Edition: https://www.informit.com/store/product.aspx?isbn=9780134757599
+Cover: https://www.informit.com/ShowCover.aspx?isbn=0134757599
+
+High Output Management — Andrew S. Grove. Vintage, 1995. 9780679762881.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780679762881
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780679762881
+
+The Information — James Gleick. Vintage, 2012. 9781400096237.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9781400096237
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9781400096237
+
+The Idea Factory — Jon Gertner. Penguin Books, 2013. 9780143122791.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780143122791
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780143122791
+
+The Invention of Nature — Andrea Wulf. Vintage, 2016. 9780345806291.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780345806291
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780345806291
+Binding: https://pangobooks.com/books/97281056-39f1-467c-947c-3f39b37ce447-7En6D5PxpgMm88rbAAqlGTrsfxg1
+Copyright page: https://pangobooks.com/books/ee510b22-05c3-4f49-8c2e-5ab3863dce98-zH8Zzcv2OEXGkfv1FXiRiqTafKe2
+
+Understanding Media — Marshall McLuhan. MIT Press, 1994. 9780262631594.
+Edition: https://mitpress.mit.edu/9780262631594/understanding-media/
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780262631594
+
+Thinking in Systems — Donella H. Meadows. Chelsea Green Publishing, 2008. 9781603580557.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9781603580557
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9781603580557
+
+A Mind for Numbers — Barbara Oakley. TarcherPerigee, 2014. 9780399165245.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780399165245
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780399165245
+
+The Fifth Discipline — Peter M. Senge. Crown Currency, 2006. 9780385517256.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780385517256
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780385517256
+
+The Lean Startup — Eric Ries. Crown Business, 2011. 9780307887894.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780307887894
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780307887894
+
+Invisible Women — Caroline Criado Perez. Abrams Press, 2021. 9781419735219.
+Edition: https://www.abramsbooks.com/product/invisible-women_9781419735219/
+Cover: https://www.abramsbooks.com/cover_images/9/9781419735219_s3.jpg
+
+Beloved — Toni Morrison. Vintage, 2004. 9781400033416.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9781400033416
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9781400033416
+Berry-branch front, spine and reverse: https://pangobooks.com/books/5eb184a5-b87a-4386-b8d7-e005d1089a5d-cgPwdRlbijUgR4WZiPy1FDMyQIh1
+Spine detail: https://pangobooks.com/books/09011ff0-5182-45bf-baa5-3e6c0e088edb-Tssdg3tTjqQGmCAOBXDo2YZ6lww1
+
+Kindred — Octavia E. Butler. Beacon Press, 2004. 9780807083697.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780807083697
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780807083697
+Reverse: https://pangobooks.com/books/b999d767-312f-42da-820b-c46c3f4d64c3-3PUzIrCT5wW2EL5ak1gLgcdYhIo2
+Spine: https://pangobooks.com/books/04c3c7a3-9391-4379-8547-df7185d2aff0-AZKxGtGb3qR0RG4ZIiYtZzDoip83
+
+Frankenstein — Mary Shelley. Penguin Classics, 2003. 9780141439471.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780141439471
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780141439471
+
+Walden and Civil Disobedience — Henry David Thoreau. Penguin Classics, ISBN 9780140390445. Cover illustration by Jason Holley. Front, spine and back typography follow the photographed $14 printing with the Kristen Case introduction. https://pangobooks.com/books/e9ae31af-8286-4727-b9e0-96bfb05c7966-6oHU4JDNbBXyuUAOE6ESO8rbTnn2
+Structure and Interpretation of Computer Programs, second edition — Harold Abelson and Gerald Jay Sussman with Julie Sussman, MIT Press, 1996. The front artwork has been resized and cropped to the photographed paperback printing. The adapted front is available under CC BY-SA 4.0. https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/6515/sicp.zip/index.html · https://creativecommons.org/licenses/by-sa/4.0/ . Reverse synopsis and drawing of the composite portrait are studio interpretations. Physical binding: https://bookbot.com/g/3988034/m/4039627
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780140390445
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780140390445
+
+The Art of Computer Programming, Volume 1: Fundamental Algorithms — Donald E. Knuth. Addison-Wesley, 1997. 9780201896831.
+Edition: https://www.informit.com/store/product.aspx?isbn=9780201896831
+Cover: https://www.informit.com/ShowCover.aspx?isbn=0201896834
+
+The Art of Computer Programming, Volume 2: Seminumerical Algorithms — Donald E. Knuth. Addison-Wesley, 1997. 9780201896848.
+Edition: https://www.informit.com/store/product.aspx?isbn=9780201896848
+Cover: https://www.informit.com/ShowCover.aspx?isbn=0201896842
+
+The Art of Computer Programming, Volume 3: Sorting and Searching — Donald E. Knuth. Addison-Wesley, 1998. 9780201896855.
+Edition: https://www.informit.com/store/product.aspx?isbn=9780201896855
+Cover: https://www.informit.com/ShowCover.aspx?isbn=0201896850
+
+How Buildings Learn — Stewart Brand. Penguin Books, 1995. 9780140139969.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780140139969
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780140139969
+
+The Creative Act: A Way of Being — Rick Rubin. Penguin Press, 2023. 9780593652886.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780593652886
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780593652886
+
+Dune — Frank Herbert. Ace, 1990. 9780441172719.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780441172719
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780441172719
+
+Neuromancer — William Gibson. Ace, 1984. 9780441569595.
+Edition: https://www.penguinrandomhouse.com/books/293994/neuromancer-by-william-gibson/9780441569595/
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780441569595
+
+The Art of Innovation — Tom Kelley with Jonathan Littman. Currency, 2001. 9780385499842.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780385499842
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780385499842
+
+Invisible Man — Ralph Ellison. Vintage, 1995. 9780679732761.
+Edition: https://penguinrandomhousehighereducation.com/book/?isbn=9780679732761
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780679732761
+
+The Photographer’s Eye — John Szarkowski. The Museum of Modern Art, 2007. 9780870705274.
+Edition: https://store-api.moma.org/collections/moma-publications/products/the-photographers-eye-paperback
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780870705274
+
+Looking at Photographs — John Szarkowski. The Museum of Modern Art, 1999. 9780870705151.
+Edition: https://www.moma.org/momaorg/shared/pdfs/docs/explore/MoMABooks_2008.pdf#page=27
+Cover: https://images.penguinrandomhouse.com/cover/700jpg/9780870705151
+Field gloves: Brown Leather by Rob Tuytel / Poly Haven, CC0. Grayscale color, OpenGL normal and roughness derivatives. https://polyhaven.com/a/brown_leather
+
+Canon KP-36IP postcard. The paper geometry and reverse artwork were reconstructed from the Canon paper specifications and product photographs. Product design and marks belong to their respective owners.
+https://www.canon.co.uk/store/canon-kp-36ip-ink-paper-set-postcard-size-36-prints/7737A001/
+https://www.techwarehouse.co.nz/products/kp-36ip-canon-cartridge-and-postcard-paper-36-sheets
+
+The owner supplied Tongshifu product sheets and photographs for Invincible Wukong (悟空之战无不胜) and the large Iron Man MK85. The local 3D reconstructions follow the front, side and rear views. The full castings measure 145 × 110 × 265 mm and 250 × 180 × 420 mm (width × depth × height). Iron Man is a Marvel character. The product designs and photographs retain their original rights.
+The H3C's DeepSeek Whale Girl is a separate original Blender reconstruction of the owner's four-view character sheet. The printer displays the completed figure while the moving toolhead traces its crown. Character and artwork rights remain with their respective owners.
+
+Original Blender reconstructions of the Astro Mondrian 600 Wall Mount, corporate friends C1-mini-LC and Snow Peak SnowMiner ES-020. Product photographs, drawings and film frames used for visual reference remain local to the authoring library. Product designs and trademarks belong to their respective owners.
+
+Snow Peak MG-153 Ti-Double 450. The manufacturer's product gallery guided the geometry and supplied the reference for the curved face print. Snow Peak retains its artwork, product and trademark rights.
+https://ec.snowpeak.co.jp/item/SNP0123A0403
+
+ERCO Parscan New 48V, size S, on ERCO Minirail. The editable track assembly and its three studio lighting directions were modelled for Felix Studio. ERCO retains its product design and trademark rights.
+https://www.erco.com/en/products/indoor/spotlights-for-track/parscan-new-48v-7334/
+https://www.erco.com/en_us/products/indoor/track-and-singlets/erco-minirail-48v-track-and-singlets-7076/
+
+ASUS ROG Harpe Ace Extreme. Original Blender geometry, with the board layout reconstructed from ASUS X-ray views and P718 certification photographs. The underside wordmarks and control symbols follow ASUS guide Q23654.
+https://rog.asus.com/mice-mouse-pads/mice/ambidextrous/rog-harpe-ace-extreme/
+https://fccid.io/XW3DKMSP718/Internal-Photos/P718-Inpho-7447244.pdf
+https://www.astrolighting.com/products/1374042-mondrian-600-led
+https://designplan.com/catalog/c1-mini-lc-adj-led-spotlight-for-magnetic-track-o0-6-1w-60-lm-ip20/
+https://www.snowpeak.com/blogs/explore/adapting-to-the-usa
+Carron Princess cast iron radiator, 610 mm two-column version. Original Blender reconstruction from Carron Heating's dimensional drawing, finish photographs and valve details.
+https://www.carronheating.co.uk/radiators/cast-iron-radiators/princess/

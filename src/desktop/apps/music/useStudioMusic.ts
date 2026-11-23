@@ -62,7 +62,12 @@ export function useStudioMusic(enabled = true) {
   function listen() {
     const player = audio.current;
     if (!player || analysis.current || openingAnalysis.current || !window.AudioContext) return;
-    const context = new AudioContext();
+    let context: AudioContext;
+    try {
+      context = new AudioContext();
+    } catch {
+      return;
+    }
     openingAnalysis.current = context;
     void context
       .resume()
@@ -130,7 +135,6 @@ export function useStudioMusic(enabled = true) {
         const activation = event.pointerType === 'mouse' ? 'pointerdown' : 'pointerup';
         if (!event.isPrimary || event.button !== 0 || event.type !== activation) return;
       }
-      listen();
       if (
         !automatic.current ||
         !player.paused ||
@@ -179,6 +183,7 @@ export function useStudioMusic(enabled = true) {
     failed,
     shuffle,
     repeat,
+    startAnalysis: listen,
     select(next: number) {
       listen();
       automatic.current = false;

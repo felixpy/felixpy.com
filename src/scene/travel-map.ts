@@ -1,6 +1,7 @@
 import * as T from 'three';
 import { journeys } from '../content/travel';
-import { box, group, paperGeometry, print, surface, tube } from './geometry';
+import { box, group, mesh, print, surface, tube } from './geometry';
+import { pictureFrame } from './picture-frame';
 import type { Palette } from './materials';
 import { atlasPoint, atlasPrint } from './atlas-projection.mjs';
 
@@ -16,10 +17,17 @@ function locateOnMap(lon: number, lat: number) {
 
 export function wallAtlas(parent: T.Group, p: Palette, chart: T.Texture) {
   const { width, height } = atlasSize;
-  const frame = group(parent, 'World travel map', [0.844, 1.752, -0.535]);
-  box(frame, [width + 0.026, height + 0.026, 0.027], [0, 0, 0], p.woodDark, 0.0028);
-  box(frame, [width + 0.004, height + 0.004, 0.007], [0, 0, 0.012], p.linen, 0.0012);
-  const paper = print(frame, width, height, [0, 0, 0.016], chart, paperGeometry(width, height));
+  const frame = group(parent, 'World travel map', [0.844, 1.817, -0.535]);
+  box(frame, [width + 0.028, height + 0.028, 0.018], [0, 0, 0], p.woodDark, 0.0008);
+  pictureFrame(frame, width + 0.044, height + 0.044, 0.0085, 0.026, 0.024, p.wood);
+  box(
+    frame,
+    [width + 0.027, height + 0.027, 0.006],
+    [0, 0, 0.012],
+    surface('#e1dccc', 0.95),
+    0.0005,
+  );
+  const paper = print(frame, width, height, [0, 0, 0.0152], chart);
   paper.castShadow = false;
   const ink = paper.material as T.MeshStandardMaterial;
   ink.normalMap = p.paper.normalMap;
@@ -31,10 +39,9 @@ export function wallAtlas(parent: T.Group, p: Palette, chart: T.Texture) {
       const [x, y] = locateOnMap(place.lon, place.lat);
       const pin = group(frame, place.en, [x, y, 0.02]);
       pin.rotation.x = 0.16;
-      tube(pin, [0, 0, -0.004], [0, 0, 0.0019], 0.00037, p.steel);
-      tube(pin, [0, 0, 0.001], [0, 0, 0.0027], 0.0009, enamel, 0.0014);
-      tube(pin, [0, 0, 0.0027], [0, 0, 0.0035], 0.0014, enamel, 0.0012);
+      tube(pin, [0, 0, -0.0054], [0, 0, 0.0022], 0.0005, p.steel);
+      mesh(pin, new T.SphereGeometry(0.00225, 14, 10), enamel, [0, 0, 0.0024]);
       return { place, pin };
     });
-  return { frame, pins };
+  return { frame, pins, ink };
 }

@@ -1,0 +1,9 @@
+[
+  { "height": 27, "scale": 1.05 },
+  { "height": 33, "scale": 1.01 },
+  { "height": 39.5, "scale": 0.91, "rearScale": 0.95, "brow": 0.65 },
+  { "height": 55, "scale": 0.73, "rearScale": 0.95, "brow": 5.5 },
+  { "height": 62.4, "scale": 0.638, "rearScale": 0.95, "brow": 8.1 },
+  { "height": 64, "scale": 0.6, "rearScale": 0.92, "brow": 8.5 },
+  { "height": 64.45, "scale": 0.54, "rearScale": 0.86, "brow": 8.5 }
+]

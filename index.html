@@ -39,6 +39,11 @@
       }
     </script>
     <style>
+      html,
+      body {
+        margin: 0;
+        background: #060b0f;
+      }
       #studio-intro {
         box-sizing: border-box;
         min-height: 100svh;
@@ -47,16 +52,14 @@
         color: #eef4f7;
         font-family: system-ui, sans-serif;
       }
-      body:has(#studio-intro) {
-        margin: 0;
-      }
       #studio-intro a {
         color: #c5eaf3;
       }
     </style>
   </head>
   <body>
-    <div id="root">
+    <div id="root"></div>
+    <noscript>
       <main id="studio-intro">
         <h1>Felix Studio</h1>
         <p>Felix Yang’s open-source interactive 3D portfolio, built with React and Three.js.</p>
@@ -69,7 +72,7 @@
           <a href="https://github.com/felixpy/felixpy.com">View source</a>
         </p>
       </main>
-    </div>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

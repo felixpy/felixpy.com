@@ -1,114 +1,199 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import * as T from 'three';
+import { createStudioLoadingManager } from './asset-loading';
 import type { Environment } from '../app/environment';
+import { ceilingLightLevel, type HomeLightId } from '../app/home-lights';
+import PhoneHome from '../app/ui/PhoneHome';
 import { local } from '../app/locale';
-import { arcball, benchEye, eye, viewFov, windowEye } from './camera';
+import {
+  arcball,
+  benchEye,
+  eye,
+  frameGearWall,
+  gearEye,
+  roomFov,
+  viewFov,
+  windowEye,
+} from './camera';
 import { display } from './hardware';
-import { Finish } from './Finish';
+import { phoneDisplay } from './development-phone';
+import { Finish, type FirstPicture } from './Finish';
+import { roomFirstFrame } from './room-first-frame';
+import { warmRoomEffect } from './room-effect-material';
+import { warmRiverFerry } from './river-ferry';
 import { Minimap } from './Minimap';
-import { studioReflections } from './reflections';
+import { prelinkPreviewReflection, studioReflections } from './reflections';
+import { roomVisibility } from './room-visibility';
+import { roomDetail } from './room-detail';
+import { roomPicking } from './room-picking';
+import { surfaceFinish } from './surface-finish';
 import { screenProjection } from './screen-projection';
-import { buildStudio, type AppID, type Target } from './studio';
-import { panoramaMeshName, waterfrontFarClip } from './window-depth';
+import { buildStudio, buildStudioSteps, type StudioModel } from './studio';
+import {
+  opensStudioView,
+  atWindow,
+  canLookAround,
+  canPick,
+  isStation,
+  isWallView,
+  type AppID,
+  type InspectionLink,
+  type Mode,
+  type Station,
+  type StudioControls,
+  type Target,
+} from './interaction';
+import {
+  frameHardware,
+  frameWallSurface,
+  initialOrbit,
+  localBounds,
+  savedPose,
+  towerOrbit,
+  towerRadius,
+  type Pose,
+  type WallFocus,
+} from './view-framing';
+import { waterfrontFarClip } from './window-depth';
+import { createStudioReview } from './review/studio-review';
 
-type Station = 'room' | 'bench';
-export type Mode =
-  | Station
-  | 'inspect'
-  | 'case'
-  | 'window'
-  | 'remote'
-  | 'map'
-  | 'board'
-  | 'computer'
-  | 'drawer'
-  | 'returning';
-const isStation = (mode: Mode): mode is Station => mode === 'room' || mode === 'bench';
-const atWindow = (mode: Mode) => mode === 'window' || mode === 'remote';
-const canPick = (mode: Mode) =>
-  isStation(mode) || atWindow(mode) || mode === 'map' || mode === 'board' || mode === 'drawer';
+export type { Mode } from './interaction';
+
+const drawerEyeOffset = new T.Vector3(0, 0.54, 0.27);
+const drawerPitch = -Math.atan2(drawerEyeOffset.y, drawerEyeOffset.z);
+const drawerFov = 46;
+const returnDuration = 430;
 
 type Props = {
-  showMinimap: boolean;
+  initialLowScale: number;
+  computerLocked: boolean;
+  roomVisible: boolean;
   environment: Environment;
   mode: Mode;
-  onMode: (mode: Mode, app?: AppID, link?: string) => void;
+  onMode: (mode: Mode, app?: AppID, link?: InspectionLink) => void;
   onPress: (target: Target) => string | void;
-  onHint: (text: string, point?: { x: number; y: number }) => void;
+  onToggleHomeLight: (id: HomeLightId) => void;
+  onHint: (text: string) => void;
+  onHover: (text: string, point?: { x: number; y: number }) => void;
   onReady: () => void;
   onProgress: (ratio: number) => void;
   musicLevels: () => { bass: number; mid: number; beat: number };
+  musicPlaying: boolean;
   screen: RefObject<HTMLDivElement | null>;
-  caption: RefObject<HTMLDivElement | null>;
   inspectionAnchor: RefObject<HTMLAnchorElement | null>;
-  controls: RefObject<{ open: () => void } | null>;
+  objectCaption: RefObject<HTMLDivElement | null>;
+  controls: RefObject<StudioControls | null>;
 };
 
-type Pose = { position: T.Vector3; quaternion: T.Quaternion };
 type Inspection = {
   target: Target;
   home: Pose;
+  putDownFrom?: Pose;
   rotation: T.Quaternion;
   initial: T.Quaternion;
   distance: number;
+  bounds: T.Box3;
+  boundsRevision: number;
 };
-type FramedObject = { object: T.Object3D; bounds: T.Box3 };
-
-const savedPose = (obj: T.Object3D): Pose => ({
-  position: obj.position.clone(),
-  quaternion: obj.quaternion.clone(),
-});
-
-const initialCaseView = { azimuth: 0.65, elevation: 0.19, distance: 1.25 };
 const lookKeys = new Set(['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight']);
 
-function localBounds(object: T.Object3D) {
-  object.updateWorldMatrix(true, true);
-  const toLocal = object.matrixWorld.clone().invert();
-  const matrix = new T.Matrix4(),
-    part = new T.Box3(),
-    bounds = new T.Box3();
-  object.traverse((child) => {
-    if (!(child instanceof T.Mesh) || !child.visible) return;
-    if (!child.geometry.boundingBox) child.geometry.computeBoundingBox();
-    if (child.geometry.boundingBox) {
-      matrix.multiplyMatrices(toLocal, child.matrixWorld);
-      bounds.union(part.copy(child.geometry.boundingBox).applyMatrix4(matrix));
-    }
-  });
-  return bounds;
+type PreparedReflection = {
+  renderer: T.WebGLRenderer;
+  generator: T.PMREMGenerator;
+};
+
+type RigProps = Props & {
+  mapMarker: RefObject<SVGGElement | null>;
+  firstPicture: RefObject<FirstPicture>;
+  detailRevision: RefObject<number>;
+  preparedReflection: RefObject<PreparedReflection | null>;
+  phonePanel: RefObject<HTMLDivElement | null>;
+  setPhoneHeld: (held: boolean) => void;
+  nativeLow: boolean;
+};
+
+type Assembly = {
+  model: StudioModel;
+  assets: { loaded: number; total: number };
+  frontReady: () => Promise<void>;
+};
+
+function assemblyLoading() {
+  const assets = { loaded: 0, total: 0 };
+  const manager = createStudioLoadingManager();
+  manager.onStart = manager.onProgress = (_, loaded, total) =>
+    Object.assign(assets, { loaded, total });
+  function frontReady() {
+    if (assets.loaded === assets.total) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      manager.onLoad = resolve;
+    });
+  }
+  return { assets, manager, frontReady };
 }
 
-function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) {
+function CameraRig(
+  props: RigProps &
+    Assembly & { earlyRear: boolean; firstFrame: ReturnType<typeof roomFirstFrame> },
+) {
   const { camera: baseCamera, gl, scene } = useThree();
   const camera = baseCamera as T.PerspectiveCamera;
-  const [{ model, assets }] = useState(() => {
-    const assets = { loaded: 0, total: 0 };
-    const manager = new T.LoadingManager();
-    manager.onProgress = (_, loaded, total) => Object.assign(assets, { loaded, total });
-    return { model: buildStudio(manager), assets };
-  });
+  const { model, assets } = props;
   const live = useRef(props);
   live.current = props;
-  const loading = useRef({ reported: -1, frames: 0, complete: false });
-  const deskLook = useRef({ yaw: 0, pitch: -0.081 });
-  const benchLook = useRef({ yaw: benchEye.yaw, pitch: benchEye.pitch });
-  const zoom = useRef({ room: viewFov, bench: viewFov });
+  const loading = useRef({ reported: -1, complete: false });
+  const [shaded, setShaded] = useState(false);
+  const roomMaterials = useRef<ReturnType<typeof roomVisibility> | null>(null);
+  const finishNormals = useRef<((subtree?: T.Object3D) => void) | null>(null);
+  const roomMeshes = useRef<ReturnType<typeof roomDetail> | null>(null);
+  const reflections = useRef<ReturnType<typeof studioReflections> | null>(null);
+  const looks = useRef({
+    room: { yaw: eye.yaw, pitch: eye.pitch },
+    bench: { yaw: benchEye.yaw, pitch: benchEye.pitch },
+    gear: { yaw: 0, pitch: 0 },
+  });
+  function turnView(area: Station | 'gear', yaw: number, pitch: number) {
+    const look = looks.current[area];
+    look.yaw += yaw;
+    look.pitch += pitch;
+    if (area === 'gear') {
+      look.yaw = T.MathUtils.clamp(look.yaw, -0.38, 0.38);
+      look.pitch = T.MathUtils.clamp(look.pitch, -0.48, 0.84);
+    } else look.pitch = T.MathUtils.clamp(look.pitch, -1.19, 1.13);
+  }
+  const zoom = useRef({ room: roomFov, bench: viewFov });
   const station = useRef<Station>('room');
   const turning = useRef(new Set<string>());
-  const windowView = useRef({ yaw: windowEye.yaw, pitch: windowEye.pitch });
+  const windowView = useRef({ yaw: windowEye.yaw, pitch: windowEye.pitch, fov: roomFov });
   const windowFocus = useRef(false);
-  const windowApproach = useRef<(Pose & { time: number }) | null>(null);
-  const caseView = useRef({ ...initialCaseView, center: new T.Vector3() });
-  const wallFocus = useRef<
-    (FramedObject & { type: 'map' | 'board'; center: T.Vector3; fov: number }) | null
-  >(null);
-  const drawerFocus = useRef<(FramedObject & { center: T.Vector3 }) | null>(null);
+  const windowTravel = useRef<{
+    position: T.Vector3;
+    yaw: number;
+    pitch: number;
+    start: number;
+    duration: number;
+  } | null>(null);
+  const caseView = useRef({
+    ...initialOrbit(towerOrbit),
+    hardwareId: 'case',
+    center: new T.Vector3(),
+    object: undefined as T.Object3D | undefined,
+  });
+  const returningFromTower = useRef(false);
+  const wallFocus = useRef<WallFocus | null>(null);
+  const drawerFocus = useRef<{ object: T.Object3D; center: T.Vector3 } | null>(null);
+  const cabinetFocus = useRef(false);
   const mode = useRef<Mode>('room');
+  const returnViews = useRef(new Map<Mode, Pose & { fov: number }>());
   const focused = useRef(false);
   const inspection = useRef<Inspection | null>(null);
-  const described = useRef<FramedObject | null>(null);
+  function enclosingMode(): Mode {
+    if (cabinetFocus.current) return 'case';
+    if (drawerFocus.current) return 'drawer';
+    if (windowFocus.current) return 'window';
+    return wallFocus.current?.type ?? station.current;
+  }
   const pointer = useRef<{
     target: Target | undefined;
     x: number;
@@ -135,57 +220,254 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
     screenCorners: Array.from({ length: 4 }, () => new T.Vector3()),
   });
 
+  function placeHeldItem(moving: Inspection, ease: number, isRemote: boolean) {
+    const { object } = moving.target;
+    const parent = object.parent!;
+    const cached = scratch.current;
+    const item = moving.target.type === 'inspect' ? moving.target : undefined;
+    const width = item?.size ?? 0.13;
+    const distance = isRemote
+      ? 0.34
+      : (item?.viewDistance ?? Math.max(0.26, width * 2.75)) * moving.distance;
+    cached.local.set(
+      isRemote ? distance * camera.aspect * 0.29 : 0,
+      isRemote ? -0.074 : width * 0.075,
+      -distance,
+    );
+    camera.localToWorld(cached.local);
+    parent.worldToLocal(cached.local);
+    parent.getWorldQuaternion(cached.parent).invert();
+    cached.rotation.copy(cached.parent).multiply(camera.quaternion).multiply(moving.rotation);
+    if (
+      object.position.distanceToSquared(cached.local) > 1e-8 ||
+      object.quaternion.angleTo(cached.rotation) > 0.001
+    )
+      shadowWarmup.current = 1;
+    object.position.lerp(cached.local, ease);
+    object.quaternion.slerp(cached.rotation, ease);
+  }
+
+  const openSequence = useRef(0);
+  const inspectedTarget = useRef<Extract<Target, { type: 'inspect' }> | undefined>(undefined);
+
+  function setMode(next: Mode, app?: AppID, link?: InspectionLink) {
+    openSequence.current++;
+    const from = mode.current;
+    const panel = live.current.screen.current;
+    returningFromTower.current =
+      next === 'returning' && from === 'case' && caseView.current.hardwareId === 'case';
+    if (from === 'computer' && next !== 'computer' && panel) {
+      panel.dataset.visible = 'false';
+      panel.dataset.interactive = 'false';
+      if (document.activeElement instanceof HTMLElement && panel.contains(document.activeElement))
+        document.activeElement.blur();
+    }
+    if (
+      next !== 'returning' &&
+      !isStation(next) &&
+      ((isStation(from) && from === station.current) ||
+        ((next === 'inspect' || next === 'remote') &&
+          (isWallView(from) || from === 'case' || from === 'drawer' || from === 'window')))
+    ) {
+      returnViews.current.set(from, { ...savedPose(camera), fov: camera.fov });
+    }
+    turning.current.clear();
+    hover.current = undefined;
+    mode.current = next;
+    const held = inspection.current?.target;
+    const selected = next === 'inspect' && held?.type === 'inspect' ? held : undefined;
+    if (selected !== inspectedTarget.current) {
+      inspectedTarget.current?.onInspect?.(false, live.current.environment.reducedMotion);
+      selected?.onInspect?.(true, live.current.environment.reducedMotion);
+      inspectedTarget.current = selected;
+    }
+    live.current.setPhoneHeld(
+      next === 'inspect' && inspection.current?.target.id === 'development-phone',
+    );
+    animationStart.current = performance.now();
+    live.current.onMode(next, app, link);
+  }
+  function restoreHeldItem() {
+    const moving = inspection.current;
+    if (!moving) return;
+    moving.target.object.position.copy(moving.home.position);
+    moving.target.object.quaternion.copy(moving.home.quaternion);
+    moving.target.object.updateMatrixWorld(true);
+    inspection.current = null;
+    shadowWarmup.current = 2;
+  }
+
+  function finishReturn() {
+    const destination = enclosingMode();
+    if (live.current.environment.reducedMotion) {
+      const view = returnViews.current.get(destination);
+      if (view) {
+        camera.position.copy(view.position);
+        camera.quaternion.copy(view.quaternion);
+        camera.fov = view.fov;
+      } else if (destination === 'room') {
+        camera.position.set(eye.x, eye.y, eye.defaultZ);
+        camera.rotation.set(looks.current.room.pitch, looks.current.room.yaw, 0, 'YXZ');
+        camera.fov = zoom.current.room;
+      }
+      camera.updateProjectionMatrix();
+      camera.updateMatrixWorld(true);
+      shadowWarmup.current = 2;
+    }
+    returnViews.current.delete(destination);
+    setMode(destination);
+  }
+
   useEffect(() => {
     const element = gl.domElement;
     const renderer = gl as T.WebGLRenderer;
-    const reflectionMap = studioReflections(renderer);
-    scene.environment = reflectionMap.texture;
-    scene.environmentIntensity = 0.28;
+    const prepared = live.current.preparedReflection.current;
+    live.current.preparedReflection.current = null;
+    if (prepared && prepared.renderer !== renderer) prepared.generator.dispose();
+    const reflectionMap = studioReflections(
+      renderer,
+      scene,
+      prepared?.renderer === renderer ? prepared.generator : undefined,
+    );
+    const visibility = roomVisibility(model.pickRoots, live.current.environment, model.slats);
+    const surfaceAbort = new AbortController();
+    roomMeshes.current = roomDetail(model.interior, surfaceAbort.signal);
+    if (
+      !(import.meta.env.DEV && new URLSearchParams(location.search).get('review') === 'authoring')
+    ) {
+      void surfaceFinish(model.interior, surfaceAbort.signal)
+        .then((apply) => {
+          if (!surfaceAbort.signal.aborted) {
+            finishNormals.current = apply;
+            apply();
+          }
+        })
+        .catch(() => {});
+    }
+    roomMaterials.current = visibility;
+    reflections.current = reflectionMap;
     renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.needsUpdate = true;
     renderer.shadowMap.type = T.PCFShadowMap;
 
     camera.position.set(eye.x, eye.y, eye.defaultZ);
-    camera.rotation.set(deskLook.current.pitch, deskLook.current.yaw, 0, 'YXZ');
+    camera.rotation.set(looks.current.room.pitch, looks.current.room.yaw, 0, 'YXZ');
     camera.updateMatrixWorld(true);
     const ray = new T.Raycaster();
     const position = new T.Vector2();
+    let pointerAim: { x: number; y: number } | undefined;
+    const picking = roomPicking(model.pickRoots, (work) => {
+      const run = () => {
+        if (!surfaceAbort.signal.aborted) work();
+      };
+      if (typeof window.requestIdleCallback === 'function')
+        window.requestIdleCallback(run, { timeout: 1500 });
+      else window.setTimeout(run, 0);
+    });
+    void model.rearReady.then(() => {
+      if (surfaceAbort.signal.aborted) return;
+      visibility.prepareMaterials();
+      finishNormals.current?.();
+      roomMeshes.current?.refresh();
+      props.detailRevision.current++;
+      shadowWarmup.current = 2;
+      performance.mark('studio-room-rear-ready');
+    });
     function pick(x: number, y: number) {
       const rect = element.getBoundingClientRect();
       position.set(((x - rect.left) / rect.width) * 2 - 1, ((rect.top - y) / rect.height) * 2 + 1);
       ray.setFromCamera(position, camera);
-      for (const hit of ray.intersectObject(model.root, true)) {
-        if (!(hit.object instanceof T.Mesh)) continue;
-        if (hit.object.material instanceof T.MeshBasicMaterial && hit.object.material.transparent)
-          continue;
-        let current: T.Object3D | null = hit.object;
-        while (current) {
-          const target = model.byObject.get(current);
-          if (target && model.canReach(target, mode.current)) return target;
-          current = current.parent;
-        }
-        return undefined;
+      ray.far = Infinity;
+      const held = inspection.current?.target.object;
+      let current: T.Object3D | null = picking.closest(ray, held) ?? null;
+      while (current) {
+        if (current === held) return undefined;
+        const target = model.byObject.get(current);
+        if (target && model.canReach(target, mode.current, caseView.current.hardwareId))
+          return target;
+        current = current.parent;
       }
     }
 
-    function setMode(next: Mode, app?: AppID, link?: string) {
-      turning.current.clear();
-      hover.current = undefined;
-      if (next === 'returning') described.current = null;
-      mode.current = next;
-      animationStart.current = performance.now();
-      live.current.onMode(next, app, link);
+    function walkTo(x: number, y: number, z: number) {
+      const position = camera.position.clone();
+      const distance = Math.hypot(x - position.x, y - position.y, z - position.z);
+      windowTravel.current = {
+        position,
+        yaw: camera.rotation.y,
+        pitch: camera.rotation.x,
+        start: performance.now(),
+        duration: Math.max(480, distance * 950),
+      };
+    }
+    function applyReducedInspection() {
+      if (live.current.environment.reducedMotion && inspection.current?.target.type === 'inspect') {
+        placeHeldItem(inspection.current, 1, false);
+        inspection.current.target.object.updateMatrixWorld(true);
+      }
+    }
+    function returnToView() {
+      if (!live.current.environment.reducedMotion) {
+        const held = inspection.current;
+        if (held) held.putDownFrom = savedPose(held.target.object);
+        setMode('returning');
+        return;
+      }
+      restoreHeldItem();
+      finishReturn();
+    }
+    function leaveFocusedView(target: Target) {
+      restoreHeldItem();
+      if (drawerFocus.current) model.setDrawer(-1, live.current.environment.reducedMotion);
+      drawerFocus.current = null;
+      cabinetFocus.current = false;
+      wallFocus.current = null;
+      windowFocus.current = false;
+      windowTravel.current = null;
+      station.current = 'room';
+      returnViews.current.clear();
+      const aim =
+        target.type === 'case'
+          ? new T.Vector3(...(target.orbit ?? towerOrbit).center)
+          : localBounds(target.object).getCenter(new T.Vector3());
+      target.object.localToWorld(aim);
+      const x = aim.x - eye.x;
+      const z = aim.z - eye.defaultZ;
+      looks.current.room = {
+        yaw: Math.atan2(-x, -z),
+        pitch: Math.atan2(aim.y - eye.y, Math.hypot(x, z)),
+      };
     }
     function moveToStation(next: Station) {
       station.current = next;
-      if (next === 'bench') benchLook.current = { yaw: benchEye.yaw, pitch: benchEye.pitch };
+      if (next === 'bench') {
+        void model.prepareRear('bench');
+        looks.current.bench = { yaw: benchEye.yaw, pitch: benchEye.pitch };
+        void model
+          .prepareWorkshop()
+          .then(() => {
+            if (!surfaceAbort.signal.aborted) {
+              finishNormals.current?.();
+              roomMeshes.current?.refresh();
+              visibility.prepareMaterials();
+              props.detailRevision.current++;
+            }
+          })
+          .catch(() => {});
+      }
       hover.current = undefined;
       pointer.current = null;
       live.current.onHint('');
       setMode(next);
     }
-    function open(target: Target | undefined) {
+    function open(target: Target | undefined, prepared = false) {
+      const sequence = ++openSequence.current;
       if (!target) return;
+      if (
+        !canPick(mode.current) ||
+        !model.canReach(target, mode.current, caseView.current.hardwareId)
+      )
+        return;
       if (mode.current === 'remote' && target.type === 'key') {
         model.pushButton(target.index);
         const status = live.current.onPress(target);
@@ -197,51 +479,66 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
         return;
       }
       if (
-        (!isStation(mode.current) &&
-          mode.current !== 'board' &&
-          mode.current !== 'drawer' &&
-          mode.current !== 'window') ||
-        !model.canReach(target, mode.current)
-      )
+        target.type === 'drawer' &&
+        mode.current === 'drawer' &&
+        target.object === drawerFocus.current?.object
+      ) {
+        closeDrawer();
         return;
+      }
+      const preparing = !prepared && target.prepare?.();
+      if (preparing) {
+        const proceed = () => {
+          if (sequence === openSequence.current && !surfaceAbort.signal.aborted) open(target, true);
+        };
+        void preparing.then(proceed, proceed);
+        return;
+      }
+      if (opensStudioView(target) && mode.current !== 'room') leaveFocusedView(target);
       if (target.type === 'window' || target.type === 'remote') {
         if (!atWindow(mode.current)) {
-          windowView.current = { yaw: windowEye.yaw, pitch: windowEye.pitch };
-          windowApproach.current = { ...savedPose(camera), time: performance.now() };
+          windowView.current = { yaw: windowEye.yaw, pitch: windowEye.pitch, fov: camera.fov };
+          walkTo(windowEye.x, windowEye.y, windowEye.z);
         }
         if (target.type === 'window') {
           windowFocus.current = true;
-          described.current = null;
           setMode('window');
           live.current.onHint('');
           return;
         }
       }
       if (target.type === 'drawer') {
-        if (mode.current === 'drawer') {
-          closeDrawer();
-        } else {
-          const bounds = localBounds(target.object);
-          drawerFocus.current = {
-            object: target.object,
-            bounds,
-            center: model.drawerCenter(target.index),
-          };
-          described.current = drawerFocus.current;
-          model.setDrawer(target.index);
-          setMode('drawer');
-          live.current.onHint('');
+        drawerFocus.current = {
+          object: target.object,
+          center: model.drawerCenter(target.index),
+        };
+        const immediate = live.current.environment.reducedMotion;
+        model.setDrawer(target.index, immediate);
+        setMode('drawer');
+        if (immediate) {
+          camera.position.copy(drawerFocus.current.center).add(drawerEyeOffset);
+          camera.rotation.set(drawerPitch, 0, 0, 'YXZ');
+          camera.fov = drawerFov;
+          camera.updateProjectionMatrix();
+          camera.updateMatrixWorld(true);
         }
+        shadowWarmup.current = 2;
+        live.current.onHint('');
         return;
       }
       hover.current = undefined;
+      if (target.type === 'cabinet') {
+        model.slideCabinet(target.index);
+        live.current.onHint('');
+        return;
+      }
       if (target.type === 'door') {
         model.toggleDoor();
         live.current.onHint('');
         return;
       }
       if (target.type === 'workbench') {
-        moveToStation(mode.current === 'room' ? 'bench' : 'room');
+        moveToStation('bench');
         return;
       }
       if (target.type === 'computer') {
@@ -253,34 +550,61 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
         live.current.onHint('');
         return;
       }
-      if (target.type === 'map' || target.type === 'board') {
+      if (target.type === 'gear') void model.prepareRear('gear');
+      else if (target.id === 'collection-cabinet') void model.prepareRear('cabinet');
+      else if (target.id === 'filament-printer') void model.prepareRear('bench');
+      if (isWallView(target.type)) {
         const bounds = localBounds(target.object);
         const center = target.object.localToWorld(bounds.getCenter(new T.Vector3()));
+        if (target.type === 'gear') looks.current.gear = { yaw: 0, pitch: 0 };
         wallFocus.current = {
           type: target.type,
           object: target.object,
           bounds,
           center,
-          fov: viewFov,
+          fov: target.type === 'gear' ? gearEye.fov : viewFov,
+          panY: 0,
         };
-        described.current = wallFocus.current;
         setMode(target.type);
-        live.current.onHint('');
+        if (live.current.environment.reducedMotion) {
+          if (target.type === 'gear') {
+            frameGearWall(target.object, camera.aspect, camera.position);
+            camera.rotation.set(gearEye.pitch, gearEye.yaw, 0, 'YXZ');
+          } else {
+            const pitch = frameWallSurface(wallFocus.current, camera.aspect, camera.position);
+            camera.rotation.set(pitch, 0, 0, 'YXZ');
+          }
+          camera.fov = wallFocus.current.fov;
+          camera.updateProjectionMatrix();
+          camera.updateMatrixWorld(true);
+        }
+        live.current.onHint(
+          target.type === 'bookshelf'
+            ? local(live.current.environment.locale, target.english, target.label)
+            : '',
+        );
         return;
       }
       if (target.type === 'case') {
-        described.current = { object: target.object, bounds: localBounds(target.object) };
+        cabinetFocus.current = target.id === 'collection-cabinet';
+        const orbit = target.orbit ?? towerOrbit;
         caseView.current = {
-          ...initialCaseView,
-          center: target.object.getWorldPosition(new T.Vector3()),
+          ...initialOrbit(orbit),
+          hardwareId: target.id,
+          center: target.object.localToWorld(new T.Vector3(...orbit.center)),
+          object: target.object,
         };
         setMode('case');
+        if (live.current.environment.reducedMotion) {
+          camera.fov = frameHardware(caseView.current, camera.position, camera.rotation);
+          camera.updateProjectionMatrix();
+          camera.updateMatrixWorld(true);
+        }
         live.current.onHint(local(live.current.environment.locale, target.english, target.label));
         return;
       }
       if (target.type === 'inspect' || target.type === 'remote') {
         const object = target.object;
-        described.current = { object, bounds: localBounds(object) };
         const initial = new T.Quaternion().setFromEuler(
           new T.Euler(...(target.type === 'inspect' ? (target.pose ?? [0, 0, 0]) : [1.47, 0, 0])),
         );
@@ -290,9 +614,12 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
           initial,
           rotation: initial.clone(),
           distance: 1,
+          bounds: localBounds(object),
+          boundsRevision: props.detailRevision.current,
         };
         shadowWarmup.current = 2;
-        setMode(target.type, undefined, target.type === 'inspect' ? target.link?.url : undefined);
+        setMode(target.type, undefined, target.type === 'inspect' ? target.link : undefined);
+        applyReducedInspection();
         const locale = live.current.environment.locale;
         const text =
           target.type === 'inspect'
@@ -307,18 +634,48 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
     }
 
     function closeDrawer() {
-      model.setDrawer(-1);
+      model.setDrawer(-1, live.current.environment.reducedMotion);
       drawerFocus.current = null;
       pointer.current = null;
-      setMode('returning');
+      returnToView();
       live.current.onHint('');
     }
 
+    function exit() {
+      openSequence.current++;
+      const current = mode.current;
+      if (current === 'room' || current === 'returning') return false;
+      if (current === 'bench') {
+        moveToStation('room');
+      } else if (current === 'drawer') {
+        closeDrawer();
+      } else {
+        if (isWallView(current)) wallFocus.current = null;
+        if (current === 'case') cabinetFocus.current = false;
+        if (current === 'window') windowFocus.current = false;
+        if (atWindow(current) && !windowFocus.current) {
+          windowTravel.current = null;
+          if (!live.current.environment.reducedMotion) {
+            if (station.current === 'bench') walkTo(benchEye.x, benchEye.y, benchEye.z);
+            else walkTo(eye.x, eye.y, eye.defaultZ);
+          }
+        }
+        pointer.current = null;
+        returnToView();
+        live.current.onHint('');
+      }
+      return true;
+    }
+
+    const computer = model.targets.find((target) => target.id === 'computer');
+    let measuredFirstTurn = false;
     live.current.controls.current = {
-      open: () => (mode.current === 'bench' ? moveToStation('room') : open(model.targets[0])),
+      open: () => open(computer),
+      exit,
     };
 
     function move(event: PointerEvent) {
+      pointerAim = { x: event.clientX, y: event.clientY };
       if (mode.current === 'map') {
         const pin = pick(event.clientX, event.clientY);
         if (pin !== hover.current) {
@@ -334,7 +691,7 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
           pointer.current.moved = true;
         return;
       }
-      if (!canPick(mode.current) && mode.current !== 'inspect' && mode.current !== 'case') return;
+      if (!canPick(mode.current)) return;
       const drag = pointer.current;
       if (!drag) {
         if (canPick(mode.current)) {
@@ -343,34 +700,48 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
             hover.current = target;
             const locale = live.current.environment.locale;
             const text =
-              target?.type === 'drawer' && mode.current === 'drawer'
+              target?.type === 'drawer' &&
+              mode.current === 'drawer' &&
+              target.object === drawerFocus.current?.object
                 ? local(locale, 'Close drawer', '关闭抽屉')
-                : target?.type === 'workbench' && mode.current === 'bench'
-                  ? local(locale, 'Return to the computer desk', '回到电脑桌')
-                  : target
-                    ? local(locale, target.english, target.label)
-                    : '';
-            live.current.onHint(
-              text,
-              mode.current !== 'remote' ? { x: event.clientX, y: event.clientY } : undefined,
-            );
+                : target
+                  ? local(locale, target.english, target.label)
+                  : '';
+            if (mode.current === 'remote') live.current.onHint(text);
+            else live.current.onHover(text, { x: event.clientX, y: event.clientY });
           }
-          element.style.cursor = target ? 'pointer' : isStation(mode.current) ? 'grab' : '';
+          element.style.cursor = target
+            ? 'pointer'
+            : canLookAround(mode.current) || mode.current === 'bookshelf'
+              ? 'grab'
+              : '';
         }
         return;
       }
       const dx = event.clientX - drag.x,
         dy = event.clientY - drag.y;
       if (!drag.moved && Math.hypot(dx, dy) < 5) return;
+      if (!drag.moved && isStation(mode.current)) void model.prepareRear();
       drag.moved = true;
-      if (isStation(mode.current)) {
-        const look = mode.current === 'bench' ? benchLook.current : deskLook.current;
-        look.yaw -= dx * 0.0035;
-        look.pitch = T.MathUtils.clamp(look.pitch - dy * 0.0028, -1.19, 1.13);
+      if (canLookAround(mode.current)) {
+        if (live.current.roomVisible) live.current.firstFrame.prioritizeInput();
+        turnView(mode.current, -dx * 0.0035, -dy * 0.0028);
+        if (!measuredFirstTurn && live.current.roomVisible) {
+          measuredFirstTurn = true;
+          performance.mark('studio-input-accepted', { detail: { eventTime: event.timeStamp } });
+        }
         drag.x = event.clientX;
         drag.y = event.clientY;
         element.style.cursor = 'grabbing';
-        live.current.onHint('');
+        live.current.onHover('');
+      } else if (mode.current === 'bookshelf' && wallFocus.current) {
+        const wall = wallFocus.current;
+        const distance = camera.position.z - wall.center.z;
+        const visibleHeight = 2 * distance * Math.tan(T.MathUtils.degToRad(wall.fov / 2));
+        wall.panY += (dy * visibleHeight) / element.clientHeight;
+        drag.y = event.clientY;
+        drag.x = event.clientX;
+        element.style.cursor = 'grabbing';
       } else if (mode.current === 'inspect' && inspection.current) {
         const rect = element.getBoundingClientRect();
         const next = arcball(
@@ -380,10 +751,19 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
           Math.min(rect.width, rect.height) * 0.28,
         );
         inspection.current.rotation.setFromUnitVectors(drag.ball, next).multiply(drag.orientation);
+        applyReducedInspection();
       } else if (mode.current === 'case') {
         const look = caseView.current;
-        look.azimuth = T.MathUtils.clamp(look.azimuth + dx * 0.003, 0.38, 0.99);
-        look.elevation = T.MathUtils.clamp(look.elevation + dy * 0.002, 0.05, 0.4);
+        look.azimuth = T.MathUtils.clamp(
+          look.azimuth + dx * 0.003,
+          look.orbit.azimuth[1],
+          look.orbit.azimuth[2],
+        );
+        look.elevation = T.MathUtils.clamp(
+          look.elevation + dy * 0.002,
+          look.orbit.elevation[1],
+          look.orbit.elevation[2],
+        );
         drag.x = event.clientX;
         drag.y = event.clientY;
         element.style.cursor = 'grabbing';
@@ -406,11 +786,9 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
       }
     }
     function down(event: PointerEvent) {
-      if (
-        event.button !== 0 ||
-        (!canPick(mode.current) && mode.current !== 'inspect' && mode.current !== 'case')
-      )
-        return;
+      if (event.button !== 0 || !canPick(mode.current)) return;
+      if (live.current.roomVisible) live.current.firstFrame.prioritizeInput();
+      openSequence.current++;
       const rect = element.getBoundingClientRect();
       pointer.current = {
         target: canPick(mode.current) ? pick(event.clientX, event.clientY) : undefined,
@@ -429,24 +807,31 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
         element.releasePointerCapture(event.pointerId);
       if (!drag?.moved && drag?.target && drag.target === pick(event.clientX, event.clientY))
         open(drag.target);
-      element.style.cursor = ['room', 'bench', 'inspect', 'case'].includes(mode.current)
+      element.style.cursor = ['room', 'bench', 'gear', 'bookshelf', 'inspect', 'case'].includes(
+        mode.current,
+      )
         ? 'grab'
         : '';
     }
     function cancel() {
       pointer.current = null;
+      live.current.firstFrame.cancelInputPriority();
       element.style.cursor = '';
     }
     function leave() {
+      pointerAim = undefined;
       if (!pointer.current) {
         hover.current = undefined;
-        if (canPick(mode.current) && mode.current !== 'remote') live.current.onHint('');
+        if (canPick(mode.current)) live.current.onHover('');
       }
     }
     function reset() {
-      if (mode.current === 'inspect' && inspection.current)
+      if (mode.current === 'inspect' && inspection.current) {
         inspection.current.rotation.copy(inspection.current.initial);
-      if (mode.current === 'case') Object.assign(caseView.current, initialCaseView);
+        applyReducedInspection();
+      }
+      if (mode.current === 'case')
+        Object.assign(caseView.current, initialOrbit(caseView.current.orbit));
     }
     function wheel(event: WheelEvent) {
       event.preventDefault();
@@ -457,23 +842,37 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
           0.82,
           1.5,
         );
+        applyReducedInspection();
       }
       if (mode.current === 'case') {
         const look = caseView.current;
-        look.distance = T.MathUtils.clamp(look.distance + delta * 0.0012, 1.05, 1.55);
+        look.distance = T.MathUtils.clamp(
+          look.distance + delta * 0.0009,
+          look.orbit.distance[1],
+          look.orbit.distance[2],
+        );
       }
       const current = mode.current;
       if (isStation(current))
         zoom.current[current] = T.MathUtils.clamp(zoom.current[current] + delta * 0.03, 32, 64);
       const wall = wallFocus.current;
-      if (wall && (current === 'map' || current === 'board')) {
-        wall.fov = T.MathUtils.clamp(wall.fov + delta * 0.03, 28, 64);
+      if (wall && isWallView(current)) {
+        wall.fov = T.MathUtils.clamp(
+          wall.fov + delta * 0.03,
+          wall.type === 'bookshelf' ? 13 : 28,
+          64,
+        );
       }
     }
     function keyboard(event: KeyboardEvent) {
       if (
+        lookKeys.has(event.code) ||
+        (event.key === 'Escape' && (event.defaultPrevented || event.repeat))
+      )
+        openSequence.current++;
+      if (
         !event.defaultPrevented &&
-        isStation(mode.current) &&
+        canLookAround(mode.current) &&
         lookKeys.has(event.code) &&
         !event.ctrlKey &&
         !event.metaKey &&
@@ -484,41 +883,27 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
         )
       ) {
         event.preventDefault();
+        if (!event.repeat && (event.code === 'ArrowLeft' || event.code === 'ArrowRight'))
+          void model.prepareRear();
         turning.current.add(event.code);
         hover.current = undefined;
-        live.current.onHint('');
+        live.current.onHover('');
         return;
       }
       if (event.defaultPrevented || event.repeat) return;
-      if (event.key === 'Escape' && mode.current === 'bench') {
+      if (event.key === 'Escape' && exit()) {
         event.preventDefault();
-        moveToStation('room');
         return;
       }
-      if (event.key === 'Escape' && mode.current === 'drawer') {
-        event.preventDefault();
-        closeDrawer();
-        return;
-      }
-      if (event.key === 'Escape' && !isStation(mode.current) && mode.current !== 'returning') {
-        event.preventDefault();
-        if (live.current.screen.current) {
-          live.current.screen.current.dataset.visible = 'false';
-          live.current.screen.current.dataset.interactive = 'false';
-        }
-        if (mode.current === 'map' || mode.current === 'board') wallFocus.current = null;
-        if (mode.current === 'window') windowFocus.current = false;
-        windowApproach.current = null;
-        pointer.current = null;
-        setMode('returning');
-        live.current.onHint('');
-      }
-      if (event.code === 'KeyE' && canPick(mode.current)) {
+      if (event.code === 'KeyE' && mode.current !== 'computer' && canPick(mode.current)) {
         const rect = element.getBoundingClientRect();
-        const target = hover.current ?? pick(rect.x + rect.width / 2, rect.y + rect.height / 2);
-        if (target || mode.current === 'room') {
+        const target = pick(
+          pointerAim?.x ?? rect.x + rect.width / 2,
+          pointerAim?.y ?? rect.y + rect.height / 2,
+        );
+        if (target) {
           event.preventDefault();
-          open(target ?? model.targets[0]);
+          open(target);
         }
       }
     }
@@ -537,92 +922,17 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
     window.addEventListener('keyup', releaseKey);
     window.addEventListener('blur', releaseMovement);
     if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('review')) {
-      window.__studioReview = {
-        activate: (id) => open(model.targets.find((t) => t.id === id)),
-        project: (id) => {
-          const object =
-            model.targets.find((t) => t.id === id)?.object ?? model.root.getObjectByName(id);
-          const point = object?.getWorldPosition(new T.Vector3()).project(camera);
-          const rect = element.getBoundingClientRect();
-          return point
-            ? {
-                x: rect.left + ((point.x + 1) * rect.width) / 2,
-                y: rect.top + ((1 - point.y) * rect.height) / 2,
-              }
-            : null;
-        },
-        camera: () => ({
-          position: camera.position.toArray(),
-          rotation: camera.quaternion.toArray(),
-          fov: camera.fov,
-        }),
-        objectPose: (id) => {
-          const object =
-            model.targets.find((item) => item.id === id)?.object ?? model.root.getObjectByName(id);
-          if (!object) return undefined;
-          return { position: object.position.toArray(), rotation: object.quaternion.toArray() };
-        },
-        drawer: (index) => model.targets.find((t) => t.id === 'drawer-' + index)?.object.position.z,
-        lightLevels: () => model.lightLevels(),
-        async exportRoom(objectName) {
-          const { GLTFExporter } = await import('three/addons/exporters/GLTFExporter.js');
-          const source = objectName ? model.root.getObjectByName(objectName) : model.root;
-          if (!source) throw new Error('Unknown studio object: ' + objectName);
-          const studio = source.clone();
-          if (objectName) studio.position.set(0, 0, 0);
-          const tracks: T.KeyframeTrack[] = [];
-          studio.traverse((child) => {
-            if (
-              child instanceof T.InstancedMesh ||
-              child instanceof T.Points ||
-              child instanceof T.LineSegments
-            )
-              child.visible = false;
-            if (
-              child.name === panoramaMeshName &&
-              child instanceof T.Mesh &&
-              child.material instanceof T.ShaderMaterial
-            ) {
-              child.material = new T.MeshBasicMaterial({
-                map: child.material.uniforms.photoA.value,
-                side: T.DoubleSide,
-              });
-            }
-            if (child.name !== 'Fan rotor') return;
-            child.name = 'Fan rotor ' + (tracks.length + 1);
-            const times = Array.from({ length: 61 }, (_, i) => i / 20);
-            const quaternions = times.flatMap((time) =>
-              new T.Quaternion()
-                .setFromAxisAngle(new T.Vector3(0, 0, 1), time * 14 + child.rotation.z)
-                .toArray(),
-            );
-            tracks.push(
-              new T.QuaternionKeyframeTrack(child.name + '.quaternion', times, quaternions),
-            );
-          });
-          if (!objectName) {
-            for (const child of [...studio.children])
-              if (child instanceof T.Light || child instanceof T.Mesh) studio.remove(child);
-          }
-          const buffer = await new GLTFExporter().parseAsync(studio, {
-            binary: true,
-            maxTextureSize: 1024,
-            onlyVisible: true,
-            animations: tracks.length ? [new T.AnimationClip('Fan rotors', 3, tracks)] : [],
-          });
-          const url = URL.createObjectURL(
-            new Blob([buffer as ArrayBuffer], { type: 'model/gltf-binary' }),
-          );
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = objectName ? 'studio-object.glb' : 'felix-studio.glb';
-          link.click();
-          setTimeout(() => URL.revokeObjectURL(url), 1000);
-        },
-      };
+      window.__studioReview = createStudioReview({
+        model,
+        camera,
+        renderer,
+        scene,
+        lightingReady: () => visibility.ready,
+        open,
+      });
     }
     return () => {
-      delete window.__studioReview;
+      if (import.meta.env.DEV) delete window.__studioReview;
       live.current.controls.current = null;
       element.removeEventListener('pointermove', move);
       element.removeEventListener('pointerdown', down);
@@ -635,34 +945,162 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
       window.removeEventListener('keyup', releaseKey);
       window.removeEventListener('blur', releaseMovement);
       reflectionMap.dispose();
-      scene.environment = null;
+      picking.dispose();
+      surfaceAbort.abort();
+      roomMeshes.current?.select(false);
+      roomMeshes.current = null;
+      finishNormals.current = null;
+      visibility.dispose();
+      reflections.current = null;
     };
   }, [camera, gl, model, scene]);
 
+  useEffect(() => model.disposeAtlasDetail, [model]);
+
   useEffect(() => {
-    shadowWarmup.current = 3;
-  }, [props.environment]);
+    const inspect = model.setAtlasInspection;
+    if (!inspect || !props.roomVisible || props.mode !== 'map') return;
+    inspect(true);
+    return () => inspect(false);
+  }, [model, props.mode, props.roomVisible]);
+
+  useEffect(() => {
+    if (!props.roomVisible || !shaded) return;
+    return model.prepareBookBacks();
+  }, [model, props.roomVisible, shaded]);
+
+  useEffect(() => {
+    if (!props.roomVisible || (!props.earlyRear && !shaded)) return;
+    if (typeof window.requestIdleCallback === 'function') {
+      const idle = window.requestIdleCallback(() => void model.prepareRear(), { timeout: 240 });
+      return () => window.cancelIdleCallback(idle);
+    }
+    const timer = window.setTimeout(() => void model.prepareRear(), 32);
+    return () => window.clearTimeout(timer);
+  }, [model, props.earlyRear, props.roomVisible, shaded]);
+
+  useEffect(() => {
+    const prepare = model.prepareWaterMotion;
+    if (!prepare || !props.roomVisible || !shaded) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    const warmFerry = new URLSearchParams(location.search).get('studio-ferry') === 'warm';
+    let cancel = () => {};
+    void model.rearReady.then(() => {
+      if (signal.aborted) return;
+      const enable = () =>
+        prepare(
+          (material) => warmRoomEffect(gl, material, signal),
+          signal,
+          warmFerry
+            ? (ferry) =>
+                warmRiverFerry(
+                  gl,
+                  ferry,
+                  camera,
+                  scene,
+                  () => live.current.environment.quality === 'high',
+                  signal,
+                )
+            : undefined,
+        );
+      if (typeof window.requestIdleCallback === 'function') {
+        const idle = window.requestIdleCallback(enable, { timeout: 1500 });
+        cancel = () => window.cancelIdleCallback(idle);
+      } else {
+        const timer = window.setTimeout(enable, 32);
+        cancel = () => window.clearTimeout(timer);
+      }
+    });
+    return () => {
+      controller.abort();
+      cancel();
+    };
+  }, [camera, gl, model, props.roomVisible, scene, shaded]);
+
+  useEffect(() => {
+    if (props.roomVisible)
+      reflections.current?.select(props.environment.night, props.environment.quality);
+  }, [props.environment.night, props.environment.quality, props.roomVisible]);
+
+  const { blinds, angle, reducedMotion } = props.environment;
+  useLayoutEffect(() => {
+    if (reducedMotion) model.setBlinds(blinds, angle);
+    shadowWarmup.current = 1;
+  }, [model, blinds, angle, reducedMotion]);
+
+  useEffect(() => {
+    shadowWarmup.current = 1;
+  }, [props.environment.quality]);
 
   useFrame(({ clock, size }, elapsed) => {
     const delta = Math.min(elapsed, 0.05);
-    const { environment: env, screen, caption, onMode } = live.current;
+    const { environment: env, screen } = live.current;
     const load = loading.current;
     if (!load.complete && assets.total) {
       const ratio = assets.loaded / assets.total;
+      if (ratio === 1 && props.roomVisible && props.firstPicture.current === 'interactive') {
+        performance.mark('studio-room-material-prep-start');
+        roomMaterials.current?.prepareMaterials();
+        finishNormals.current?.();
+        performance.mark('studio-room-material-prep-end');
+        props.firstPicture.current = 'preparing';
+      }
       if (ratio !== load.reported) {
         load.reported = ratio;
         live.current.onProgress(ratio);
       }
-      if (ratio === 1 && ++load.frames >= 3) {
+      if (ratio === 1 && props.firstPicture.current === 'drawn') {
         load.complete = true;
-        live.current.onReady();
+        setShaded(true);
+        if (
+          import.meta.env.DEV &&
+          new URLSearchParams(location.search).get('review') === 'window'
+        ) {
+          window.__studioReview?.activate('window');
+        }
       }
     }
     const current = mode.current;
+    if (model.mountedDetails.length) {
+      let visibleArrival = false;
+      for (const subtree of model.mountedDetails) {
+        roomMaterials.current?.prepareMaterials(subtree);
+        finishNormals.current?.(subtree);
+        let ancestor: T.Object3D | null = subtree;
+        while (ancestor?.visible) ancestor = ancestor.parent;
+        if (ancestor === null) visibleArrival = true;
+      }
+      model.mountedDetails.length = 0;
+      if (props.nativeLow) roomMeshes.current?.refresh();
+      if (visibleArrival) {
+        props.detailRevision.current++;
+        shadowWarmup.current = 2;
+      }
+    }
+    const low = load.complete && env.quality === 'low';
+    if (props.nativeLow && low) {
+      const detail =
+        inspection.current?.target.object ??
+        (current === 'case' ? caseView.current.object : undefined);
+      roomMeshes.current?.select(true, detail);
+    } else {
+      roomMeshes.current?.select(
+        low && (isStation(current) || atWindow(current) || current === 'computer'),
+      );
+    }
     const cached = scratch.current;
     const ease = env.reducedMotion ? 1 : 1 - Math.exp(-delta * 10.5);
-    const reflectionLevel =
-      (env.night ? 0.25 : 0.4) * (env.blinds ? 1 - (env.angle + 1) * 0.16 : 1);
+    const windowOcclusion = env.blinds ? (env.angle + 1) / 3 : 0;
+    roomMaterials.current?.update(env, delta);
+    gl.toneMappingExposure = T.MathUtils.lerp(
+      gl.toneMappingExposure,
+      env.night ? 1.02 : 1.09,
+      ease,
+    );
+    const reflectionLevel = env.night
+      ? (0.13 + 0.35 * ceilingLightLevel(env)) * (1 - windowOcclusion * 0.14)
+      : (env.weather === '晴' ? 0.79 : 0.64) * (1 - windowOcclusion * 0.65);
     scene.environmentIntensity = T.MathUtils.lerp(
       scene.environmentIntensity,
       reflectionLevel,
@@ -671,13 +1109,12 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
     const fov = (viewFov * Math.PI) / 180;
     const aspect = size.width / size.height;
     const atBench = station.current === 'bench';
-    const look = atBench ? benchLook.current : deskLook.current;
-    if (isStation(current) && turning.current.size) {
+    const look = looks.current[station.current];
+    if (canLookAround(current) && turning.current.size) {
       const keys = turning.current;
       const yawDelta = Number(keys.has('ArrowLeft')) - Number(keys.has('ArrowRight'));
       const pitchDelta = Number(keys.has('ArrowUp')) - Number(keys.has('ArrowDown'));
-      look.yaw += yawDelta * delta * 1.65;
-      look.pitch = T.MathUtils.clamp(look.pitch + pitchDelta * delta * 1.3, -1.19, 1.13);
+      turnView(current, yawDelta * delta * 1.65, pitchDelta * delta * 1.3);
     }
     let { yaw, pitch } = look;
     if (atBench) cached.position.set(benchEye.x, benchEye.y, benchEye.z);
@@ -699,80 +1136,106 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
       yaw = 0;
       pitch = 0;
     }
-    if (current === 'case') {
-      const { azimuth, elevation, distance, center } = caseView.current;
-      const radius = distance * Math.cos(elevation);
-      cached.position
-        .set(
-          -radius * Math.sin(azimuth),
-          distance * Math.sin(elevation),
-          radius * Math.cos(azimuth),
-        )
-        .add(center);
-      yaw = -azimuth;
-      pitch = -elevation;
+    let hardwareFov = viewFov;
+    if (current === 'case' || cabinetFocus.current) {
+      hardwareFov = frameHardware(caseView.current, cached.position, cached.euler);
+      yaw = cached.euler.y;
+      pitch = cached.euler.x;
     }
     const wall = wallFocus.current;
-    if (wall) {
-      const { x: width, y: height } = wall.bounds.getSize(cached.local);
-      const distance = Math.max(height, width / aspect) / (1.79 * Math.tan(fov / 2));
-      cached.position.set(wall.center.x, wall.center.y - height * 0.027, wall.center.z + distance);
+    if (wall?.type === 'gear') {
+      frameGearWall(wall.object, aspect, cached.position);
+      yaw = gearEye.yaw + looks.current.gear.yaw;
+      pitch = gearEye.pitch + looks.current.gear.pitch;
+    } else if (wall) {
+      pitch = frameWallSurface(wall, aspect, cached.position);
       yaw = 0;
-      pitch = 0;
     }
     const lookingOutside = atWindow(current) || (current === 'returning' && windowFocus.current);
     if (lookingOutside) {
       const look = windowView.current;
       yaw = look.yaw;
       pitch = look.pitch;
-      // Eyes travel a short arc around the neck as the visitor looks left or right.
-      const turn = yaw - windowEye.yaw,
-        tilt = pitch - windowEye.pitch;
       const eyeOffset = 0.075;
       cached.position.set(
-        windowEye.x + eyeOffset * (1 - Math.cos(turn) * Math.cos(tilt)),
-        windowEye.y + eyeOffset * Math.sin(tilt),
-        windowEye.z + eyeOffset * Math.sin(turn) * Math.cos(tilt),
+        windowEye.x + eyeOffset * (Math.cos(windowEye.pitch) - Math.sin(yaw) * Math.cos(pitch)),
+        windowEye.y + eyeOffset * (Math.sin(pitch) - Math.sin(windowEye.pitch)),
+        windowEye.z - eyeOffset * Math.cos(yaw) * Math.cos(pitch),
       );
     }
     const drawer = drawerFocus.current;
     if (drawer) {
-      cached.position.copy(drawer.center).add(cached.local.set(0, 0.54, 0.27));
+      cached.position.copy(drawer.center).add(drawerEyeOffset);
       yaw = 0;
-      pitch = -Math.atan2(0.54, 0.27);
+      pitch = drawerPitch;
     }
-    const targetFov = drawer
-      ? 46
-      : (wall?.fov ??
-        (isStation(current) || current === 'returning' ? zoom.current[station.current] : viewFov));
+    const targetFov =
+      lookingOutside || windowTravel.current
+        ? windowView.current.fov
+        : drawer
+          ? drawerFov
+          : (wall?.fov ??
+            (isStation(current) || (current === 'returning' && !cabinetFocus.current)
+              ? zoom.current[station.current]
+              : hardwareFov));
+    const fovEase = env.reducedMotion ? 1 : 1 - Math.exp(-elapsed * 10.5);
     const nextFov =
       current === 'computer'
         ? T.MathUtils.lerp(computerStart.current.fov, viewFov, lean)
-        : T.MathUtils.lerp(camera.fov, targetFov, ease);
+        : T.MathUtils.lerp(camera.fov, targetFov, fovEase);
     if (Math.abs(camera.fov - targetFov) > 0.001) {
       camera.fov = Math.abs(nextFov - targetFov) < 0.001 ? targetFov : nextFov;
       camera.updateProjectionMatrix();
     }
-    const arriving = lookingOutside ? windowApproach.current : null;
+    const walk = windowTravel.current;
     if (current === 'computer') {
       camera.position.lerpVectors(computerStart.current.position, cached.position, lean);
       camera.position.y += Math.sin(Math.PI * lean) * 0.032;
       camera.quaternion
         .copy(computerStart.current.quaternion)
         .slerp(cached.orientation.identity(), T.MathUtils.smootherstep(approach, 0, 0.86));
-    } else if (arriving) {
+    } else if (walk) {
       const step = env.reducedMotion
         ? 1
-        : T.MathUtils.clamp((performance.now() - arriving.time) / 920, 0, 1);
-      const travel = T.MathUtils.smootherstep(step, 0, 1);
-      camera.position.lerpVectors(arriving.position, cached.position, travel);
-      camera.position.y += Math.sin(Math.PI * travel) * 0.036;
-      const turn = T.MathUtils.smootherstep(step, 0, 0.87);
-      cached.orientation.setFromEuler(cached.euler.set(pitch, yaw, 0, 'YXZ'));
-      camera.quaternion.copy(arriving.quaternion).slerp(cached.orientation, turn);
-      if (step === 1) windowApproach.current = null;
+        : T.MathUtils.clamp((performance.now() - walk.start) / walk.duration, 0, 1);
+      const travel = T.MathUtils.smoothstep(step, 0, 1);
+      camera.position.lerpVectors(walk.position, cached.position, travel);
+      const turn = yaw - walk.yaw;
+      camera.rotation.set(
+        T.MathUtils.lerp(walk.pitch, pitch, travel),
+        walk.yaw + Math.atan2(Math.sin(turn), Math.cos(turn)) * travel,
+        0,
+        'YXZ',
+      );
+      if (step === 1) windowTravel.current = null;
+    } else if (env.reducedMotion) {
+      camera.position.copy(cached.position);
+      camera.rotation.set(pitch, Math.atan2(Math.sin(yaw), Math.cos(yaw)), 0, 'YXZ');
     } else {
-      camera.position.lerp(cached.position, ease);
+      if (
+        (current === 'case' && caseView.current.hardwareId === 'case') ||
+        (current === 'returning' && returningFromTower.current)
+      ) {
+        const center = caseView.current.center;
+        const from = camera.position;
+        const to = cached.position;
+        const fromAngle = Math.atan2(center.x - from.x, from.z - center.z);
+        const toAngle = Math.atan2(center.x - to.x, to.z - center.z);
+        const angle = T.MathUtils.lerp(fromAngle, toAngle, ease);
+        const range = T.MathUtils.lerp(
+          Math.hypot(from.x - center.x, from.z - center.z),
+          Math.hypot(to.x - center.x, to.z - center.z),
+          ease,
+        );
+        const radius = towerRadius(range, angle, center.x);
+        camera.position.set(
+          center.x - radius * Math.sin(angle),
+          T.MathUtils.lerp(from.y, to.y, ease),
+          center.z + radius * Math.cos(angle),
+        );
+      } else {
+        camera.position.lerp(cached.position, ease);
+      }
       const aimPitch = T.MathUtils.lerp(camera.rotation.x, pitch, ease);
       const turn = yaw - camera.rotation.y;
       const aimYaw = camera.rotation.y + Math.atan2(Math.sin(turn), Math.cos(turn)) * ease;
@@ -788,55 +1251,91 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
       if (marker.getAttribute('transform') !== transform)
         marker.setAttribute('transform', transform);
     }
-    const fill = current === 'inspect' ? 0.16 : current === 'drawer' ? 0.1 : 0;
+    const fill =
+      current === 'remote'
+        ? env.night
+          ? 0.035
+          : 0.14
+        : current === 'inspect'
+          ? 0.16
+          : current === 'drawer'
+            ? 0.1
+            : 0;
     inspectionFill.intensity = T.MathUtils.lerp(inspectionFill.intensity, fill, ease);
     if (inspectionFill.intensity > 0.001) {
-      inspectionFill.position.copy(
-        cached.local.set(-0.18, 0.19, -0.1).applyMatrix4(camera.matrixWorld),
-      );
+      if (current === 'remote') cached.local.set(0.34 * aspect * 0.29 - 0.08, 0.03, -0.07);
+      else cached.local.set(-0.18, 0.19, -0.1);
+      inspectionFill.position.copy(cached.local.applyMatrix4(camera.matrixWorld));
     }
 
     const moving = inspection.current;
     if (moving) {
       const object = moving.target.object;
-      const parent = object.parent!;
       if (current === 'returning') {
-        object.position.lerp(moving.home.position, ease);
-        object.quaternion.slerp(moving.home.quaternion, ease);
-        if (
-          object.position.distanceToSquared(moving.home.position) < 1e-7 &&
-          object.quaternion.angleTo(moving.home.quaternion) < 0.004
-        ) {
-          object.position.copy(moving.home.position);
-          object.quaternion.copy(moving.home.quaternion);
-          inspection.current = null;
-        }
-      } else {
-        const isRemote = current === 'remote';
-        const item = moving.target.type === 'inspect' ? moving.target : undefined;
-        const width = item?.size ?? 0.13;
-        const distance = isRemote
-          ? 0.34
-          : (item?.viewDistance ?? Math.max(0.26, width * 2.75)) * moving.distance;
-        cached.local.set(
-          isRemote ? distance * aspect * 0.29 : 0,
-          isRemote ? -0.074 : width * 0.075,
-          -distance,
+        const start = moving.putDownFrom ?? moving.home;
+        const progress = T.MathUtils.smootherstep(
+          performance.now() - animationStart.current,
+          0,
+          returnDuration,
         );
-        camera.localToWorld(cached.local);
-        parent.worldToLocal(cached.local);
-        parent.getWorldQuaternion(cached.parent).invert();
-        cached.rotation.copy(cached.parent).multiply(camera.quaternion).multiply(moving.rotation);
-        object.position.lerp(cached.local, ease);
-        object.quaternion.slerp(cached.rotation, ease);
-      }
+        if (progress === 1) restoreHeldItem();
+        else {
+          object.position.lerpVectors(start.position, moving.home.position, progress);
+          object.quaternion.slerpQuaternions(start.quaternion, moving.home.quaternion, progress);
+        }
+      } else placeHeldItem(moving, ease, current === 'remote');
     }
     const link =
       current === 'inspect' && moving?.target.type === 'inspect' ? moving.target.link : undefined;
     const anchor = live.current.inspectionAnchor.current;
-    if (anchor && link && moving) {
+    const phonePanel = live.current.phonePanel.current;
+    const caption = live.current.objectCaption.current;
+    if (caption && moving && (current === 'inspect' || current === 'remote')) {
+      const { object } = moving.target;
+      if (moving.boundsRevision !== props.detailRevision.current) {
+        moving.bounds = localBounds(object);
+        moving.boundsRevision = props.detailRevision.current;
+      }
+      object.updateWorldMatrix(true, false);
+      const { min, max } = moving.bounds;
+      let left = Infinity,
+        right = -Infinity,
+        bottom = -Infinity;
+      if (!moving.bounds.isEmpty()) {
+        for (let i = 0; i < 8; i++) {
+          const p = cached.local
+            .set(i & 1 ? max.x : min.x, i & 2 ? max.y : min.y, i & 4 ? max.z : min.z)
+            .applyMatrix4(object.matrixWorld)
+            .project(camera);
+          if (p.z < -1 || p.z > 1) continue;
+          left = Math.min(left, p.x);
+          right = Math.max(right, p.x);
+          bottom = Math.max(bottom, ((1 - p.y) * size.height) / 2);
+        }
+      }
+      if (Number.isFinite(bottom)) {
+        const center = Math.round(((1 + (left + right) / 2) * size.width) / 2) + 'px';
+        const edge = Math.round(bottom) + 'px';
+        if (caption.style.getPropertyValue('--item-center') !== center)
+          caption.style.setProperty('--item-center', center);
+        if (caption.style.getPropertyValue('--item-bottom') !== edge)
+          caption.style.setProperty('--item-bottom', edge);
+      }
+    }
+    const heldPhone = current === 'inspect' && moving?.target.id === 'development-phone';
+    const projected = heldPhone ? phonePanel : anchor;
+    const region = heldPhone
+      ? {
+          left: -phoneDisplay.width / 2,
+          right: phoneDisplay.width / 2,
+          top: phoneDisplay.height / 2,
+          bottom: -phoneDisplay.height / 2,
+          z: phoneDisplay.depth,
+        }
+      : link?.region;
+    if (projected && region && moving) {
       const object = moving.target.object;
-      const { left, right, top, bottom, z } = link.region;
+      const { left, right, top, bottom, z } = region;
       object.updateWorldMatrix(true, false);
       object.getWorldPosition(cached.position);
       cached.position.sub(camera.position);
@@ -855,33 +1354,26 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
             corner.z,
           );
         }
-        const matrix = screenProjection(cached.screenCorners, 250, 54);
-        anchor.style.transform = matrix;
-        anchor.style.visibility = matrix ? 'visible' : 'hidden';
-      } else anchor.style.visibility = 'hidden';
-    }
-    if (described.current && caption.current) {
-      const { object, bounds } = described.current;
-      object.updateWorldMatrix(true, false);
-      let bottom = -Infinity,
-        left = Infinity,
-        right = -Infinity;
-      for (const x of [bounds.min.x, bounds.max.x]) {
-        for (const y of [bounds.min.y, bounds.max.y])
-          for (const z of [bounds.min.z, bounds.max.z]) {
-            cached.local.set(x, y, z).applyMatrix4(object.matrixWorld).project(camera);
-            bottom = Math.max(bottom, ((1 - cached.local.y) * size.height) / 2);
-            const pixelX = ((1 + cached.local.x) * size.width) / 2;
-            left = Math.min(left, pixelX);
-            right = Math.max(right, pixelX);
-          }
+        const matrix = screenProjection(
+          cached.screenCorners,
+          heldPhone ? phoneDisplay.viewportWidth : 250,
+          heldPhone ? phoneDisplay.viewportHeight : 54,
+        );
+        projected.style.transform = matrix;
+        projected.style.visibility = matrix ? 'visible' : 'hidden';
+        if (heldPhone && phonePanel) {
+          const firstAppearance = !phonePanel.dataset.visible && matrix;
+          phonePanel.dataset.visible = String(Boolean(matrix));
+          phonePanel.inert = !matrix;
+          if (firstAppearance) phonePanel.focus({ preventScroll: true });
+        }
+      } else {
+        projected.style.visibility = 'hidden';
+        if (heldPhone && phonePanel) {
+          phonePanel.dataset.visible = 'false';
+          phonePanel.inert = true;
+        }
       }
-      const halfWidth = Math.min(240, size.width * 0.31);
-      caption.current.style.left =
-        T.MathUtils.clamp((left + right) / 2, halfWidth, size.width - halfWidth) + 'px';
-      const footer = wall && current !== 'inspect' ? 49 : 83;
-      caption.current.style.top =
-        T.MathUtils.clamp(bottom + 15, size.height * 0.18, size.height - footer) + 'px';
     }
     if (current === 'computer' && screen.current) {
       if (approach >= 0.53) {
@@ -905,9 +1397,10 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
         panel.dataset.visible = 'true';
         if (approach === 1 && !focused.current) {
           panel.dataset.interactive = 'true';
-          panel
-            .querySelector<HTMLButtonElement>('[data-lock-unlock]')
-            ?.focus({ preventScroll: true });
+          const entryButton = panel.querySelector<HTMLButtonElement>(
+            live.current.computerLocked ? '[data-lock-unlock]' : '.system-menu-button',
+          );
+          entryButton?.focus({ preventScroll: true });
           focused.current = true;
         }
       }
@@ -915,22 +1408,22 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
     if (
       current === 'returning' &&
       !inspection.current &&
-      (env.reducedMotion || performance.now() - animationStart.current > 430)
+      !windowTravel.current &&
+      (env.reducedMotion || performance.now() - animationStart.current >= returnDuration)
     ) {
-      described.current = drawer ?? wall;
-      mode.current = drawer
-        ? 'drawer'
-        : windowFocus.current
-          ? 'window'
-          : (wall?.type ?? station.current);
-      onMode(mode.current);
+      finishReturn();
     }
     const geometryMoving = model.update(
       env,
       delta,
       clock.elapsedTime,
       live.current.musicLevels(),
-      camera.position,
+      current === 'case' ? caseView.current.hardwareId : inspection.current?.target.id,
+      live.current.musicPlaying,
+      current === 'bench' || (atBench && current === 'inspect'),
+      camera,
+      props.nativeLow,
+      lookingOutside,
     );
     if (shadowWarmup.current > 0 || current === 'returning' || geometryMoving) {
       shadowWarmup.current = Math.max(0, shadowWarmup.current - 1);
@@ -940,47 +1433,248 @@ function CameraRig(props: Props & { mapMarker: RefObject<SVGGElement | null> }) 
   return <primitive object={model.root} />;
 }
 
-declare global {
-  interface Window {
-    __studioReview?: {
-      activate: (id: string) => void;
-      project: (id: string) => { x: number; y: number } | null;
-      camera: () => { position: number[]; rotation: number[]; fov: number };
-      objectPose: (id: string) => { position: number[]; rotation: number[] } | undefined;
-      drawer: (index: number) => number | undefined;
-      lightLevels: () => { keyboard: number; mouse: number; speaker: number };
-      exportRoom: (objectName?: string) => Promise<void>;
+function StudioRoom({
+  nativeLow,
+  setLowScale,
+  ...props
+}: RigProps & {
+  setLowScale: (scale: number) => void;
+}) {
+  const gl = useThree((state) => state.gl);
+  const [startup] = useState(() => {
+    const query = new URLSearchParams(location.search);
+    const progressive =
+      query.get('studio-high-startup') !== 'legacy' &&
+      !query.has('studio-warmup') &&
+      props.environment.quality === 'high' &&
+      gl.extensions.has('KHR_parallel_shader_compile') &&
+      gl.extensions.has('EXT_color_buffer_float');
+    const preview = query.get('studio-preview');
+    const previewTextures = query.get('studio-preview-textures');
+    const uploadOrder = query.get('studio-preview-upload-order');
+    const firstFrame = roomFirstFrame({
+      warmPreview: preview === 'warm',
+      warmOled: preview === 'oled',
+      stagedTextures: previewTextures === 'staged',
+      inputPriorityTextures:
+        previewTextures === 'input-priority' || (progressive && previewTextures === null),
+      preferVisibleTextures: uploadOrder === 'in-view' || (progressive && uploadOrder === null),
+      warmBuffers: query.get('studio-buffers') === 'warm',
+    });
+    const rearMode = query.get('studio-rear');
+    const waterMotion = query.get('studio-water-motion');
+    const deferWaterMotion = waterMotion !== 'eager';
+    const waterfront = query.get('studio-waterfront');
+    return {
+      firstFrame,
+      progressive,
+      environment: props.environment,
+      earlyRear: rearMode === 'early' || rearMode === 'idle' || (progressive && rearMode === null),
+      sliced: query.get('studio-build') === 'sliced',
+      simpleLow: query.get('studio-low-shading') === 'simple',
+      options: {
+        deferBookBacks: query.get('studio-startup') === 'deferred-books',
+        prioritizeRear: rearMode === 'priority' || rearMode === 'early',
+        preloadInspection: query.get('studio-details') === 'preload',
+        atlasDetailOnInspect: query.get('studio-atlas-detail') === 'on-inspect',
+        mergeFirst: query.get('studio-batching') !== 'transform-first',
+        deferWaterMotion,
+        windowOnlyWater: nativeLow && waterMotion === 'window',
+        warmWaterfront:
+          waterfront === 'warm' || (deferWaterMotion && waterfront !== 'cold')
+            ? (material: T.ShaderMaterial) => firstFrame.warmWaterfront(gl, material)
+            : undefined,
+      },
     };
+  });
+  const { firstFrame } = startup;
+  const [assembly, setAssembly] = useState<Assembly | null>(() => {
+    if (startup.sliced) return null;
+    firstFrame.warm(gl);
+    const { assets, manager, frontReady } = assemblyLoading();
+    performance.mark('studio-room-build-start');
+    const model = buildStudio(manager, startup.environment, startup.options);
+    performance.mark('studio-room-built');
+    firstFrame.windowSlats.value = model.slats;
+    return { model, assets, frontReady };
+  });
+  const [failure, setFailure] = useState<{ error: unknown }>();
+  const readiness = useRef<Promise<void> | null>(null);
+
+  useEffect(() => {
+    if (!startup.sliced) return;
+    firstFrame.warm(gl);
+    const { assets, manager, frontReady } = assemblyLoading();
+    const steps = buildStudioSteps(manager, startup.environment, startup.options);
+    let frame = requestAnimationFrame(advance);
+    let started = false;
+    let complete = false;
+
+    function advance() {
+      try {
+        if (!started) {
+          started = true;
+          performance.mark('studio-room-build-start');
+        }
+        const deadline = performance.now() + 5;
+        do {
+          const step = steps.next();
+          if (!step.done) continue;
+          const model = step.value;
+          complete = true;
+          performance.mark('studio-room-built');
+          firstFrame.windowSlats.value = model.slats;
+          setAssembly({ model, assets, frontReady });
+          return;
+        } while (performance.now() < deadline);
+        frame = requestAnimationFrame(advance);
+      } catch (error) {
+        setFailure({ error });
+      }
+    }
+
+    return () => {
+      cancelAnimationFrame(frame);
+      if (!complete) firstFrame.dispose();
+    };
+  }, [firstFrame, gl, startup]);
+
+  useLayoutEffect(() => {
+    if (!startup.options.preloadInspection || !assembly) return;
+    performance.mark('studio-inspection-preload-start');
+    readiness.current = Promise.allSettled([
+      assembly.frontReady(),
+      assembly.model.prepareRear(),
+    ]).then(() => {
+      performance.mark('studio-inspection-preload-end');
+    });
+    return () => {
+      readiness.current = null;
+    };
+  }, [assembly, startup.options.preloadInspection]);
+
+  function showRoom() {
+    const pending = readiness.current;
+    if (!pending) {
+      props.onReady();
+      return;
+    }
+    void pending.then(() => {
+      if (readiness.current === pending) props.onReady();
+    });
   }
+
+  if (failure) throw failure.error;
+  if (!assembly) return null;
+  return (
+    <>
+      <CameraRig
+        {...props}
+        {...assembly}
+        nativeLow={nativeLow}
+        earlyRear={startup.earlyRear}
+        firstFrame={firstFrame}
+      />
+      <Finish
+        firstFrame={firstFrame}
+        progressiveStartup={startup.progressive}
+        night={props.environment.night}
+        onInteractive={showRoom}
+        look={props.environment.roomLook}
+        roomVisible={props.roomVisible}
+        firstPicture={props.firstPicture}
+        detailRevision={props.detailRevision}
+        workbench={assembly.model.workbench}
+        setLowScale={setLowScale}
+        nativeLow={nativeLow}
+        simpleLow={startup.simpleLow}
+        roomMode={props.mode === 'room'}
+        screen={props.screen}
+        enabled={props.environment.quality === 'high'}
+      />
+    </>
+  );
 }
 
 export default function StudioView(props: Props) {
   const mapMarker = useRef<SVGGElement>(null);
+  const phonePanel = useRef<HTMLDivElement>(null);
+  const preparedReflection = useRef<PreparedReflection | null>(null);
+  const [phoneHeld, setPhoneHeld] = useState(false);
+  const firstPicture = useRef<FirstPicture>('loading');
+  const [nativeLow] = useState(
+    () => new URLSearchParams(location.search).get('studio-low') === 'native',
+  );
+  const detailRevision = useRef(0);
+  const [lowScale, setLowScale] = useState(props.initialLowScale);
+  useLayoutEffect(() => {
+    if (props.roomVisible) performance.mark('studio-input-ready');
+  }, [props.roomVisible]);
+  useEffect(
+    () => () => {
+      preparedReflection.current?.generator.dispose();
+      preparedReflection.current = null;
+    },
+    [],
+  );
   return (
     <>
       <Canvas
         className="studio-canvas"
         shadows={props.environment.quality === 'high'}
-        dpr={props.environment.quality === 'high' ? [1, 1.5] : 1}
+        dpr={
+          props.environment.quality === 'high'
+            ? [1, 1.5]
+            : nativeLow
+              ? window.devicePixelRatio
+              : lowScale
+        }
         camera={{
-          fov: viewFov,
+          fov: roomFov,
           near: 0.028,
           far: waterfrontFarClip,
           position: [eye.x, eye.y, eye.defaultZ],
         }}
-        gl={{ antialias: true, powerPreference: 'high-performance', alpha: false }}
+        gl={{
+          antialias: !nativeLow || props.environment.quality === 'high',
+          powerPreference: 'high-performance',
+          alpha: false,
+        }}
         onCreated={({ gl }) => {
-          gl.toneMapping = T.AgXToneMapping;
+          gl.debug.checkShaderErrors = import.meta.env.DEV;
+          gl.toneMapping = T.ACESFilmicToneMapping;
           gl.toneMappingExposure = 1.04;
+          if (
+            nativeLow &&
+            props.environment.quality === 'low' &&
+            new URLSearchParams(location.search).get('studio-pmrem-stage') === 'on-created'
+          ) {
+            preparedReflection.current?.generator.dispose();
+            const generator = prelinkPreviewReflection(gl);
+            preparedReflection.current = generator ? { renderer: gl, generator } : null;
+          }
         }}
       >
-        <CameraRig {...props} mapMarker={mapMarker} />
-        <Finish
-          enabled={props.environment.quality === 'high'}
-          reducedMotion={props.environment.reducedMotion}
+        <StudioRoom
+          {...props}
+          mapMarker={mapMarker}
+          firstPicture={firstPicture}
+          detailRevision={detailRevision}
+          preparedReflection={preparedReflection}
+          phonePanel={phonePanel}
+          setPhoneHeld={setPhoneHeld}
+          setLowScale={setLowScale}
+          nativeLow={nativeLow}
         />
       </Canvas>
-      {props.showMinimap && props.mode !== 'computer' && (
+      {phoneHeld && (
+        <PhoneHome
+          panelRef={phonePanel}
+          environment={props.environment}
+          onToggle={props.onToggleHomeLight}
+        />
+      )}
+      {props.roomVisible && props.mode !== 'computer' && (
         <Minimap
           marker={mapMarker}
           label={local(props.environment.locale, 'Studio minimap', '工作室小地图')}
