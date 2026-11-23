@@ -55,7 +55,7 @@ async function collectAssets(root) {
       contentType: contentTypes[extname(key).toLowerCase()] ?? 'application/octet-stream',
       cacheControl: key.startsWith('assets/')
         ? 'public, max-age=31536000, immutable'
-        : 'public, max-age=0, must-revalidate',
+        : 'public, no-cache',
     });
   }
   return assets;
