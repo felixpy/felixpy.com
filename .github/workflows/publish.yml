@@ -73,7 +73,12 @@ jobs:
           DEPLOYMENT_ID: ${{ steps.stage.outputs.id }}
         run: |
           test "$GITHUB_SHA" = "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/dev" --jq '.object.sha')"
-          vercel promote "$DEPLOYMENT_ID" --yes --timeout=5m
+          curl --fail-with-body --silent --show-error --max-time 30 \
+            --request POST \
+            --header "Authorization: Bearer $VERCEL_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data '{}' \
+            "https://api.vercel.com/v10/projects/$VERCEL_PROJECT_ID/promote/$DEPLOYMENT_ID?teamId=$VERCEL_ORG_ID"
       - name: Verify production domains
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -81,8 +86,8 @@ jobs:
         run: |
           for domain in felixpy.com felixpy.vercel.app; do
             assigned=''
-            for attempt in {1..6}; do
-              assigned="$(curl --fail --silent --show-error --max-time 15 \
+            for attempt in {1..36}; do
+              assigned="$(curl --fail --silent --show-error --max-time 15 --retry 2 \
                 --header "Authorization: Bearer $VERCEL_TOKEN" \
                 "https://api.vercel.com/v4/aliases/$domain?teamId=$VERCEL_ORG_ID" | jq -er '.deploymentId')"
               if [[ "$assigned" == "$DEPLOYMENT_ID" ]]; then break; fi
