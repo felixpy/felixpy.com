@@ -1,8 +1,8 @@
-name: Stage site with R2
+name: Publish site with R2
 
 on:
   push:
-    branches: [codex/felix-r2-publish]
+    branches: [dev]
   workflow_dispatch:
 
 permissions:
@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  stage:
-    if: github.ref_name == 'codex/felix-r2-publish' || github.ref_name == 'dev'
+  publish:
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -51,12 +51,46 @@ jobs:
           AWS_REQUEST_CHECKSUM_CALCULATION: WHEN_REQUIRED
           AWS_RESPONSE_CHECKSUM_VALIDATION: WHEN_REQUIRED
       - name: Stage and check cross-origin delivery
+        id: stage
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           deployment="$(vercel deploy --prebuilt --prod --skip-domain --yes --json)"
-          url="$(jq -er '(.deployment // .) | .url | select(test("^https://[a-z0-9-]+\\.vercel\\.app$"))' <<< "$deployment")"
+          deployment="$(jq -cer '(.deployment // .) | select(.target == "production" and .readyState == "READY")' <<< "$deployment")"
+          id="$(jq -er '.id | select(test("^dpl_[a-zA-Z0-9]+$"))' <<< "$deployment")"
+          url="$(jq -er '.url | select(test("^https://[a-z0-9-]+\\.vercel\\.app$"))' <<< "$deployment")"
           printf 'Staged deployment: %s\n' "$url" >> "$GITHUB_STEP_SUMMARY"
-          headers="$(curl --fail --silent --show-error --head --header "Origin: $url" "${VITE_ASSET_BASE_URL}media/credits.txt" | tr -d '\r')"
-          grep -Fix "access-control-allow-origin: *" <<< "$headers" ||
-            grep -Fix "access-control-allow-origin: $url" <<< "$headers"
+          for origin in "$url" "https://felixpy.vercel.app"; do
+            headers="$(curl --fail --silent --show-error --head --header "Origin: $origin" "${VITE_ASSET_BASE_URL}media/credits.txt" | tr -d '\r')"
+            grep -Fix "access-control-allow-origin: *" <<< "$headers" ||
+              grep -Fix "access-control-allow-origin: $origin" <<< "$headers"
+          done
+          printf 'id=%s\n' "$id" >> "$GITHUB_OUTPUT"
+      - name: Promote the verified deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          DEPLOYMENT_ID: ${{ steps.stage.outputs.id }}
+        run: |
+          test "$GITHUB_SHA" = "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/dev" --jq '.object.sha')"
+          vercel promote "$DEPLOYMENT_ID" --yes --timeout=5m
+      - name: Verify production domains
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          DEPLOYMENT_ID: ${{ steps.stage.outputs.id }}
+        run: |
+          for domain in felixpy.com felixpy.vercel.app; do
+            assigned=''
+            for attempt in {1..6}; do
+              assigned="$(curl --fail --silent --show-error --max-time 15 \
+                --header "Authorization: Bearer $VERCEL_TOKEN" \
+                "https://api.vercel.com/v4/aliases/$domain?teamId=$VERCEL_ORG_ID" | jq -er '.deploymentId')"
+              if [[ "$assigned" == "$DEPLOYMENT_ID" ]]; then break; fi
+              sleep 5
+            done
+            test "$assigned" = "$DEPLOYMENT_ID"
+            for route in / /about; do
+              html="$(curl --fail --silent --show-error --max-time 20 "https://$domain$route?release=$GITHUB_SHA")"
+              grep -F "$VITE_ASSET_BASE_URL" <<< "$html" >/dev/null
+            done
+          done

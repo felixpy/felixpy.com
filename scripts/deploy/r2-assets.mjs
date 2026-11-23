@@ -109,12 +109,11 @@ async function uploadAsset(asset, base, endpoint) {
   return { ...asset, sha256, size: bytes.byteLength, changed: !unchanged };
 }
 
-async function requestAsset(asset, base, origin, method, range) {
+async function requestAsset(asset, base, origin, range) {
   const key = asset.key.split('/').map(encodeURIComponent).join('/');
   const headers = { origin, 'accept-encoding': 'identity' };
   if (range) headers.range = range;
   const response = await fetch(new URL(key, base), {
-    method,
     headers,
     redirect: 'error',
     signal: AbortSignal.timeout(30_000),
@@ -135,14 +134,14 @@ async function requestAsset(asset, base, origin, method, range) {
 }
 
 async function verifyAsset(asset, base, origin) {
-  const response = await requestAsset(asset, base, origin, asset.changed ? 'GET' : 'HEAD');
-  if (asset.changed && hash(Buffer.from(await response.arrayBuffer())) !== asset.sha256) {
+  const response = await requestAsset(asset, base, origin);
+  if (hash(Buffer.from(await response.arrayBuffer())) !== asset.sha256) {
     throw new Error(`CDN content does not match the build: ${asset.key}`);
   }
 }
 
 async function verifyAudioRange(audio, base, origin) {
-  const response = await requestAsset(audio, base, origin, 'GET', 'bytes=0-1023');
+  const response = await requestAsset(audio, base, origin, 'bytes=0-1023');
   const end = Math.min(audio.size - 1, 1023);
   const bytes = await response.arrayBuffer();
   if (
