@@ -2,6 +2,7 @@ import { Component, useEffect, useRef, useState, type CSSProperties, type ReactN
 import { pressRemote, type Environment } from './environment';
 import { deterministicReview, loadEnvironment, saveEnvironment } from './environment-preferences';
 import { graphicsDevice } from './graphics-device';
+import { isMobileDevice } from './mobile-device';
 import { lightForTarget, toggleHomeLight, type HomeLightId } from './home-lights';
 import type { AppID, InspectionLink, Mode, StudioControls, Target } from '../scene/interaction';
 import Desktop, { type ComputerSession } from '../desktop/Desktop';
@@ -36,10 +37,8 @@ class RendererBoundary extends Component<
 }
 
 export default function App({ prepareFonts }: { prepareFonts: () => Promise<unknown> }) {
-  const [compact, setCompact] = useState(
-    () => window.matchMedia('(max-width: 700px), (max-height: 420px)').matches,
-  );
-  const [graphics, setGraphics] = useState(() => (compact ? null : graphicsDevice()));
+  const [mobile] = useState(() => isMobileDevice(navigator));
+  const [graphics] = useState(() => (mobile ? null : graphicsDevice()));
   const webGL = graphics?.available === true;
   const [ready, setReady] = useState(false);
   const [studio, setStudio] = useState<StudioModule | null>(null);
@@ -49,14 +48,14 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
   const [environment, setEnvironment] = useState(() => loadEnvironment(graphics?.quality ?? 'low'));
   const manualConditions = useWindowConditions(
     environment.city,
-    !deterministicReview && !compact && webGL,
+    !deterministicReview && webGL,
     setEnvironment,
   );
-  const music = useStudioMusic(!compact);
+  const music = useStudioMusic(!mobile);
   const t = (en: string, zh: string) => local(environment.locale, en, zh);
   const [mode, setMode] = useState<Mode>('room');
   useRainAudio(
-    environment.weather === '雨' && environment.rainAudio && !compact && webGL && ready,
+    environment.weather === '雨' && environment.rainAudio && webGL && ready,
     mode === 'remote' || mode === 'window',
     environment.blinds,
   );
@@ -78,7 +77,7 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
   }, [computerSession]);
 
   useEffect(() => {
-    if (compact || !webGL) return;
+    if (!webGL) return;
     let active = true;
     void Promise.all([loadStudio(), prepareFonts()]).then(
       ([module]) => {
@@ -91,27 +90,7 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
     return () => {
       active = false;
     };
-  }, [webGL, compact, prepareFonts]);
-
-  useEffect(() => {
-    const media = window.matchMedia('(max-width: 700px), (max-height: 420px)');
-    const update = () => {
-      if (!media.matches && !graphics) {
-        const device = graphicsDevice();
-        setGraphics(device);
-        setEnvironment((current) =>
-          current.automaticQuality ? { ...current, quality: device.quality } : current,
-        );
-      }
-      setCompact(media.matches);
-      setMode('room');
-      setReady(false);
-      setProgress(0);
-      if (screen.current) screen.current.dataset.visible = 'false';
-    };
-    media.addEventListener('change', update);
-    return () => media.removeEventListener('change', update);
-  }, [graphics]);
+  }, [webGL, prepareFonts]);
 
   useEffect(() => {
     const keepPageFocus = (event: KeyboardEvent) => {
@@ -216,7 +195,7 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
       <FpsMeter />
     </main>
   );
-  if (compact)
+  if (mobile)
     return (
       <main className="mobile-home">
         <Profile mobile locale={environment.locale} animate={!environment.reducedMotion} />

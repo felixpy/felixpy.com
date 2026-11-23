@@ -4,6 +4,7 @@ import { defineConfig, loadEnv, type HtmlTagDescriptor, type Plugin } from 'vite
 import { renderAboutPages } from './scripts/build/about-pages';
 import { studioParts } from './scripts/build/studio-parts';
 import { assetUrl } from './src/app/asset-url';
+import { isMobileDevice } from './src/app/mobile-device';
 import { shareImage, siteOrigin } from './src/content/about';
 import { partLibraryPath } from './src/scene/blender-parts';
 
@@ -14,7 +15,6 @@ function preloadStudioView(assetBase: string): Plugin {
       order: 'post',
       handler(_, context) {
         if (context.path !== '/index.html') return;
-        const media = '(min-width: 701px) and (min-height: 421px)';
         const tags: HtmlTagDescriptor[] = [
           {
             tag: 'link',
@@ -23,9 +23,7 @@ function preloadStudioView(assetBase: string): Plugin {
               as: 'fetch',
               crossorigin: '',
               href: assetUrl(partLibraryPath('studio'), assetBase),
-              media,
             },
-            injectTo: 'head-prepend',
           },
         ];
         const chunk = Object.values(context.bundle ?? {}).find(
@@ -39,11 +37,23 @@ function preloadStudioView(assetBase: string): Plugin {
               rel: 'modulepreload',
               crossorigin: '',
               href: '/' + chunk.fileName,
-              media,
             },
-            injectTo: 'head-prepend',
           });
-        return tags;
+        return [
+          {
+            tag: 'template',
+            attrs: { id: 'studio-preloads' },
+            children: tags,
+            injectTo: 'head-prepend',
+          },
+          {
+            tag: 'script',
+            children: `if (!(${isMobileDevice.toString()})(navigator)) {
+  document.currentScript.before(document.getElementById('studio-preloads').content);
+}`,
+            injectTo: 'head-prepend',
+          },
+        ];
       },
     },
   };
