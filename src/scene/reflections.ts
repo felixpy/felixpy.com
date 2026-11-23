@@ -1,70 +1,142 @@
 import * as T from 'three';
-import { desk, roomSize } from './furniture';
-import { windowOpening } from './window';
+import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
+import type { Environment } from '../app/environment';
+import { defaultStudioLoadingManager } from './asset-loading';
+import radiance from './desk-radiance.json';
 
-export function studioReflections(renderer: T.WebGLRenderer) {
-  const probe = new T.Scene();
-  probe.background = new T.Color().setRGB(0.145, 0.132, 0.113);
-  function panel(
-    width: number,
-    height: number,
-    color: T.Color,
-    position: [number, number, number],
-  ) {
-    const mesh = new T.Mesh(
-      new T.PlaneGeometry(width, height),
-      new T.MeshBasicMaterial({ color, toneMapped: false }),
-    );
-    mesh.position.set(...position);
-    probe.add(mesh);
-    return mesh;
-  }
+type Time = keyof typeof radiance;
+type Probe = {
+  preview?: T.WebGLCubeRenderTarget;
+  full?: T.WebGLCubeRenderTarget;
+  loading?: boolean;
+};
 
-  const { wall, z0, z1, y0, y1 } = windowOpening;
-  const rail = y0 + 0.77,
-    mullion = (z0 + z1) / 2;
-  for (const [left, right] of [
-    [z0 + 0.03, mullion - 0.028],
-    [mullion + 0.028, z1 - 0.03],
-  ]) {
-    for (const [bottom, top, upper] of [
-      [y0 + 0.061, rail - 0.032, false],
-      [rail + 0.032, y1 - 0.061, true],
-    ] as const) {
-      const tint = upper
-        ? new T.Color().setRGB(1.9, 2.5, 3.6)
-        : new T.Color().setRGB(0.92, 1.25, 1.85);
-      panel(right - left, top - bottom, tint, [
-        wall - 0.154,
-        (bottom + top) / 2,
-        (left + right) / 2,
-      ]).rotation.y = Math.PI / 2;
+function previewTexture(time: Time) {
+  const rgbe = Uint8Array.from(atob(radiance[time]), (byte) => byte.charCodeAt(0));
+  const pixels = new Uint16Array(rgbe.length);
+  for (let i = 0; i < rgbe.length; i += 4) {
+    const scale = 2 ** (rgbe[i + 3] - 136);
+    for (let channel = 0; channel < 3; channel++) {
+      pixels[i + channel] = T.DataUtils.toHalfFloat(rgbe[i + channel] * scale);
     }
+    pixels[i + 3] = T.DataUtils.toHalfFloat(1);
   }
-  const desktop = panel(
-    desk.right - desk.left,
-    desk.front - desk.back,
-    new T.Color().setRGB(0.19, 0.135, 0.091),
-    [(desk.left + desk.right) / 2, desk.top, (desk.front + desk.back) / 2],
+  const texture = new T.DataTexture(pixels, 16, 8, T.RGBAFormat, T.HalfFloatType);
+  texture.colorSpace = T.LinearSRGBColorSpace;
+  texture.mapping = T.EquirectangularReflectionMapping;
+  texture.minFilter = texture.magFilter = T.LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function supportsRadiance(renderer: T.WebGLRenderer) {
+  return (
+    renderer.extensions.has('EXT_color_buffer_float') ||
+    renderer.extensions.has('EXT_color_buffer_half_float')
   );
-  desktop.rotation.x = -Math.PI / 2;
-  panel(0.55, 0.36, new T.Color().setRGB(1.3, 1.02, 0.75), [
-    0.09,
-    roomSize.ceiling - 0.05,
-    0.02,
-  ]).rotation.x = Math.PI / 2;
+}
+
+export function prelinkPreviewReflection(renderer: T.WebGLRenderer) {
+  if (
+    !supportsRadiance(renderer) ||
+    !renderer.extensions.has('KHR_parallel_shader_compile') ||
+    renderer.getContext().isContextLost() ||
+    renderer.xr.isPresenting
+  )
+    return;
 
   const generator = new T.PMREMGenerator(renderer);
-  const reflection = generator.fromScene(probe, 0.055, 0.05, 8, {
-    size: 128,
-    position: new T.Vector3(0.18, 1.02, 0.07),
+  const target = renderer.getRenderTarget();
+  const face = renderer.getActiveCubeFace();
+  const mip = renderer.getActiveMipmapLevel();
+  const shadowType = renderer.shadowMap.type;
+  const programs = new Set(renderer.info.programs ?? []);
+  const scratch = new T.WebGLCubeRenderTarget(1, {
+    type: T.HalfFloatType,
+    colorSpace: T.LinearSRGBColorSpace,
+    depthBuffer: false,
   });
-  generator.dispose();
-  for (const child of probe.children) {
-    if (child instanceof T.Mesh) {
-      child.geometry.dispose();
-      child.material.dispose();
+  performance.mark('studio-pmrem-prelink-start');
+  try {
+    renderer.shadowMap.type = T.PCFShadowMap;
+    renderer.setRenderTarget(scratch);
+    generator.compileEquirectangularShader();
+  } catch {
+    generator.dispose();
+    return;
+  } finally {
+    renderer.shadowMap.type = shadowType;
+    renderer.setRenderTarget(target, face, mip);
+    scratch.dispose();
+  }
+
+  const program = renderer.info.programs?.find(
+    (candidate) => candidate.name === 'PMREMEquirectangularToCubemap' && !programs.has(candidate),
+  );
+  if (!program) {
+    generator.dispose();
+    return;
+  }
+  performance.mark('studio-pmrem-prelink-submitted', {
+    detail: { id: program.id, name: program.name },
+  });
+  return generator;
+}
+
+export function studioReflections(
+  renderer: T.WebGLRenderer,
+  scene: T.Scene,
+  generator = new T.PMREMGenerator(renderer),
+) {
+  const loader = new HDRLoader(defaultStudioLoadingManager);
+  const probes: Record<Time, Probe> = { day: {}, night: {} };
+  const canPrefilter = supportsRadiance(renderer);
+  let active: Time = 'night';
+  let detailed = false;
+  let disposed = false;
+  function prefilter(source: T.Texture) {
+    try {
+      return generator.fromEquirectangular(source);
+    } finally {
+      source.dispose();
     }
   }
-  return reflection;
+  return {
+    select(night: boolean, quality: Environment['quality']) {
+      if (!canPrefilter) return;
+      active = night ? 'night' : 'day';
+      detailed = quality === 'high';
+      const time = active;
+      const probe = probes[time];
+      probe.preview ??= prefilter(previewTexture(time));
+      scene.environment = ((detailed && probe.full) || probe.preview).texture;
+      if (!detailed || probe.full || probe.loading) return;
+      probe.loading = true;
+      loader.load(
+        '/media/lighting/desk-' + time + '.hdr',
+        (texture) => {
+          if (disposed) {
+            texture.dispose();
+            return;
+          }
+          probe.full = prefilter(texture);
+          probe.loading = false;
+          if (time === active && detailed) scene.environment = probe.full.texture;
+        },
+        undefined,
+        () => {
+          probe.loading = false;
+        },
+      );
+    },
+    dispose() {
+      disposed = true;
+      scene.environment = null;
+      for (const probe of Object.values(probes)) {
+        probe.preview?.dispose();
+        probe.full?.dispose();
+      }
+      generator.dispose();
+    },
+  };
 }

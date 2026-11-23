@@ -1,7 +1,7 @@
 import * as T from 'three';
 import { careerEditions } from '../content/profile';
-import { box, canvasTexture, group, print, random } from './geometry';
-import type { Palette } from './materials';
+import { canvasTexture, group } from './geometry';
+import { loadDisplayModel } from './display-model';
 
 type Edition = (typeof careerEditions)[number];
 
@@ -47,7 +47,7 @@ function editorialArt(ctx: CanvasRenderingContext2D, edition: Edition) {
   }
 }
 
-function albumCover(edition: Edition) {
+export function albumCover(edition: Edition) {
   return canvasTexture(680, 840, (ctx) => {
     ctx.fillStyle = edition.ink;
     ctx.fillRect(0, 0, 680, 840);
@@ -73,54 +73,46 @@ function albumCover(edition: Edition) {
   });
 }
 
-export function careerAlbums(parent: T.Object3D, p: Palette) {
-  const pageEdge = canvasTexture(512, 64, (ctx) => {
-    ctx.fillStyle = '#d6c7a7';
-    ctx.fillRect(0, 0, 512, 64);
-    const rng = random(724);
-    for (let y = 1; y < 64; y += 2) {
-      ctx.strokeStyle = y % 3 ? '#b1a08082' : '#f9edd4c2';
-      ctx.lineWidth = 0.5 + rng();
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(512, y + rng() - 0.5);
-      ctx.stroke();
-    }
-  });
-  const pages = p.paper.clone();
-  const edge = new T.MeshStandardMaterial({ map: pageEdge, roughness: 0.92 });
-  const foreEdge = edge.clone();
-  foreEdge.map = pageEdge.clone();
-  foreEdge.map.center.set(0.5, 0.5);
-  foreEdge.map.rotation = Math.PI / 2;
-  const pageFaces = [foreEdge, pages, edge, edge, pages, pages];
-  const width = 0.144,
-    height = 0.178;
-  return careerEditions.map((edition, index) => {
+export function careerAlbums(
+  parent: T.Object3D,
+  manager: T.LoadingManager,
+  deferRoomDetail: (load: () => void) => void,
+) {
+  const albums = careerEditions.map((edition, index) => {
     const album = group(parent, edition.title + ' · cloth-bound album', [
       0.155 - index * 0.205,
       0.761,
       0.568,
     ]);
     album.rotation.set(-Math.PI / 2, 0, -Math.PI / 2 + (index === 0 ? 0.05 : -0.07));
-    const cloth = p.linen.clone();
-    cloth.color.set(edition.jacket);
-    cloth.normalScale.set(0.69, 0.69);
-    box(album, [width, height, 0.0027], [0, 0, -0.009], cloth, 0.001);
-    box(album, [width, height, 0.0027], [0, 0, 0.009], cloth, 0.001);
-    box(album, [0.009, height, 0.02], [-width / 2 + 0.003, 0, 0], cloth, 0.0037);
-    box(album, [width - 0.008, height - 0.006, 0.0153], [0.001, 0, 0], pageFaces);
-    const title = print(
-      album,
-      width - 0.017,
-      height - 0.011,
-      [0.003, 0, 0.01042],
-      albumCover(edition),
-    );
-    const art = title.material as T.MeshStandardMaterial;
-    art.normalMap = cloth.normalMap;
-    art.normalScale.set(0.69, 0.69);
-    title.castShadow = false;
     return { edition, album };
   });
+  deferRoomDetail(() =>
+    loadDisplayModel(albums[0].album, '/media/models/stationery/career-album.glb', manager, {
+      mounted(first) {
+        const bindings = [first, first.clone(true)];
+        for (const [index, { album, edition }] of albums.entries()) {
+          const binding = bindings[index];
+          album.add(binding);
+          binding.traverse((part) => {
+            if (!(part instanceof T.Mesh) || !(part.material instanceof T.MeshStandardMaterial))
+              return;
+            const finish = part.material;
+            if (finish.name === 'Custom cover print') {
+              part.material = finish.clone();
+              const cover = albumCover(edition);
+              cover.flipY = false;
+              part.material.map = cover;
+            } else if (finish.name === 'Dyed book linen' || finish.name === 'Woven marker') {
+              part.material = finish.clone();
+              part.material.color.set(
+                finish.name === 'Dyed book linen' ? edition.jacket : edition.accent,
+              );
+            }
+          });
+        }
+      },
+    }),
+  );
+  return albums;
 }

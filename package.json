@@ -10,6 +10,7 @@
     "@vercel/analytics": "^2.0.1",
     "gsap": "^3.15.1",
     "lucide-react": "^1.70.0",
+    "p-queue": "^10.0.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "three": "^0.187.0"
@@ -45,7 +46,7 @@
     "test:ci": "playwright test --grep-invert @webgl",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
-    "format:staged": "lint-staged",
+    "format:staged": "lint-staged --max-arg-length 4000",
     "hooks:install": "npm run prepare",
     "check:commit": "node scripts/git/check-commit.mjs"
   },

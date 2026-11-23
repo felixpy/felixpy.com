@@ -18,7 +18,7 @@ import { assetUrl } from '../../../app/asset-url';
 import { local, type Locale } from '../../../app/locale';
 import Shader from '../../../spectral/Shader';
 import musicRoom from '../../../spectral/shaders/music-room.glsl?raw';
-import { artist, collectionLength, timestamp, tracks } from './library';
+import { collectionLength, timestamp, tracks } from './library';
 import Spectrum from './Spectrum';
 import type { StudioMusic } from './useStudioMusic';
 
@@ -44,7 +44,9 @@ export function MusicPlayer({
   const shownTracks = tracks
     .map((item, index) => ({ item, index }))
     .filter(({ item }) =>
-      [item.name, ...item.mood].some((value) => value.toLocaleLowerCase().includes(search)),
+      [item.name, item.artist, ...item.mood].some((value) =>
+        value.toLocaleLowerCase().includes(search),
+      ),
     );
   const collection = t('Late-night focus', '深夜专注');
 
@@ -200,7 +202,7 @@ export function MusicPlayer({
                 {music.playing ? t('Now playing', '正在播放') : t('Listening room', '听音室')}
               </div>
               <h1>{track.name}</h1>
-              <p className="spectral-artist">{artist}</p>
+              <p className="spectral-artist">{track.artist}</p>
               <Spectrum read={music.spectrum} animate={animate} />
               {seek()}
               <div className="spectral-player-actions">
@@ -220,7 +222,7 @@ export function MusicPlayer({
             <aside className="spectral-collection-detail">
               {record()}
               <h2>{collection}</h2>
-              <p>{t('Ambient textures for uninterrupted hours.', '让专注多停留一会儿的音乐。')}</p>
+              <p>{t('Instrumental downtempo by Nihilore.', 'Nihilore 的慢拍器乐。')}</p>
               <small>
                 {t(
                   `${tracks.length} tracks · ${Math.floor(collectionLength / 60)} min ${collectionLength % 60} sec`,
@@ -311,7 +313,7 @@ export function MusicPlayer({
               />
               <div>
                 <strong>{track.name}</strong>
-                <small>{collection}</small>
+                <small>{track.artist}</small>
               </div>
             </div>
             <div className="spectral-mini-center">

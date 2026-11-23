@@ -1,5 +1,5 @@
 import type { RefObject } from 'react';
-import { desk, roomSize, windowOpening, workshopLayout } from './furniture';
+import { desk, printerStand, roomSize, windowOpening, workshopLayout } from './layout';
 import { eye } from './camera';
 
 export function Minimap({
@@ -60,7 +60,21 @@ export function Minimap({
             height={workshopLayout.z + workshopLayout.length / 2 - benchStart}
             rx=".035"
           />
-          <rect x="-1.12" y="2.74" width="1.16" height=".3" rx=".06" />
+          <rect x="-1.171" y="2.80" width="1.145" height=".351" rx=".015" />
+          <g
+            transform={`translate(${printerStand.x} ${printerStand.z}) rotate(${(-printerStand.yaw * 180) / Math.PI})`}
+          >
+            <rect
+              x={-printerStand.width / 2}
+              y={-printerStand.depth / 2}
+              width={printerStand.width}
+              height={printerStand.depth}
+              rx=".025"
+            />
+            <rect x="-.239" y="-.230" width=".478" height=".464" rx=".04" fill="#34474c" />
+            <path d="M-.15 -.14v.28 M-.075 -.14v.28 M0 -.14v.28 M.075 -.14v.28 M.15 -.14v.28" />
+          </g>
+          <rect x=".154" y="2.827" width="1.112" height=".297" rx=".02" />
         </g>
         <g ref={marker} transform={`translate(${eye.x} ${eye.defaultZ})`}>
           <path className="minimap-view" d="M0 0 -.42 -.66 A .79 .79 0 0 1 .42 -.66 Z" />

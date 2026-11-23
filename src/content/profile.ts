@@ -47,29 +47,3 @@ export const careerEditions = [
     role: ['Senior Software Engineer', biography.second.role],
   },
 ] as const;
-
-export const books = [
-  ['代码大全', 'Code Complete', 'Steve McConnell', '#705047'],
-  ['算法导论', 'Introduction to Algorithms', 'Cormen · Leiserson · Rivest · Stein', '#243b47'],
-  [
-    '深入理解计算机系统',
-    'Computer Systems: A Programmer’s Perspective',
-    'Bryant · O’Hallaron',
-    '#836d46',
-  ],
-  ['设计数据密集型应用', 'Designing Data-Intensive Applications', 'Martin Kleppmann', '#524d3b'],
-  [
-    '计算机程序的构造和解释',
-    'Structure and Interpretation of Computer Programs',
-    'Abelson · Sussman · Sussman',
-    '#534041',
-  ],
-  ['程序员修炼之道', 'The Pragmatic Programmer', 'Andrew Hunt · David Thomas', '#343e4a'],
-  ['百年孤独', 'One Hundred Years of Solitude', 'Gabriel García Márquez', '#81644b'],
-  ['局外人', 'The Stranger', 'Albert Camus', '#323f43'],
-  ['喧哗与骚动', 'The Sound and the Fury', 'William Faulkner', '#743d35'],
-  ['老人与海', 'The Old Man and the Sea', 'Ernest Hemingway', '#375058'],
-  ['西方哲学史', 'A History of Western Philosophy', 'Bertrand Russell', '#836740'],
-  ['西西弗神话', 'The Myth of Sisyphus', 'Albert Camus', '#6f443d'],
-  ['存在与虚无', 'Being and Nothingness', 'Jean-Paul Sartre', '#4a4b42'],
-] as const;

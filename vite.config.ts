@@ -1,9 +1,53 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig, loadEnv, type HtmlTagDescriptor, type Plugin } from 'vite';
 import { renderAboutPages } from './scripts/build/about-pages';
+import { studioParts } from './scripts/build/studio-parts';
 import { assetUrl } from './src/app/asset-url';
 import { shareImage, siteOrigin } from './src/content/about';
+import { partLibraryPath } from './src/scene/blender-parts';
+
+function preloadStudioView(assetBase: string): Plugin {
+  return {
+    name: 'preload-studio-view',
+    transformIndexHtml: {
+      order: 'post',
+      handler(_, context) {
+        if (context.path !== '/index.html') return;
+        const media = '(min-width: 701px) and (min-height: 421px)';
+        const tags: HtmlTagDescriptor[] = [
+          {
+            tag: 'link',
+            attrs: {
+              rel: 'preload',
+              as: 'fetch',
+              crossorigin: '',
+              href: assetUrl(partLibraryPath('studio'), assetBase),
+              media,
+            },
+            injectTo: 'head-prepend',
+          },
+        ];
+        const chunk = Object.values(context.bundle ?? {}).find(
+          (entry) =>
+            entry.type === 'chunk' && entry.facadeModuleId?.endsWith('/scene/StudioView.tsx'),
+        );
+        if (chunk)
+          tags.push({
+            tag: 'link',
+            attrs: {
+              rel: 'modulepreload',
+              crossorigin: '',
+              href: '/' + chunk.fileName,
+              media,
+            },
+            injectTo: 'head-prepend',
+          });
+        return tags;
+      },
+    },
+  };
+}
 
 export default defineConfig(({ command, mode }) => {
   const assetBase =
@@ -16,6 +60,8 @@ export default defineConfig(({ command, mode }) => {
       react(),
       tailwindcss(),
       renderAboutPages(assetBase),
+      studioParts(),
+      preloadStudioView(assetBase),
       Boolean(assetBase) && {
         name: 'studio-share-image',
         transformIndexHtml(html, { path }) {
@@ -25,8 +71,10 @@ export default defineConfig(({ command, mode }) => {
         },
       },
     ],
+    server: { watch: { ignored: ['**/.review/**', '**/.references/**', '**/.worktrees/**'] } },
     resolve: { tsconfigPaths: true },
     build: {
+      copyPublicDir: false,
       rolldownOptions: { input: ['index.html', 'about.html'] },
     },
     experimental: assetBase
