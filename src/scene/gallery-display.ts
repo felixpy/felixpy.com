@@ -62,11 +62,10 @@ function monitorLight(tv: T.Group, p: Palette, top: number, titanium: T.Material
   deskWash.target.position.copy(deskWash.position);
   deskWash.target.position.y -= Math.cos(Math.PI / 5);
   deskWash.target.position.z += Math.sin(Math.PI / 5);
-  const wallWash = new T.RectAreaLight('#fff0da', 25, 0.08, 0.043);
+  const wallWash = new T.PointLight('#fff0da', 0, 1.5, 2);
   wallWash.name = 'ScreenBar rear ambient illumination';
-  wallWash.position.set(0, 0.0183, -0.0759);
-  // wallWash replaced in scene graph by Cycles multi-channel Lightmap (G channel)
-  arm.add(deskWash, deskWash.target);
+  wallWash.position.set(0, 0.02, -0.095);
+  arm.add(deskWash, deskWash.target, wallWash);
   return { arm, strip, bias, deskWash, wallWash };
 }
 
@@ -211,7 +210,7 @@ export function galleryDisplay(
     deskWash,
     setPower(powered: boolean, detailed: boolean) {
       deskWash.intensity = powered ? 1.25 : 0;
-      wallWash.intensity = powered ? 25 : 0;
+      wallWash.intensity = powered ? 0.42 : 0;
       wallWash.visible = detailed;
       strip.emissiveIntensity = powered ? 0.76 : 0;
       bias.emissiveIntensity = powered ? 0.68 : 0;

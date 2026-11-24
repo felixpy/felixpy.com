@@ -118,6 +118,7 @@ export function ceilingFixture(parent: T.Object3D) {
   const outlet = group(unit, 'Ceiling diffuser outlet', [0, -0.093, 0]);
   const cove = new T.PointLight('#ffe3b9', 0, 2.4, 2);
   cove.position.set(0, -0.095, 0);
+  unit.add(cove);
   return { opal, halo, shell, reflector, outlet, cove };
 }
 
