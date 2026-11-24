@@ -169,8 +169,8 @@ Following playtesting on Apple Silicon (Mac M3 Pro 36 GB) and desktop RTX 4090, 
 | Cold models wire (MB)                                       |                       20.44 |                               **8.36** |                     **18.41** |        **-59.1%** (-9.9%) |
 | Warm repeat-visit wire / HTTP 304s                          |     revalidated (144 × 304) |                  **0.00 MB / 0 × 304** |         **0.00 MB / 0 × 304** | **87/88 disk cache hits** |
 | Warm `studio-input-ready` / `shaded` / `rearReady` (ms)     |                   — / 2,703 |              **1,363 / 2,190 / 2,835** |                             — |                **-19.0%** |
-| RTX 4090 4K steady FPS (Desk Day / Night / Bench / Cabinet) |          140.49 (desk warm) |      **122.3 / 118.4 / 144.0 / 144.0** |                             — |    **0 frames > 33.4 ms** |
-| RTX 4090 4K main-color GPU P50 / P95 (Desk Day)             |                     4.73 ms |                     **6.35 / 9.09 ms** |                             — |   Full dynamic GR701 + Z8 |
+| RTX 4090 4K steady FPS (Desk Day / Night / Bench / Cabinet) |          140.49 (desk warm) |      **142.1 / 143.3 / 144.0 / 144.0** |                             — |  **P50 6.9 / P95 7.0 ms** |
+| RTX 4090 4K main-color GPU P50 / P95 (Day / Night)          |              4.73 / 6.82 ms |   **5.28 / 6.43** · **5.30 / 6.33 ms** |                             — |   Full dynamic GR701 + Z8 |
 | Active desk draws / tris (4-zone culling)                   |                1,019 / 989k |                         **498 / 452k** |                             — |       **-51.1% / -54.3%** |
 | GPU texture VRAM (53 standalone textures)                   |                   307.24 MB |                           **76.85 MB** |                             — |     **-230.39 MB (-75%)** |
 | CI & targeted `@webgl` tests                                |                      passed |        **78 / 78 CI + 7 / 7 `@webgl`** |                             — |            **100% green** |
