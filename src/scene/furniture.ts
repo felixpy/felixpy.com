@@ -470,27 +470,83 @@ export function workshop(
   meter.rotation.x = -0.41568;
   const meterCenter = new T.Vector3(0, 0.0835, -0.012);
   meter.position.add(meterCenter.clone().applyQuaternion(meter.quaternion));
-  const prepareTools = perforatedToolWall(unit, p, () =>
-    loadDisplayModel(unit, '/media/models/bench-instruments.glb', createStudioLoadingManager(), {
-      mounted(scene) {
-        for (const instrument of [...scene.children]) {
-          switch (instrument.userData.benchInstrument) {
-            case 'cutters':
-              instrument.rotation.y = -Math.PI / 2;
-              pliers.add(instrument);
-              break;
-            case 'tester':
-              tray.add(instrument);
-              break;
-            case 'meter':
-              instrument.position.sub(meterCenter);
-              meter.add(instrument);
-              break;
-          }
-        }
-        scene.removeFromParent();
+  const authoring =
+    import.meta.env.DEV &&
+    typeof location !== 'undefined' &&
+    new URLSearchParams(location.search).get('review') === 'authoring';
+  const roomInstruments = new Map<string, T.Object3D>();
+  const heroInstruments = new Map<string, T.Object3D>();
+  let heroInstrumentsLoaded = false;
+  let heroInstrumentsPending = false;
+  let activeInstrument: 'cutters' | 'tester' | 'meter' | undefined;
+
+  const syncInstruments = () => {
+    for (const key of ['cutters', 'tester', 'meter'] as const) {
+      const hero = heroInstruments.get(key);
+      const room = roomInstruments.get(key);
+      const showHero = Boolean(hero && heroInstrumentsLoaded && activeInstrument === key);
+      if (hero) hero.visible = showHero;
+      if (room) room.visible = !showHero;
+    }
+  };
+
+  function mountInstrumentSet(scene: T.Group, targetMap: Map<string, T.Object3D>) {
+    for (const instrument of [...scene.children]) {
+      const kind = instrument.userData.benchInstrument as string | undefined;
+      switch (kind) {
+        case 'cutters':
+          instrument.rotation.y = -Math.PI / 2;
+          pliers.add(instrument);
+          targetMap.set('cutters', instrument);
+          break;
+        case 'tester':
+          tray.add(instrument);
+          targetMap.set('tester', instrument);
+          break;
+        case 'meter':
+          instrument.position.sub(meterCenter);
+          meter.add(instrument);
+          targetMap.set('meter', instrument);
+          break;
+      }
+    }
+    scene.removeFromParent();
+  }
+
+  function loadHeroInstruments() {
+    if (authoring || heroInstrumentsLoaded || heroInstrumentsPending) return;
+    heroInstrumentsPending = true;
+    void loadDisplayModel(
+      unit,
+      '/media/models/bench-instruments.glb',
+      createStudioLoadingManager(),
+      {
+        mounted(scene) {
+          mountInstrumentSet(scene, heroInstruments);
+          heroInstrumentsLoaded = true;
+          syncInstruments();
+        },
       },
-    }),
+    ).catch(() => {
+      heroInstrumentsPending = false;
+    });
+  }
+
+  const prepareTools = perforatedToolWall(unit, p, () =>
+    loadDisplayModel(
+      unit,
+      authoring
+        ? '/media/models/bench-instruments.glb'
+        : '/media/models/bench-instruments-room.glb',
+      createStudioLoadingManager(),
+      {
+        mounted(scene) {
+          mountInstrumentSet(scene, authoring ? heroInstruments : roomInstruments);
+          if (authoring) heroInstrumentsLoaded = true;
+          syncInstruments();
+        },
+      },
+    ),
   );
   return {
     unit,
@@ -504,5 +560,11 @@ export function workshop(
     electronics,
     cabinet,
     prepareTools,
+    selectInstrumentDetail(kind?: 'cutters' | 'tester' | 'meter') {
+      activeInstrument = kind;
+      if (kind) loadHeroInstruments();
+      syncInstruments();
+    },
+    preloadInstrumentsHero: loadHeroInstruments,
   };
 }

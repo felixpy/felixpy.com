@@ -1,7 +1,8 @@
 import * as T from 'three';
+import { assetUrl } from '../app/asset-url';
 import type { DeferRoomAsset } from './rear-loading';
 import { cabinetSpots } from './cabinet-spots';
-import { loadDisplayModel } from './display-model';
+import { deferredDisplayModel, loadDisplayModel } from './display-model';
 import { coatingLayers, coatingTints, nikkorCoating } from './nikkor-coating';
 import { box, canvasTexture, group, print, surface, type XYZ } from './geometry';
 import type { Palette } from './materials';
@@ -116,206 +117,293 @@ export function collectionVitrine(
       ? (phase: string, startTime?: number) =>
           performance.mark(`studio-vitrine-${phase}`, { startTime })
       : undefined;
-  deferRoomDetail(() =>
-    loadDisplayModel(unit, '/media/models/vitrine-inventory.glb', manager, {
-      mark,
-      mounted(scene) {
-        scene.traverse(spots.illuminate);
-        mark?.('lights-end');
-        const parts = [...scene.children];
-        scene.updateWorldMatrix(true, true);
-        mark?.('lens-attach-start');
-        for (const lens of parts) {
-          const target = lenses.find((item) => item.variant === lens.userData.opticalVariant);
-          if (!target) continue;
-          const cap = parts.find(
-            (part) => part.name.startsWith('LF-N1') && part.position.equals(lens.position),
-          );
-          const bounds = new T.Box3().setFromObject(lens);
-          if (cap) bounds.expandByObject(cap);
-          const holder = target.object;
-          holder.position.copy(unit.worldToLocal(bounds.getCenter(new T.Vector3())));
-          holder.quaternion.copy(lens.quaternion);
-          holder.attach(lens);
-          if (cap) {
-            holder.attach(cap);
-            lens.traverse((part) => {
-              if (
-                part instanceof T.Mesh &&
-                part.material instanceof T.Material &&
-                behindRearCap.has(part.material.name)
-              )
-                assembledLens.enclosed(part);
-            });
-          }
+  const authoring =
+    import.meta.env.DEV &&
+    typeof location !== 'undefined' &&
+    new URLSearchParams(location.search).get('review') === 'authoring';
+  const roomGroup = group(unit, 'Vitrine inventory room LOD');
+  const heroGroup = group(unit, 'Vitrine inventory hero detail');
+  heroGroup.visible = authoring;
+  roomGroup.visible = !authoring;
+  const roomLensNodes: T.Object3D[] = [];
+  const heroLensNodes: T.Object3D[] = [];
+  let heroReady = authoring;
+  let inspectingCabinet = false;
+
+  const syncVitrineLod = () => {
+    if (authoring) return;
+    const showHero = inspectingCabinet && heroReady;
+    heroGroup.visible = showHero;
+    roomGroup.visible = !showHero;
+    for (const node of heroLensNodes) node.visible = showHero;
+    for (const node of roomLensNodes) node.visible = !showHero;
+  };
+
+  function attachInventory(scene: T.Group, isHero: boolean) {
+    scene.traverse(spots.illuminate);
+    mark?.('lights-end');
+    const parts = [...scene.children];
+    scene.updateWorldMatrix(true, true);
+    mark?.('lens-attach-start');
+    const bucket = isHero ? heroLensNodes : roomLensNodes;
+    for (const lens of parts) {
+      const target = lenses.find((item) => item.variant === lens.userData.opticalVariant);
+      if (!target) continue;
+      const cap = parts.find(
+        (part) => part.name.startsWith('LF-N1') && part.position.equals(lens.position),
+      );
+      const holder = target.object;
+      if (holder.children.length === 0) {
+        const bounds = new T.Box3().setFromObject(lens);
+        if (cap) bounds.expandByObject(cap);
+        holder.position.copy(unit.worldToLocal(bounds.getCenter(new T.Vector3())));
+        holder.quaternion.copy(lens.quaternion);
+      }
+      holder.attach(lens);
+      bucket.push(lens);
+      if (cap) {
+        holder.attach(cap);
+        bucket.push(cap);
+        if (isHero) {
+          lens.traverse((part) => {
+            if (
+              part instanceof T.Mesh &&
+              part.material instanceof T.Material &&
+              behindRearCap.has(part.material.name)
+            )
+              assembledLens.enclosed(part);
+          });
         }
-        mark?.('lens-attach-end');
-      },
-      mesh(part) {
-        const source = part.material;
-        const pupil =
-          source instanceof T.MeshStandardMaterial &&
-          /^Z(\d+)(?:-\d+)? entrance pupil/.exec(source.name);
-        if (pupil) {
-          source.side = T.DoubleSide;
-          source.customProgramCacheKey = () => 'nikkor-entrance-pupil';
-          source.onBeforeCompile = (shader) => {
-            shader.uniforms.pupilFocalLength = { value: Number(pupil[1]) / 1000 };
-            const telephoto = /^Z(?:70-200|100-400) /.test(source.name);
-            shader.uniforms.pupilRoughness = { value: telephoto ? 0.08 : 0.24 };
-            shader.uniforms.pupilGain = { value: telephoto ? 0.41 : 1 };
-            shader.vertexShader = shader.vertexShader
-              .replace(
-                '#include <common>',
-                '#include <common>\nvarying vec3 pupilOffset; varying vec3 pupilWorld;',
-              )
-              .replace(
-                '#include <project_vertex>',
-                '#include <project_vertex>\npupilOffset = mat3(modelMatrix) * vec3(position.x, 0., position.z); pupilWorld = (modelMatrix * vec4(position, 1.)).xyz;',
-              );
-            shader.fragmentShader = shader.fragmentShader
-              .replace(
-                '#include <common>',
-                '#include <common>\nuniform float pupilFocalLength, pupilRoughness, pupilGain; varying vec3 pupilOffset; varying vec3 pupilWorld;',
-              )
-              .replace(
-                '#include <opaque_fragment>',
-                `vec3 ray = normalize(pupilWorld - cameraPosition);
-                vec3 chief = normalize(ray - pupilOffset / pupilFocalLength);
-                #ifdef ENVMAP_TYPE_CUBE_UV
-                  outgoingLight = textureCubeUV(envMap, envMapRotation * chief, pupilRoughness).rgb * envMapIntensity * pupilGain * vec3(0.73,0.76,0.71);
-                #else
-                  outgoingLight = vec3(0.017,0.020,0.019);
-                #endif
-                #include <opaque_fragment>`,
-              );
-          };
-          part.castShadow = part.receiveShadow = false;
-          return;
-        }
-        if (
-          source instanceof T.Material &&
-          (source.name.startsWith('Optical flock') ||
-            source.name === 'Plena · antireflection velvet')
-        ) {
-          const stop = finishes.get(source) ?? new T.MeshBasicMaterial({ color: '#090d0e' });
-          if (source.name.startsWith('Plena') || /Noct bore|70-200 S II bore/.test(source.name)) {
-            stop.side = T.DoubleSide;
-          }
-          finishes.set(source, stop);
-          part.material = stop;
-          part.castShadow = false;
-          return;
-        }
-        if (
-          source instanceof T.MeshStandardMaterial &&
-          /^(Optical cell|Graphite diaphragm|Diaphragm shear|Plena · anodized optical cell)/.test(
-            source.name,
+      }
+    }
+    mark?.('lens-attach-end');
+  }
+
+  const roomOuterGlass = new T.MeshStandardMaterial({
+    color: '#0e161a',
+    roughness: 0.08,
+    metalness: 0.15,
+    envMapIntensity: 1.25,
+  });
+
+  function applyRoomMesh(part: T.Mesh) {
+    const source = part.material;
+    if (!(source instanceof T.Material)) return;
+    if (source.name.startsWith('NIKKOR glass')) {
+      part.material = roomOuterGlass;
+      part.castShadow = part.receiveShadow = false;
+    }
+  }
+
+  function applyHeroMesh(part: T.Mesh) {
+    const source = part.material;
+    const pupil =
+      source instanceof T.MeshStandardMaterial &&
+      /^Z(\d+)(?:-\d+)? entrance pupil/.exec(source.name);
+    if (pupil) {
+      source.side = T.DoubleSide;
+      source.customProgramCacheKey = () => 'nikkor-entrance-pupil';
+      source.onBeforeCompile = (shader) => {
+        shader.uniforms.pupilFocalLength = { value: Number(pupil[1]) / 1000 };
+        const telephoto = /^Z(?:70-200|100-400) /.test(source.name);
+        shader.uniforms.pupilRoughness = { value: telephoto ? 0.08 : 0.24 };
+        shader.uniforms.pupilGain = { value: telephoto ? 0.41 : 1 };
+        shader.vertexShader = shader.vertexShader
+          .replace(
+            '#include <common>',
+            '#include <common>\nvarying vec3 pupilOffset; varying vec3 pupilWorld;',
           )
-        ) {
-          if (!finishes.has(source)) {
-            source.customProgramCacheKey = () => 'nikkor-optical-baffle';
-            source.onBeforeCompile = (shader) => {
-              shader.uniforms.opticalDarken = { value: new T.Vector3(0.037, 0.05, 0.056) };
-              shader.fragmentShader =
-                'uniform vec3 opticalDarken;\n' +
-                shader.fragmentShader.replace(
-                  '#include <opaque_fragment>',
-                  'outgoingLight *= opticalDarken;\n#include <opaque_fragment>',
-                );
-            };
-            finishes.set(source, source);
-          }
-          return;
-        }
-        if (Array.isArray(source) || !source.name.startsWith('NIKKOR glass')) return;
-        const layer = coatingLayers.findIndex((name) => source.name.endsWith(name));
-        if (layer < 0) return;
-        const calibratedGlass = /100-400 S|70-200 S II|14-24 S|135 Plena|58 f0.95 Noct/.test(
-          source.name,
-        );
-        let finish = finishes.get(source);
-        if (!finish) {
-          unit.updateWorldMatrix(true, false);
-          cabinetInverse.copy(unit.matrixWorld).invert();
-          finish = nikkorCoating(source.name, layer);
-          finish.onBeforeCompile = (shader) => {
-            shader.uniforms.cabinetInverse = { value: cabinetInverse };
-            shader.uniforms.caseSpotCenters = { value: spots.centers };
-            shader.uniforms.caseSpotAxes = { value: spots.axes };
-            shader.uniforms.casePower = spots.power;
-            const tints = source.name.includes('58 f0.95 Noct')
-              ? ['#b0c2ac', '#cfb295', '#9eb6bb', '#c3a9b5']
-              : coatingTints;
-            shader.uniforms.coatingTint = { value: new T.Color(tints[layer]) };
-            shader.uniforms.coatingCalibrated = { value: calibratedGlass ? 1 : 0 };
-            shader.vertexShader = shader.vertexShader
-              .replace(
-                '#include <common>',
-                '#include <common>\nuniform mat4 cabinetInverse; varying vec3 cellPosition; varying vec3 glassWorld;',
-              )
-              .replace(
-                '#include <project_vertex>',
-                '#include <project_vertex>\nglassWorld=(modelMatrix*vec4(transformed,1.)).xyz; cellPosition=(cabinetInverse*vec4(glassWorld,1.)).xyz;',
-              );
-            shader.fragmentShader = shader.fragmentShader
-              .replace(
-                '#include <common>',
-                '#include <common>\nuniform mat4 cabinetInverse; uniform vec3 coatingTint; uniform float coatingCalibrated; uniform vec3 caseSpotCenters[3]; uniform vec3 caseSpotAxes[3]; uniform float casePower; varying vec3 cellPosition; varying vec3 glassWorld;',
-              )
-              .replace(
-                '#include <opaque_fragment>',
-                `vec3 bounce = inverseTransformDirection(reflect(-normalize(vViewPosition), normal), viewMatrix);
-                vec3 cabinetRay = mat3(cabinetInverse) * bounce;
-                float caseReflection = 0.0;
-                for (int spot = 0; spot < 3; ++spot) {
-                  vec3 axis = caseSpotAxes[spot];
-                  float facing = -dot(cabinetRay, axis);
-                  float t = dot(cellPosition-caseSpotCenters[spot], axis) / max(facing, 0.001);
-                  float radius = distance(cellPosition + t*cabinetRay, caseSpotCenters[spot]);
-                  caseReflection += (1.0-smoothstep(0.003,0.006,radius))*smoothstep(0.62,0.90,facing)*step(0.0,t);
-                }
-                float toWindow = (${windowOpening.wall} - glassWorld.x) / min(-0.0001,bounce.x);
-                vec2 glazing = (glassWorld + bounce * toWindow).zy;
-                vec2 opening = smoothstep(vec2(${windowOpening.z0}, ${windowOpening.y0}),
-                  vec2(${windowOpening.z0 + 0.06}, ${windowOpening.y0 + 0.06}),glazing)
-                  * (1.0-smoothstep(vec2(${windowOpening.z1 - 0.06}, ${windowOpening.y1 - 0.06}),
-                    vec2(${windowOpening.z1}, ${windowOpening.y1}),glazing));
-                float mullion = smoothstep(0.012,0.022,abs(glazing.x-0.85));
-                float toScreen = (${display.z + display.surface} - glassWorld.z) / min(-0.0001,bounce.z);
-                vec2 screen = abs((glassWorld + bounce * toScreen).xy-vec2(${display.x},${display.y}));
-                vec2 oled = 1.0-smoothstep(vec2(${display.width / 2 - 0.03},${display.height / 2 - 0.03}),
-                  vec2(${display.width / 2},${display.height / 2}),screen);
-                if (coatingCalibrated > 0.5) {
-                  float gain = 0.022 + 0.18 * pow(1.0-abs(dot(normal,normalize(vViewPosition))), 3.0);
-                  #ifdef ENVMAP_TYPE_CUBE_UV
-                    vec3 coat = textureCubeUV(envMap, envMapRotation * bounce, 0.075).rgb * envMapIntensity;
-                    outgoingLight += coatingTint * coat * gain;
-                  #endif
-                  float toOak = (0.0305-cellPosition.z) / min(-0.0001,cabinetRay.z);
-                  vec2 oak = abs((cellPosition + toOak*cabinetRay).xy - vec2(0.,1.126));
-                  float backing = (1.0-smoothstep(0.52,0.59,oak.x)) * (1.0-smoothstep(0.13,0.18,oak.y));
-                  outgoingLight += coatingTint * vec3(0.15,0.115,0.085) * gain * backing * step(cabinetRay.z,0.0);
-                }
-                outgoingLight += coatingTint * (caseReflection * casePower * 0.95 + vec3(0.064,0.092,0.12) *
-                  opening.x*opening.y*mullion*step(bounce.x,0.0) + vec3(.036,.050,.058)*oled.x*oled.y*step(bounce.z,0.0));
-                #include <opaque_fragment>`,
-              );
-          };
-          finish.customProgramCacheKey = () => 'nikkor-vitrine-coating';
-          finishes.set(source, finish);
-        }
-        part.material = finish;
-        part.renderOrder = layer + 1;
-        part.receiveShadow = part.castShadow = false;
-      },
-    }),
-  );
+          .replace(
+            '#include <project_vertex>',
+            '#include <project_vertex>\npupilOffset = mat3(modelMatrix) * vec3(position.x, 0., position.z); pupilWorld = (modelMatrix * vec4(position, 1.)).xyz;',
+          );
+        shader.fragmentShader = shader.fragmentShader
+          .replace(
+            '#include <common>',
+            '#include <common>\nuniform float pupilFocalLength, pupilRoughness, pupilGain; varying vec3 pupilOffset; varying vec3 pupilWorld;',
+          )
+          .replace(
+            '#include <opaque_fragment>',
+            `vec3 ray = normalize(pupilWorld - cameraPosition);
+            vec3 chief = normalize(ray - pupilOffset / pupilFocalLength);
+            #ifdef ENVMAP_TYPE_CUBE_UV
+              outgoingLight = textureCubeUV(envMap, envMapRotation * chief, pupilRoughness).rgb * envMapIntensity * pupilGain * vec3(0.73,0.76,0.71);
+            #else
+              outgoingLight = vec3(0.017,0.020,0.019);
+            #endif
+            #include <opaque_fragment>`,
+          );
+      };
+      part.castShadow = part.receiveShadow = false;
+      return;
+    }
+    if (
+      source instanceof T.Material &&
+      (source.name.startsWith('Optical flock') || source.name === 'Plena · antireflection velvet')
+    ) {
+      const stop = finishes.get(source) ?? new T.MeshBasicMaterial({ color: '#090d0e' });
+      if (source.name.startsWith('Plena') || /Noct bore|70-200 S II bore/.test(source.name)) {
+        stop.side = T.DoubleSide;
+      }
+      finishes.set(source, stop);
+      part.material = stop;
+      part.castShadow = false;
+      return;
+    }
+    if (
+      source instanceof T.MeshStandardMaterial &&
+      /^(Optical cell|Graphite diaphragm|Diaphragm shear|Plena · anodized optical cell)/.test(
+        source.name,
+      )
+    ) {
+      if (!finishes.has(source)) {
+        source.customProgramCacheKey = () => 'nikkor-optical-baffle';
+        source.onBeforeCompile = (shader) => {
+          shader.uniforms.opticalDarken = { value: new T.Vector3(0.037, 0.05, 0.056) };
+          shader.fragmentShader =
+            'uniform vec3 opticalDarken;\n' +
+            shader.fragmentShader.replace(
+              '#include <opaque_fragment>',
+              'outgoingLight *= opticalDarken;\n#include <opaque_fragment>',
+            );
+        };
+        finishes.set(source, source);
+      }
+      return;
+    }
+    if (Array.isArray(source) || !source.name.startsWith('NIKKOR glass')) return;
+    const layer = coatingLayers.findIndex((name) => source.name.endsWith(name));
+    if (layer < 0) return;
+    const calibratedGlass = /100-400 S|70-200 S II|14-24 S|135 Plena|58 f0.95 Noct/.test(
+      source.name,
+    );
+    let finish = finishes.get(source);
+    if (!finish) {
+      unit.updateWorldMatrix(true, false);
+      cabinetInverse.copy(unit.matrixWorld).invert();
+      finish = nikkorCoating(source.name, layer);
+      finish.onBeforeCompile = (shader) => {
+        shader.uniforms.cabinetInverse = { value: cabinetInverse };
+        shader.uniforms.caseSpotCenters = { value: spots.centers };
+        shader.uniforms.caseSpotAxes = { value: spots.axes };
+        shader.uniforms.casePower = spots.power;
+        const tints = source.name.includes('58 f0.95 Noct')
+          ? ['#b0c2ac', '#cfb295', '#9eb6bb', '#c3a9b5']
+          : coatingTints;
+        shader.uniforms.coatingTint = { value: new T.Color(tints[layer]) };
+        shader.uniforms.coatingCalibrated = { value: calibratedGlass ? 1 : 0 };
+        shader.vertexShader = shader.vertexShader
+          .replace(
+            '#include <common>',
+            '#include <common>\nuniform mat4 cabinetInverse; varying vec3 cellPosition; varying vec3 glassWorld;',
+          )
+          .replace(
+            '#include <project_vertex>',
+            '#include <project_vertex>\nglassWorld=(modelMatrix*vec4(transformed,1.)).xyz; cellPosition=(cabinetInverse*vec4(glassWorld,1.)).xyz;',
+          );
+        shader.fragmentShader = shader.fragmentShader
+          .replace(
+            '#include <common>',
+            '#include <common>\nuniform mat4 cabinetInverse; uniform vec3 coatingTint; uniform float coatingCalibrated; uniform vec3 caseSpotCenters[3]; uniform vec3 caseSpotAxes[3]; uniform float casePower; varying vec3 cellPosition; varying vec3 glassWorld;',
+          )
+          .replace(
+            '#include <opaque_fragment>',
+            `vec3 bounce = inverseTransformDirection(reflect(-normalize(vViewPosition), normal), viewMatrix);
+            vec3 cabinetRay = mat3(cabinetInverse) * bounce;
+            float caseReflection = 0.0;
+            for (int spot = 0; spot < 3; ++spot) {
+              vec3 axis = caseSpotAxes[spot];
+              float facing = -dot(cabinetRay, axis);
+              float t = dot(cellPosition-caseSpotCenters[spot], axis) / max(facing, 0.001);
+              float radius = distance(cellPosition + t*cabinetRay, caseSpotCenters[spot]);
+              caseReflection += (1.0-smoothstep(0.003,0.006,radius))*smoothstep(0.62,0.90,facing)*step(0.0,t);
+            }
+            float toWindow = (${windowOpening.wall} - glassWorld.x) / min(-0.0001,bounce.x);
+            vec2 glazing = (glassWorld + bounce * toWindow).zy;
+            vec2 opening = smoothstep(vec2(${windowOpening.z0}, ${windowOpening.y0}),
+              vec2(${windowOpening.z0 + 0.06}, ${windowOpening.y0 + 0.06}),glazing)
+              * (1.0-smoothstep(vec2(${windowOpening.z1 - 0.06}, ${windowOpening.y1 - 0.06}),
+                vec2(${windowOpening.z1}, ${windowOpening.y1}),glazing));
+            float mullion = smoothstep(0.012,0.022,abs(glazing.x-0.85));
+            float toScreen = (${display.z + display.surface} - glassWorld.z) / min(-0.0001,bounce.z);
+            vec2 screen = abs((glassWorld + bounce * toScreen).xy-vec2(${display.x},${display.y}));
+            vec2 oled = 1.0-smoothstep(vec2(${display.width / 2 - 0.03},${display.height / 2 - 0.03}),
+              vec2(${display.width / 2},${display.height / 2}),screen);
+            if (coatingCalibrated > 0.5) {
+              float gain = 0.022 + 0.18 * pow(1.0-abs(dot(normal,normalize(vViewPosition))), 3.0);
+              #ifdef ENVMAP_TYPE_CUBE_UV
+                vec3 coat = textureCubeUV(envMap, envMapRotation * bounce, 0.075).rgb * envMapIntensity;
+                outgoingLight += coatingTint * coat * gain;
+              #endif
+              float toOak = (0.0305-cellPosition.z) / min(-0.0001,cabinetRay.z);
+              vec2 oak = abs((cellPosition + toOak*cabinetRay).xy - vec2(0.,1.126));
+              float backing = (1.0-smoothstep(0.52,0.59,oak.x)) * (1.0-smoothstep(0.13,0.18,oak.y));
+              outgoingLight += coatingTint * vec3(0.15,0.115,0.085) * gain * backing * step(cabinetRay.z,0.0);
+            }
+            outgoingLight += coatingTint * (caseReflection * casePower * 0.95 + vec3(0.064,0.092,0.12) *
+              opening.x*opening.y*mullion*step(bounce.x,0.0) + vec3(.036,.050,.058)*oled.x*oled.y*step(bounce.z,0.0));
+            #include <opaque_fragment>`,
+          );
+      };
+      finish.customProgramCacheKey = () => 'nikkor-vitrine-coating';
+      finishes.set(source, finish);
+    }
+    part.material = finish;
+    part.renderOrder = layer + 1;
+    part.receiveShadow = part.castShadow = false;
+  }
+
+  const loadHeroInventory = deferredDisplayModel(heroGroup, '/media/models/vitrine-inventory.glb', {
+    mark,
+    mesh: applyHeroMesh,
+    mounted(scene) {
+      attachInventory(scene, true);
+      heroReady = true;
+      syncVitrineLod();
+    },
+  });
+
+  if (authoring) {
+    deferRoomDetail(() =>
+      loadDisplayModel(heroGroup, '/media/models/vitrine-inventory.glb', manager, {
+        mark,
+        mesh: applyHeroMesh,
+        mounted: (scene) => attachInventory(scene, true),
+      }),
+    );
+  } else {
+    deferRoomDetail(() =>
+      loadDisplayModel(roomGroup, '/media/models/vitrine-inventory-room.glb', manager, {
+        mark,
+        mesh: applyRoomMesh,
+        mounted(scene) {
+          attachInventory(scene, false);
+          syncVitrineLod();
+        },
+      }),
+    );
+  }
   const archive = group(unit, 'Photographic film and mounted transparencies', [0.275, 0.52, 0.17]);
   deferRoomDetail(() =>
     loadDisplayModel(archive, '/media/models/film-archive.glb', manager, {
       mounted: (scene) => scene.traverse(spots.illuminate),
     }),
   );
-  return { unit, lightPower: spots.power };
+  return {
+    unit,
+    lightPower: spots.power,
+    selectDetail(active: boolean) {
+      if (authoring) return;
+      inspectingCabinet = active;
+      if (active && !heroReady) {
+        void loadHeroInventory(new T.LoadingManager().setURLModifier(assetUrl));
+      }
+      syncVitrineLod();
+    },
+    preloadHero() {
+      if (!authoring && !heroReady) {
+        void loadHeroInventory(new T.LoadingManager().setURLModifier(assetUrl));
+      }
+    },
+  };
 }

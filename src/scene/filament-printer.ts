@@ -218,7 +218,7 @@ export function filamentPrinter(
     spool: surface('#565d5e', 0.51, 0.13),
     tube: surface('#495156', 0.4),
   };
-  const print = whaleTailPrint(bed, manager);
+  const print = whaleTailPrint(bed, manager, { roomLod: true });
   const chamberAlloy = new T.MeshStandardMaterial({
     color: '#62696b',
     roughness: 0.6,
@@ -308,5 +308,10 @@ export function filamentPrinter(
     updatePanel(locale);
   }
   update(0, true, 'en');
-  return { unit, update };
+  return {
+    unit,
+    update,
+    selectDetail: print.selectDetail,
+    preloadHero: print.preloadHero,
+  };
 }
