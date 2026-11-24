@@ -246,6 +246,7 @@ export function* buildStudioSteps(
     import.meta.env.DEV &&
     typeof location !== 'undefined' &&
     new URLSearchParams(location.search).get('review') === 'authoring';
+  const useRoomLod = !authoring && !preloadInspection;
   const {
     unit: pc,
     updateLightGuide,
@@ -255,7 +256,7 @@ export function* buildStudioSteps(
     refreshRoomLod: refreshTowerRoomLod,
     fanGuides,
     reflections,
-  } = tower(interior, p, aura, manager, { roomLod: !authoring, mounted: detailMounted });
+  } = tower(interior, p, aura, manager, { roomLod: useRoomLod, mounted: detailMounted });
   yield;
   const channelHues = [0.926, 0.815, 0.727, 0.669, 0.614, 0.558, 0.526];
   const fans: T.Object3D[] = [];
@@ -269,7 +270,7 @@ export function* buildStudioSteps(
     prepareSwitches,
     evictSwitches,
     selectDetail: selectKeySwitches,
-  } = keyboard(interior, manager, keyLight, detailMounted, { roomLod: !authoring });
+  } = keyboard(interior, manager, keyLight, detailMounted, { roomLod: useRoomLod });
   if (preloadInspection) {
     deferDesk(() => prepareMacDetail(rearLoader));
     deferDesk(() => prepareSwitches(rearLoader));
@@ -291,7 +292,7 @@ export function* buildStudioSteps(
   pencil.rotation.y = Math.PI / 2 - 0.18;
   loadDisplayModel(pencil, '/media/models/mitsubishi-9850.glb', manager);
   const deskCamera = nikonZ8(interior, p, bridgePrint, manager, {
-    roomLod: !authoring,
+    roomLod: useRoomLod,
     mounted: detailMounted,
   });
   yield;

@@ -383,6 +383,7 @@ export function keyboard(
     new URLSearchParams(location.search).get('review') === 'authoring';
   const useRoomLod = Boolean(options.roomLod && !authoring);
   const roomGroup = group(unit, 'Azoth room LOD');
+  const roomKeyAnchor = useRoomLod ? group(roomGroup, 'ROG_Azoth_Extreme') : undefined;
   const heroGroup = group(unit, 'Azoth hero detail');
   let roomFailed = false;
   let heroReady = false;
@@ -395,6 +396,7 @@ export function keyboard(
   const loadHeroBody = deferredDisplayModel(heroGroup, '/media/models/rog-azoth-extreme.glb', {
     mesh: applyKeyboardMaterial,
     mounted(scene) {
+      roomKeyAnchor?.removeFromParent();
       heroReady = true;
       syncBody();
       detailMounted(scene);
