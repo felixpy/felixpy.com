@@ -26,7 +26,7 @@ test('the processor, memory, GPU support and power harness fit their workstation
       import(scenePath + 'materials.ts'),
       import(scenePath + 'blender-library.ts'),
     ]);
-    await loadParts('studio');
+    await Promise.all([loadParts('studio'), loadParts('pc-hero')]);
     const manager = new T.LoadingManager();
     manager.setURLModifier((url: string) =>
       url.replace(/(strix-z890-a|xpg-d50-fubuki)\.glb\.gz$/, '$1.glb'),
@@ -347,4 +347,92 @@ test('the processor, memory, GPU support and power harness fit their workstation
   expect(fit.powerRoute.tray[0][1]).toBeLessThan(96);
   expect(fit.powerRoute.tray[1][0]).toBeGreaterThan(-255);
   expect(fit.powerRoute.tray[1][1]).toBeLessThan(-192);
+});
+
+test('room-LOD workstation startup defers pc-hero.bpk until case inspection', async ({ page }) => {
+  await page.goto('/media/credits.txt');
+  const result = await page.evaluate(async () => {
+    const scenePath = '/src/scene/';
+    const threePath = '/node_modules/three/build/three.module.js';
+    const [T, { tower }, { materials }, { hasParts, loadParts }] = await Promise.all([
+      import(threePath),
+      import(scenePath + 'hardware.ts'),
+      import(scenePath + 'materials.ts'),
+      import(scenePath + 'blender-library.ts'),
+    ]);
+    await loadParts('studio');
+    const manager = new T.LoadingManager();
+    const roomLoaded = new Promise<void>((resolve) => {
+      manager.onLoad = resolve;
+    });
+    const aura = Array.from({ length: 7 }, () => new T.MeshStandardMaterial());
+    let heroMountedCalls = 0;
+    const pc = tower(new T.Group(), materials(new T.TextureLoader(manager)), aura, manager, {
+      roomLod: true,
+      mounted() {
+        heroMountedCalls++;
+      },
+    });
+    await roomLoaded;
+    const roomRotors: string[] = [];
+    pc.unit.traverse((node: import('three').Object3D) => {
+      if (node.name === 'Fan rotor') roomRotors.push(node.parent?.name ?? '');
+    });
+    const beforeInspect = {
+      pcHeroLoaded: hasParts('pc-hero'),
+      hasGpuHero: Boolean(pc.unit.getObjectByName('Diecast frame and thermal module')),
+      hasAtxHero: Boolean(pc.unit.getObjectByName('24-pin ATX braided loom and retaining comb')),
+      hasCableBaySmoke: Boolean(pc.unit.getObjectByName('GR701 cable bay · smoke')),
+      hasFasciaLight: Boolean(pc.unit.getObjectByName('GR701 front assembly · light')),
+      hasThorAura: Boolean(pc.unit.getObjectByName('Thor 1600W Titanium III • aura')),
+      hasThorOled: Boolean(pc.unit.getObjectByName('Thor OLED power draw')),
+      roomLodVisible: Boolean(pc.unit.getObjectByName('GR701 room LOD')?.visible),
+      roomRotorCount: roomRotors.length,
+    };
+    pc.selectDetail(true);
+    const deadline = performance.now() + 10_000;
+    while (
+      (!hasParts('pc-hero') || !pc.unit.getObjectByName('Diecast frame and thermal module')) &&
+      performance.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const afterInspect = {
+      pcHeroLoaded: hasParts('pc-hero'),
+      hasGpuHero: Boolean(pc.unit.getObjectByName('Diecast frame and thermal module')),
+      hasAtxHero: Boolean(pc.unit.getObjectByName('24-pin ATX braided loom and retaining comb')),
+      hasCableBaySmoke: Boolean(pc.unit.getObjectByName('GR701 cable bay · smoke')),
+      roomLodVisible: Boolean(pc.unit.getObjectByName('GR701 room LOD')?.visible),
+      roomGpuRotorsVisible: Boolean(pc.unit.getObjectByName('ROG Astral room fan rotors')?.visible),
+      heroMountedCalls,
+    };
+    pc.selectDetail(false);
+    const afterReturn = {
+      roomLodVisible: Boolean(pc.unit.getObjectByName('GR701 room LOD')?.visible),
+      roomGpuRotorsVisible: Boolean(pc.unit.getObjectByName('ROG Astral room fan rotors')?.visible),
+    };
+    return { beforeInspect, afterInspect, afterReturn };
+  });
+  expect(result.beforeInspect).toEqual({
+    pcHeroLoaded: false,
+    hasGpuHero: false,
+    hasAtxHero: false,
+    hasCableBaySmoke: false,
+    hasFasciaLight: true,
+    hasThorAura: true,
+    hasThorOled: true,
+    roomLodVisible: true,
+    roomRotorCount: 11,
+  });
+  expect(result.afterInspect.pcHeroLoaded).toBe(true);
+  expect(result.afterInspect.hasGpuHero).toBe(true);
+  expect(result.afterInspect.hasAtxHero).toBe(true);
+  expect(result.afterInspect.hasCableBaySmoke).toBe(true);
+  expect(result.afterInspect.roomLodVisible).toBe(false);
+  expect(result.afterInspect.roomGpuRotorsVisible).toBe(false);
+  expect(result.afterInspect.heroMountedCalls).toBeGreaterThanOrEqual(2);
+  expect(result.afterReturn).toEqual({
+    roomLodVisible: true,
+    roomGpuRotorsVisible: true,
+  });
 });

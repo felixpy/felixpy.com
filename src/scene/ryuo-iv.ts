@@ -113,89 +113,91 @@ function pumpHead(
     [0.0695, 0.111, -0.132],
   );
   pump.rotation.y = -Math.PI / 2;
-  for (const [finish, metal] of Object.entries({
-    copper: surface('#bb784e', 0.33, 0.86),
-    steel: p.steel,
-    shell: alloy,
-  })) {
-    const mount = mesh(pump, blenderMesh('ryuo-mount-' + finish), metal);
-    mount.name = 'LGA1851 contact and 78 mm mount • ' + finish;
-    if (finish === 'copper') details.enclosed(mount);
-  }
-  box(pump, [0.064, 0.068, 0.045], [0, 0, 0.026], enamel, 0.007);
-  box(pump, [0.089, 0.078, 0.039], [-0.003, -0.001, 0.06], alloy, 0.0054);
-  for (const [finish, material] of Object.entries({
-    white: enamel,
-    satin: alloy,
-    black: p.rubber,
-    graphite: p.graphite,
-    steel: p.steel,
-  }))
-    mesh(pump, blenderMesh('ryuo-housing-' + finish), material);
-  box(pump, [0.008, 0.075, 0.065], [-0.059, -0.001, 0.088], enamel, 0.002);
-  const sidePrint = canvasTexture(448, 384, (ctx) => {
-    ctx.fillStyle = '#dedfe0';
-    ctx.fillRect(0, 0, 448, 384);
-    for (let y = 3; y < 384; y += 5) {
-      ctx.fillStyle = '#d1d3d3';
-      ctx.fillRect(0, y, 448, 1);
-    }
-    ctx.fillStyle = '#8b8f92';
-    for (const y of [35, 321])
-      for (let i = 0; i < 24; i++) {
-        const x = 25 + i * 16;
-        ctx.beginPath();
-        ctx.moveTo(x, y + 17);
-        ctx.lineTo(x + 12, y);
-        ctx.lineTo(x + 20, y);
-        ctx.lineTo(x + 8, y + 17);
-        ctx.closePath();
-        ctx.fill();
-      }
-    ctx.textAlign = 'center';
-    ctx.font = 'italic 900 109px Arial';
-    ctx.fillText('R O G', 224, 209);
-    ctx.font = 'bold 15px Arial';
-    ctx.fillText('FOR THOSE WHO DARE', 224, 254);
-  });
-  const sideStamp = mesh(
-    pump,
-    new T.PlaneGeometry(0.057, 0.067),
-    new T.MeshStandardMaterial({ map: sidePrint, roughness: 0.45, metalness: 0.35 }),
-    [-0.06315, -0.001, 0.088],
-  );
-  sideStamp.rotation.y = -Math.PI / 2;
-  sideStamp.castShadow = false;
-  const lid = new T.Shape();
-  lid.moveTo(-0.066, 0.06);
-  lid.quadraticCurveTo(-0.066, 0.053, -0.059, 0.053);
-  lid.lineTo(0.049, 0.053);
-  lid.quadraticCurveTo(0.057, 0.053, 0.057, 0.064);
-  lid.lineTo(0.057, 0.093);
-  lid.quadraticCurveTo(0.057, 0.124, 0.026, 0.124);
-  lid.lineTo(-0.062, 0.124);
-  lid.quadraticCurveTo(-0.066, 0.123, -0.066, 0.117);
-  lid.closePath();
-  for (const y of [-0.038, 0.0416]) {
-    const cap = mesh(
-      pump,
-      new T.ExtrudeGeometry(lid, {
-        depth: 0.0028,
-        bevelEnabled: true,
-        bevelSize: 0.0008,
-        bevelThickness: 0.00062,
-        bevelSegments: 3,
-        curveSegments: 30,
-      }),
-      enamel,
-      [0, y, 0],
-    );
-    cap.rotation.x = Math.PI / 2;
-  }
-  mesh(pump, wrapDisplay(0.077, 0.0004, 0), p.black);
   const display = amoled();
   mesh(pump, wrapDisplay(0.065, 0.0011, 0.003), display.material).castShadow = false;
-  return display.showTemperature;
+  function mountHero() {
+    for (const [finish, metal] of Object.entries({
+      copper: surface('#bb784e', 0.33, 0.86),
+      steel: p.steel,
+      shell: alloy,
+    })) {
+      const mount = mesh(pump, blenderMesh('ryuo-mount-' + finish), metal);
+      mount.name = 'LGA1851 contact and 78 mm mount • ' + finish;
+      if (finish === 'copper') details.enclosed(mount);
+    }
+    box(pump, [0.064, 0.068, 0.045], [0, 0, 0.026], enamel, 0.007);
+    box(pump, [0.089, 0.078, 0.039], [-0.003, -0.001, 0.06], alloy, 0.0054);
+    for (const [finish, material] of Object.entries({
+      white: enamel,
+      satin: alloy,
+      black: p.rubber,
+      graphite: p.graphite,
+      steel: p.steel,
+    }))
+      mesh(pump, blenderMesh('ryuo-housing-' + finish), material);
+    box(pump, [0.008, 0.075, 0.065], [-0.059, -0.001, 0.088], enamel, 0.002);
+    const sidePrint = canvasTexture(448, 384, (ctx) => {
+      ctx.fillStyle = '#dedfe0';
+      ctx.fillRect(0, 0, 448, 384);
+      for (let y = 3; y < 384; y += 5) {
+        ctx.fillStyle = '#d1d3d3';
+        ctx.fillRect(0, y, 448, 1);
+      }
+      ctx.fillStyle = '#8b8f92';
+      for (const y of [35, 321])
+        for (let i = 0; i < 24; i++) {
+          const x = 25 + i * 16;
+          ctx.beginPath();
+          ctx.moveTo(x, y + 17);
+          ctx.lineTo(x + 12, y);
+          ctx.lineTo(x + 20, y);
+          ctx.lineTo(x + 8, y + 17);
+          ctx.closePath();
+          ctx.fill();
+        }
+      ctx.textAlign = 'center';
+      ctx.font = 'italic 900 109px Arial';
+      ctx.fillText('R O G', 224, 209);
+      ctx.font = 'bold 15px Arial';
+      ctx.fillText('FOR THOSE WHO DARE', 224, 254);
+    });
+    const sideStamp = mesh(
+      pump,
+      new T.PlaneGeometry(0.057, 0.067),
+      new T.MeshStandardMaterial({ map: sidePrint, roughness: 0.45, metalness: 0.35 }),
+      [-0.06315, -0.001, 0.088],
+    );
+    sideStamp.rotation.y = -Math.PI / 2;
+    sideStamp.castShadow = false;
+    const lid = new T.Shape();
+    lid.moveTo(-0.066, 0.06);
+    lid.quadraticCurveTo(-0.066, 0.053, -0.059, 0.053);
+    lid.lineTo(0.049, 0.053);
+    lid.quadraticCurveTo(0.057, 0.053, 0.057, 0.064);
+    lid.lineTo(0.057, 0.093);
+    lid.quadraticCurveTo(0.057, 0.124, 0.026, 0.124);
+    lid.lineTo(-0.062, 0.124);
+    lid.quadraticCurveTo(-0.066, 0.123, -0.066, 0.117);
+    lid.closePath();
+    for (const y of [-0.038, 0.0416]) {
+      const cap = mesh(
+        pump,
+        new T.ExtrudeGeometry(lid, {
+          depth: 0.0028,
+          bevelEnabled: true,
+          bevelSize: 0.0008,
+          bevelThickness: 0.00062,
+          bevelSegments: 3,
+          curveSegments: 30,
+        }),
+        enamel,
+        [0, y, 0],
+      );
+      cap.rotation.x = Math.PI / 2;
+    }
+    mesh(pump, wrapDisplay(0.077, 0.0004, 0), p.black);
+  }
+  return { showTemperature: display.showTemperature, mountHero };
 }
 
 function coolingFans(
@@ -204,34 +206,13 @@ function coolingFans(
   aura: T.MeshStandardMaterial[],
   registerLight: (part: T.Mesh) => void,
 ) {
-  const parts = [
-    'chassis',
-    'pads',
-    'grey',
-    'screws',
-    'contacts',
-    'vanes',
-    'medallion',
-    'rotor-foil',
-    'stripes',
-    'eye',
-  ] as const;
-  const geometries = new Map(parts.map((part) => [part, blenderMesh('ryuo-mf12c/' + part)]));
-  const pad = surface('#f1f1ef', 0.72, 0);
-  const print = surface('#85878b', 0.44, 0.22);
-  print.side = T.DoubleSide;
-  const screw = surface('#45474a', 0.35, 0.74);
-  const gold = surface('#cba059', 0.32, 0.78);
+  const rotorParts = ['vanes', 'medallion', 'rotor-foil'] as const;
+  const rotorGeometries = new Map(
+    rotorParts.map((part) => [part, blenderMesh('ryuo-mf12c/' + part)]),
+  );
   const lid = surface('#ecece9', 0.3, 0.16);
   const foil = surface('#97999d', 0.37, 0.46);
   foil.side = T.DoubleSide;
-  const diffuser = new T.MeshStandardMaterial({
-    name: fanPanelGuide,
-    color: '#b8b7be',
-    roughness: 0.42,
-    emissive: 0xffffff,
-    emissiveIntensity: 1.15,
-  });
   const scattering = canvasTexture(64, 32, (ctx) => {
     const glow = ctx.createLinearGradient(0, 0, 64, 22);
     glow.addColorStop(0, '#f6f6f6');
@@ -240,12 +221,18 @@ function coolingFans(
     ctx.fillStyle = glow;
     ctx.fillRect(0, 0, 64, 32);
   });
-  const mount = (parent: T.Group, part: (typeof parts)[number], material: T.Material) => {
+  const mount = (
+    parent: T.Group,
+    geometries: Map<string, T.BufferGeometry>,
+    part: string,
+    material: T.Material,
+  ) => {
     const item = mesh(parent, geometries.get(part)!, material);
     item.name = 'MF-12C ' + part;
     item.userData.mf12cPart = part;
     return item;
   };
+  const fans: T.Group[] = [];
   for (let j = 0; j < 3; j++) {
     const fan = group(radiator, 'MF-12C · daisy-chained 120 mm', [
       -0.008,
@@ -254,25 +241,47 @@ function coolingFans(
     ]);
     fan.rotation.x = Math.PI / 2;
     fan.userData.mf12cStation = j;
-    mount(fan, 'chassis', enamel);
-    mount(fan, 'pads', pad);
-    mount(fan, 'grey', print);
-    mount(fan, 'screws', screw);
-    mount(fan, 'contacts', gold);
+    fans.push(fan);
     const light = aura[j + 2];
-    const panel = mount(fan, j === 1 ? 'stripes' : 'eye', diffuser);
-    panel.castShadow = false;
-    registerLight(panel);
     const rotor = group(fan, 'Fan rotor');
     const opal = surface('#d4d9e1', 0.36, 0.055);
     opal.emissive = light.emissive;
     opal.emissiveMap = scattering;
-    mount(rotor, 'vanes', opal).onBeforeRender = () => {
+    mount(rotor, rotorGeometries, 'vanes', opal).onBeforeRender = () => {
       opal.emissiveIntensity = light.emissiveIntensity * 0.71;
     };
-    mount(rotor, 'medallion', lid);
-    mount(rotor, 'rotor-foil', foil).castShadow = false;
+    mount(rotor, rotorGeometries, 'medallion', lid);
+    mount(rotor, rotorGeometries, 'rotor-foil', foil).castShadow = false;
   }
+  return function mountFrames() {
+    const frameParts = ['chassis', 'pads', 'grey', 'screws', 'contacts', 'stripes', 'eye'] as const;
+    const frameGeometries = new Map(
+      frameParts.map((part) => [part, blenderMesh('ryuo-mf12c/' + part)]),
+    );
+    const pad = surface('#f1f1ef', 0.72, 0);
+    const print = surface('#85878b', 0.44, 0.22);
+    print.side = T.DoubleSide;
+    const screw = surface('#45474a', 0.35, 0.74);
+    const gold = surface('#cba059', 0.32, 0.78);
+    const diffuser = new T.MeshStandardMaterial({
+      name: fanPanelGuide,
+      color: '#b8b7be',
+      roughness: 0.42,
+      emissive: 0xffffff,
+      emissiveIntensity: 1.15,
+    });
+    for (let j = 0; j < fans.length; j++) {
+      const fan = fans[j];
+      mount(fan, frameGeometries, 'chassis', enamel);
+      mount(fan, frameGeometries, 'pads', pad);
+      mount(fan, frameGeometries, 'grey', print);
+      mount(fan, frameGeometries, 'screws', screw);
+      mount(fan, frameGeometries, 'contacts', gold);
+      const panel = mount(fan, frameGeometries, j === 1 ? 'stripes' : 'eye', diffuser);
+      panel.castShadow = false;
+      registerLight(panel);
+    }
+  };
 }
 
 function radiatorFinish(radiator: T.Group) {
@@ -341,7 +350,6 @@ export function ryuoIV(
   unit: T.Group,
   p: Palette,
   aura: T.MeshStandardMaterial[],
-  braid: T.Texture,
   registerLight: (part: T.Mesh) => void,
   details: ProductDetail,
 ) {
@@ -349,25 +357,34 @@ export function ryuoIV(
   const alloy = surface('#bbc1c8', 0.34, 0.72);
   const cooling = group(unit, 'ROG Ryuo IV SLC 360 ARGB White Edition');
   cooling.position.z = -0.023;
-  const showTemperature = pumpHead(cooling, p, enamel, alloy, details);
+  const pump = pumpHead(cooling, p, enamel, alloy, details);
   const radiator = group(
     cooling,
     'ROG offset-flow 394 × 140 × 32 mm radiator',
     [0.001, 0.253, -0.031],
   );
-  for (const [finish, material] of Object.entries({
-    white: enamel,
-    graphite: p.graphite,
-    satin: alloy,
-  }))
-    mesh(radiator, blenderMesh('ryuo-radiator-' + finish), material);
-  radiatorFinish(radiator);
-  for (const x of [-0.053, 0.053]) {
-    box(radiator, [0.012, 0.009, 0.366], [x, 0.0195, 0.002], p.graphite, 0.0009);
-    for (const z of [-0.17, -0.07, 0.07, 0.17])
-      tube(radiator, [x, 0.022, z], [x, 0.025, z], 0.0031, alloy);
-  }
-  coolingFans(radiator, enamel, aura, registerLight);
-  shortCoolingLines(unit, p, braid, registerLight);
-  return showTemperature;
+  const mountFanFrames = coolingFans(radiator, enamel, aura, registerLight);
+  let heroMounted = false;
+  return {
+    showTemperature: pump.showTemperature,
+    mountHero(braid: T.Texture) {
+      if (heroMounted) return;
+      heroMounted = true;
+      pump.mountHero();
+      for (const [finish, material] of Object.entries({
+        white: enamel,
+        graphite: p.graphite,
+        satin: alloy,
+      }))
+        mesh(radiator, blenderMesh('ryuo-radiator-' + finish), material);
+      radiatorFinish(radiator);
+      for (const x of [-0.053, 0.053]) {
+        box(radiator, [0.012, 0.009, 0.366], [x, 0.0195, 0.002], p.graphite, 0.0009);
+        for (const z of [-0.17, -0.07, 0.07, 0.17])
+          tube(radiator, [x, 0.022, z], [x, 0.025, z], 0.0031, alloy);
+      }
+      mountFanFrames();
+      shortCoolingLines(unit, p, braid, registerLight);
+    },
+  };
 }

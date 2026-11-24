@@ -3,6 +3,7 @@ import { packedBuffer } from './packed-buffer';
 import { partLibraryPath, unpackParts, type PartLibrary } from './blender-parts';
 
 const loaded = new Map<string, Promise<void>>();
+const installed = new Set<PartLibrary>();
 const parts = new Map<string, ArrayBuffer>();
 
 async function readParts(collection: PartLibrary) {
@@ -18,7 +19,12 @@ async function readParts(collection: PartLibrary) {
   const restored = unpackParts(buffer);
   mark('unpack-end');
   for (const [name, bytes] of restored) parts.set(name, bytes);
+  installed.add(collection);
   mark('installed');
+}
+
+export function hasParts(collection: PartLibrary) {
+  return installed.has(collection);
 }
 
 export function loadParts(collection: PartLibrary) {
