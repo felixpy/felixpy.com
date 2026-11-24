@@ -1,5 +1,6 @@
 import * as T from 'three';
 import { createStudioLoadingManager, defaultStudioLoadingManager } from './asset-loading';
+import { loadStudioTexture } from './ktx2-loader';
 import { initialEnvironment, type Environment } from '../app/environment';
 import { ceilingLightLevel } from '../app/home-lights';
 import { publicProfiles } from '../content/profile';
@@ -112,10 +113,14 @@ export function* buildStudioSteps(
     typeof createImageBitmap === 'function' &&
     new URLSearchParams(location.search).get('studio-images') === 'bitmap';
   const photo = (src: string, useBitmap = false) => {
-    const texture = bitmapTextures && useBitmap ? loadBitmapTexture(loader, src) : loader.load(src);
-    texture.colorSpace = T.SRGBColorSpace;
-    texture.anisotropy = 8;
-    return texture;
+    const isLinear = src.endsWith('cork-grain.webp');
+    if (bitmapTextures && useBitmap) {
+      const texture = loadBitmapTexture(loader, src);
+      texture.colorSpace = isLinear ? T.NoColorSpace : T.SRGBColorSpace;
+      texture.anisotropy = 8;
+      return texture;
+    }
+    return loadStudioTexture(loader, src, { srgb: !isLinear, anisotropy: 8 });
   };
   const atlas = photo('/media/photography/travel-prints.webp', true);
   const hometown = photo('/media/photography/fanjingshan-print.webp', true);

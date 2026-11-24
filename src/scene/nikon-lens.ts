@@ -1,6 +1,7 @@
 import * as T from 'three';
 import { blenderMesh } from './blender-mesh';
 import { loadDisplayModel } from './display-model';
+import { loadStudioTexture } from './ktx2-loader';
 import { group, mesh, surface } from './geometry';
 import { display, windowOpening } from './layout';
 import { coatingLayers, coatingTints, nikkorCoating } from './nikkor-coating';
@@ -93,9 +94,11 @@ export function nikkorZoom(parent: T.Object3D, manager: T.LoadingManager) {
   printing.polygonOffset = true;
   printing.polygonOffsetFactor = -1;
   printing.polygonOffsetUnits = -1;
-  const grain = new T.TextureLoader(manager).load('/media/materials/hb117-mold-normal.png');
-  grain.wrapS = grain.wrapT = T.RepeatWrapping;
-  grain.anisotropy = 4;
+  const grain = loadStudioTexture(
+    new T.TextureLoader(manager),
+    '/media/materials/hb117-mold-normal.png',
+    { srgb: false, wrap: T.RepeatWrapping, anisotropy: 4 },
+  );
   for (const molded of [shroud, cover]) {
     molded.normalMap = grain;
     molded.normalScale.setScalar(0.63);

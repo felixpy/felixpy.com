@@ -1,5 +1,6 @@
 import * as T from 'three';
 import { defaultStudioLoadingManager } from './asset-loading';
+import { loadStudioTexture } from './ktx2-loader';
 import { random } from './geometry';
 
 const lanes = 18;
@@ -121,10 +122,11 @@ export function buildRainGlass(origin: T.Vector3, size: T.Vector2) {
       if (!highlights.visible || (prepared && delta <= 0)) return;
       if (!prepared) {
         prepared = true;
-        const texture = new T.TextureLoader(defaultStudioLoadingManager).load(
+        const texture = loadStudioTexture(
+          new T.TextureLoader(defaultStudioLoadingManager),
           '/media/panoramas/glass-rain-beads.png',
+          { srgb: false, anisotropy: 4 },
         );
-        texture.anisotropy = 4;
         uniforms.rainBeads.value = texture;
         highlights.material.addEventListener('dispose', () => texture.dispose());
       }

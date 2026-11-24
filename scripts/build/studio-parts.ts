@@ -22,6 +22,8 @@ import { assembleProducts, readProduct } from './static-product.mjs';
 
 const publicDirectory = resolve('public');
 const root = join(publicDirectory, 'media', 'models');
+const basisDirectory = resolve('node_modules', 'three', 'examples', 'jsm', 'libs', 'basis');
+const basisFiles = ['basis_transcoder.js', 'basis_transcoder.wasm'] as const;
 const unhashedPublicPaths = new Set(['/media/credits.txt']);
 const partLibraries: readonly PartLibrary[] = ['studio', 'workshop', 'pc-hero'];
 const roomFamilies = new Set([
@@ -175,6 +177,9 @@ function deliveries() {
       gzipSync(installedProduct(file, readFileSync(join(root, file))), { level: 9 }),
     );
   }
+  for (const file of basisFiles) {
+    build.set('/media/basis/' + file, () => readFileSync(join(basisDirectory, file)));
+  }
   return build;
 }
 
@@ -264,11 +269,16 @@ export function studioParts(assetBase = ''): {
       });
       server.middlewares.use((request, response, next) => {
         const url = request.url?.split('?')[0] ?? '';
-        if (!url.startsWith('/media/models/')) return next();
+        if (!url.startsWith('/media/models/') && !url.startsWith('/media/basis/')) return next();
         const build = (builds ??= deliveries()).get(url);
         if (!build) return next();
         if (!cache.has(url)) cache.set(url, build());
-        response.setHeader('Content-Type', 'application/octet-stream');
+        const contentType = url.endsWith('.js')
+          ? 'application/javascript; charset=utf-8'
+          : url.endsWith('.wasm')
+            ? 'application/wasm'
+            : 'application/octet-stream';
+        response.setHeader('Content-Type', contentType);
         response.end(cache.get(url));
       });
     },

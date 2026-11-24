@@ -15,7 +15,9 @@ const contentTypes = {
   '.hdr': 'application/octet-stream',
   '.jpeg': 'image/jpeg',
   '.jpg': 'image/jpeg',
+  '.js': 'application/javascript; charset=utf-8',
   '.json': 'application/json',
+  '.ktx2': 'image/ktx2',
   '.mp3': 'audio/mpeg',
   '.mp4': 'video/mp4',
   '.ogg': 'audio/ogg',
@@ -28,6 +30,10 @@ const contentTypes = {
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
 };
+
+export function contentTypeForAsset(key) {
+  return contentTypes[extname(key).toLowerCase()] ?? 'application/octet-stream';
+}
 
 export function cacheControlForAsset(key) {
   return isImmutableAssetPath(key) ? 'public, max-age=31536000, immutable' : 'public, no-cache';
@@ -59,7 +65,7 @@ export async function collectAssets(root) {
     assets.push({
       path,
       key,
-      contentType: contentTypes[extname(key).toLowerCase()] ?? 'application/octet-stream',
+      contentType: contentTypeForAsset(key),
       cacheControl: cacheControlForAsset(key),
     });
   }

@@ -2,6 +2,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import * as T from 'three';
 import { createStudioLoadingManager } from './asset-loading';
+import { initStudioKtx2 } from './ktx2-loader';
 import type { Environment } from '../app/environment';
 import { ceilingLightLevel, type HomeLightId } from '../app/home-lights';
 import PhoneHome from '../app/ui/PhoneHome';
@@ -1612,6 +1613,7 @@ function StudioRoom({
   const { firstFrame } = startup;
   const [assembly, setAssembly] = useState<Assembly | null>(() => {
     if (startup.sliced) return null;
+    initStudioKtx2(gl);
     firstFrame.warm(gl);
     const { assets, manager, frontReady } = assemblyLoading();
     performance.mark('studio-room-build-start');
@@ -1625,6 +1627,7 @@ function StudioRoom({
 
   useEffect(() => {
     if (!startup.sliced) return;
+    initStudioKtx2(gl);
     firstFrame.warm(gl);
     const { assets, manager, frontReady } = assemblyLoading();
     const steps = buildStudioSteps(manager, startup.environment, startup.options);
@@ -1765,6 +1768,7 @@ export default function StudioView(props: Props) {
           alpha: false,
         }}
         onCreated={({ gl }) => {
+          initStudioKtx2(gl);
           gl.debug.checkShaderErrors = import.meta.env.DEV;
           gl.toneMapping = T.ACESFilmicToneMapping;
           gl.toneMappingExposure = 1.04;

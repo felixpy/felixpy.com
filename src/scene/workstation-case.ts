@@ -3,6 +3,7 @@ import { box, canvasTexture, group, mesh, surface, tube } from './geometry';
 import type { Palette } from './materials';
 import { hyperionInterior } from './hyperion-chassis';
 import { blenderMesh } from './blender-mesh';
+import { loadStudioTexture } from './ktx2-loader';
 import { cableChamber, fitFrontCheeks } from './gr701-cable-chamber';
 import type { ProductDetail } from './product-detail';
 
@@ -136,17 +137,21 @@ export function workstationCase(
   brush.wrapS = brush.wrapT = T.RepeatWrapping;
   brush.repeat.set(5, 1);
   finishes.cast.roughnessMap = brush;
-  const wingGrain = new T.TextureLoader(manager).load('/media/materials/metal-brush-normal.webp');
-  wingGrain.wrapS = wingGrain.wrapT = T.RepeatWrapping;
-  wingGrain.anisotropy = 8;
+  const textureLoader = new T.TextureLoader(manager);
+  const wingGrain = loadStudioTexture(textureLoader, '/media/materials/metal-brush-normal.webp', {
+    srgb: false,
+    wrap: T.RepeatWrapping,
+    anisotropy: 8,
+  });
   finishes.wing.normalMap = wingGrain;
   finishes.wing.normalScale.set(0.49, 0.49);
   finishes.plate.normalMap = wingGrain;
   finishes.plate.normalScale.set(0.43, 0.43);
-  const plateGrain = new T.TextureLoader(manager).load('/media/materials/tolomeo-axial-grain.png');
-  plateGrain.colorSpace = T.SRGBColorSpace;
-  plateGrain.wrapS = plateGrain.wrapT = T.RepeatWrapping;
-  plateGrain.anisotropy = 8;
+  const plateGrain = loadStudioTexture(textureLoader, '/media/materials/tolomeo-axial-grain.png', {
+    srgb: true,
+    wrap: T.RepeatWrapping,
+    anisotropy: 8,
+  });
   finishes.plate.map = plateGrain;
   finishes.ink.side = T.DoubleSide;
   fitFrontCheeks(unit, door, finishes.wing);

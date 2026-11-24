@@ -14,7 +14,8 @@ import { cacheControlForAsset, collectAssets } from '../scripts/deploy/r2-assets
 test('content-hash URL resolution supports local, R2 immutable origin, old versions, and rollback', () => {
   const v1Manifest = {
     '/media/models/zone-desk.glb.gz': '/media/models/zone-desk.1111111111.glb.gz',
-    '/media/lighting/room-contact-ao.webp': '/media/lighting/room-contact-ao.2222222222.webp',
+    '/media/lighting/cabinet-spot-visibility.png':
+      '/media/lighting/cabinet-spot-visibility.2222222222.png',
     '/fonts/studio-han.woff2': '/fonts/studio-han.3333333333.woff2',
   };
   const v2Manifest = {

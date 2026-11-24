@@ -1,5 +1,6 @@
 import * as T from 'three';
 import { defaultStudioLoadingManager } from './asset-loading';
+import { loadStudioTexture, loadStudioTextureAsync } from './ktx2-loader';
 import type { Environment } from '../app/environment';
 import { group, mesh } from './geometry';
 import type { buildRainGlass } from './rain-glass';
@@ -47,10 +48,10 @@ export function buildExterior(
   const hiResLoader = new T.TextureLoader(defaultStudioLoadingManager);
   function loadPhoto(asset: string, roomTier = false) {
     const file = roomTier && tieredPanoramas.has(asset) ? asset + '-room' : asset;
-    const image = loader.load('/media/panoramas/' + file + '.webp');
-    image.colorSpace = T.SRGBColorSpace;
-    image.anisotropy = 8;
-    return image;
+    return loadStudioTexture(loader, '/media/panoramas/' + file + '.webp', {
+      srgb: true,
+      anisotropy: 8,
+    });
   }
   function loadPlate(scene: WindowExposure) {
     const tiered = tieredPanoramas.has(scene.asset);
@@ -95,22 +96,24 @@ export function buildExterior(
   function upgradePlateToHiRes(plateEntry: ReturnType<typeof loadPlate>) {
     if (!plateEntry.tiered || plateEntry.hiResRequested) return;
     plateEntry.hiResRequested = true;
-    hiResLoader.load(
+    void loadStudioTextureAsync(
+      hiResLoader,
       '/media/panoramas/' + plateEntry.scene.asset + '.webp',
-      (hiRes) => {
-        hiRes.colorSpace = T.SRGBColorSpace;
-        hiRes.anisotropy = 8;
-        if (plateEntry.scene.kind === 'land') hiRes.wrapS = T.RepeatWrapping;
+      {
+        srgb: true,
+        anisotropy: 8,
+        wrapS: plateEntry.scene.kind === 'land' ? T.RepeatWrapping : undefined,
+      },
+    )
+      .then((hiRes) => {
         const previous = plateEntry.photo;
         plateEntry.photo = hiRes;
         if (plateEntry.scene.kind === 'land') plateEntry.depth = hiRes;
         previous.dispose();
-      },
-      undefined,
-      () => {
+      })
+      .catch(() => {
         // Keep the 2.5K room tier texture if the 5K close-up upgrade fails.
-      },
-    );
+      });
   }
   const plates = new Map<WindowExposure, ReturnType<typeof loadPlate>>();
   function view(env: Environment) {
@@ -133,14 +136,13 @@ export function buildExterior(
   let waterReady: Promise<boolean> | undefined;
   function waterResources() {
     waterReady ??= new Promise<boolean>((resolve) => {
-      const slopes = motionLoader.load(
-        '/media/panoramas/river-slopes.webp',
-        () => resolve(true),
-        undefined,
-        () => resolve(false),
-      );
-      slopes.wrapS = slopes.wrapT = T.RepeatWrapping;
-      slopes.anisotropy = 8;
+      const slopes = loadStudioTexture(motionLoader, '/media/panoramas/river-slopes.webp', {
+        srgb: false,
+        wrap: T.RepeatWrapping,
+        anisotropy: 8,
+        onLoad: () => resolve(true),
+        onError: () => resolve(false),
+      });
       uniforms.waterSlopes.value = slopes;
     });
     return waterReady;

@@ -13,6 +13,8 @@ const mimeTypes = {
   '.json': 'application/json; charset=utf-8',
   '.png': 'image/png',
   '.webp': 'image/webp',
+  '.ktx2': 'image/ktx2',
+  '.wasm': 'application/wasm',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.svg': 'image/svg+xml',
@@ -64,6 +66,7 @@ function startStaticServer() {
 }
 
 function classify(urlPath) {
+  if (urlPath.startsWith('/media/basis/')) return 'basis-transcoder';
   if (urlPath.startsWith('/media/lighting/')) return 'lighting';
   if (urlPath.startsWith('/media/models/')) return 'models';
   if (urlPath.startsWith('/media/materials/')) return 'materials';
