@@ -9,6 +9,7 @@ export function installMotherboard(
   manager: T.LoadingManager,
   registerLight: (part: T.Mesh) => void,
   details: ProductDetail,
+  mounted?: (scene: T.Group) => void,
 ) {
   const board = group(unit, 'ROG Strix Z890-A Gaming WiFi S · Fubuki', [0.077, 0.194, -0.289]);
   board.rotation.y = -Math.PI / 2;
@@ -28,6 +29,7 @@ export function installMotherboard(
           details.enclosed(part);
         }
       });
+      mounted?.(model);
     },
   });
   const bank = group(unit, 'XPG D50 Fubuki DDR5 memory bank', [
@@ -51,6 +53,7 @@ export function installMotherboard(
           details.enclosed(part);
       });
       for (const slot of sockets.slice(1)) slot.add(module.clone());
+      mounted?.(bank);
     },
   });
 }

@@ -269,7 +269,7 @@ export function* buildStudioSteps(
     prepareSwitches,
     evictSwitches,
     selectDetail: selectKeySwitches,
-  } = keyboard(interior, manager, keyLight, detailMounted);
+  } = keyboard(interior, manager, keyLight, detailMounted, { roomLod: !authoring });
   if (preloadInspection) {
     deferDesk(() => prepareMacDetail(rearLoader));
     deferDesk(() => prepareSwitches(rearLoader));
@@ -290,7 +290,10 @@ export function* buildStudioSteps(
   const pencil = group(interior, 'Mitsubishi 9850 HB', [0.344, desk.top, 0.313]);
   pencil.rotation.y = Math.PI / 2 - 0.18;
   loadDisplayModel(pencil, '/media/models/mitsubishi-9850.glb', manager);
-  const deskCamera = nikonZ8(interior, p, bridgePrint, manager);
+  const deskCamera = nikonZ8(interior, p, bridgePrint, manager, {
+    roomLod: !authoring,
+    mounted: detailMounted,
+  });
   yield;
   const samplePrint = photoPrinter(
     bench.unit,
@@ -659,6 +662,7 @@ export function* buildStudioSteps(
       id: 'camera',
       type: 'inspect',
       object: deskCamera,
+      onInspect: (active: boolean) => deskCamera.userData.selectDetail?.(active),
       label: '检视 Nikon Z 8 相机',
       english: 'Examine the Nikon Z 8',
       size: 0.17,
