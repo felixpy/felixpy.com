@@ -1,6 +1,7 @@
 import * as T from 'three';
 import type { Environment } from '../app/environment';
 import { ceilingLightLevel } from '../app/home-lights';
+import { defaultStudioLoadingManager } from './asset-loading';
 import { roomIrradiance } from './room-irradiance';
 import { lightingVolume } from './lighting-volume';
 import { projectRoomReflections } from './room-reflection';
@@ -436,7 +437,7 @@ export function roomVisibility(
         resolve();
         return;
       }
-      new T.TextureLoader().load(
+      new T.TextureLoader(defaultStudioLoadingManager).setCrossOrigin('anonymous').load(
         url,
         (loaded) => {
           if (controller.signal.aborted) {

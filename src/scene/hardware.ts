@@ -2,6 +2,7 @@ import * as T from 'three';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { canvasTexture, group, mesh, surface, type XYZ } from './geometry';
+import { assetUrl } from '../app/asset-url';
 import type { Locale } from '../app/locale';
 import type { Palette } from './materials';
 import { installMotherboard } from './motherboard';
@@ -110,7 +111,7 @@ async function tryLoadOptionalGlb(path: string): Promise<T.Group | null> {
   if (typeof fetch !== 'function') return null;
   for (const candidate of [path + '.gz', path]) {
     try {
-      const response = await fetch(candidate);
+      const response = await fetch(assetUrl(candidate));
       if (!response.ok) continue;
       const contentType = response.headers.get('content-type') ?? '';
       if (contentType.startsWith('text/')) continue;
