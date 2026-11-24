@@ -2,6 +2,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import * as T from 'three';
 import { createStudioLoadingManager } from './asset-loading';
+import { initStudioKtx2 } from './ktx2-loader';
 import type { Environment } from '../app/environment';
 import { ceilingLightLevel, type HomeLightId } from '../app/home-lights';
 import PhoneHome from '../app/ui/PhoneHome';
@@ -113,6 +114,7 @@ type RigProps = Props & {
   mapMarker: RefObject<SVGGElement | null>;
   firstPicture: RefObject<FirstPicture>;
   detailRevision: RefObject<number>;
+  interacting: RefObject<boolean>;
   preparedReflection: RefObject<PreparedReflection | null>;
   phonePanel: RefObject<HTMLDivElement | null>;
   setPhoneHeld: (held: boolean) => void;
@@ -219,6 +221,7 @@ function CameraRig(
     orientation: T.Quaternion;
   } | null>(null);
   const hover = useRef<Target | undefined>(undefined);
+  const lastWheelAt = useRef(0);
   const animationStart = useRef(0);
   const computerStart = useRef({
     position: new T.Vector3(),
@@ -388,7 +391,14 @@ function CameraRig(
     camera.rotation.set(looks.current.room.pitch, looks.current.room.yaw, 0, 'YXZ');
     camera.updateMatrixWorld(true);
     let pointerAim: { x: number; y: number } | undefined;
-    const heroLru = createHeroLru(3);
+    let hoverPreloadTimer: number | undefined;
+    const clearHoverPreload = () => {
+      if (hoverPreloadTimer !== undefined) {
+        window.clearTimeout(hoverPreloadTimer);
+        hoverPreloadTimer = undefined;
+      }
+    };
+    const heroLru = createHeroLru(5);
     heroLruRef.current = heroLru;
     const hoverPicker = createHoverPicker({
       element,
@@ -422,6 +432,16 @@ function CameraRig(
         if (!canPick(mode.current) || pointer.current) return;
         if (target || target !== hover.current) {
           hover.current = target;
+          clearHoverPreload();
+          if (target && !authoringMode.current) {
+            const preloadId = target.id;
+            hoverPreloadTimer = window.setTimeout(() => {
+              hoverPreloadTimer = undefined;
+              if (!surfaceAbort.signal.aborted && hover.current?.id === preloadId) {
+                model.preloadHero(preloadId);
+              }
+            }, 60);
+          }
           const locale = live.current.environment.locale;
           const text =
             target?.type === 'drawer' &&
@@ -451,17 +471,70 @@ function CameraRig(
     });
     hoverPickerRef.current = hoverPicker;
     const pick = hoverPicker.pickAt;
+    let rearDone = false;
+    let userEngaged = false;
+    let deskHeroPreloadStarted = false;
+    let deskHeroTimer: number | undefined;
+    const deskHeroQueue = ['keyboard', 'mac-studio'] as const;
+    let deskHeroIndex = 0;
+    const scheduleNextDeskHero = () => {
+      if (
+        surfaceAbort.signal.aborted ||
+        authoringMode.current ||
+        deskHeroIndex >= deskHeroQueue.length
+      )
+        return;
+      deskHeroTimer = window.setTimeout(() => {
+        deskHeroTimer = undefined;
+        if (surfaceAbort.signal.aborted) return;
+        if (props.interacting.current) {
+          scheduleNextDeskHero();
+          return;
+        }
+        const run = () => {
+          if (surfaceAbort.signal.aborted) return;
+          if (props.interacting.current) {
+            scheduleNextDeskHero();
+            return;
+          }
+          model.preloadHero(deskHeroQueue[deskHeroIndex++]);
+          scheduleNextDeskHero();
+        };
+        if (typeof window.requestIdleCallback === 'function')
+          window.requestIdleCallback(run, { timeout: 1500 });
+        else run();
+      }, 650);
+    };
+    const maybeStartDeskHeroPreload = () => {
+      if (
+        deskHeroPreloadStarted ||
+        !rearDone ||
+        !userEngaged ||
+        authoringMode.current ||
+        live.current.environment.quality !== 'high'
+      )
+        return;
+      deskHeroPreloadStarted = true;
+      scheduleNextDeskHero();
+    };
     void model.rearReady.then(() => {
       if (surfaceAbort.signal.aborted) return;
+      rearDone = true;
       visibility.prepareMaterials();
       finishNormals.current?.();
       roomMeshes.current?.refresh();
       model.zoneCuller.refreshBounds();
       hoverPicker.invalidate();
-      model.refreshTowerRoomLod();
       props.detailRevision.current++;
       shadowWarmup.current = 2;
       performance.mark('studio-room-rear-ready');
+      const warmReflections = () => {
+        if (!surfaceAbort.signal.aborted) model.preloadFixtureReflections();
+      };
+      if (typeof window.requestIdleCallback === 'function')
+        window.requestIdleCallback(warmReflections, { timeout: 1200 });
+      else window.setTimeout(warmReflections, 64);
+      maybeStartDeskHeroPreload();
     });
 
     function walkTo(x: number, y: number, z: number) {
@@ -516,7 +589,6 @@ function CameraRig(
     function moveToStation(next: Station) {
       station.current = next;
       if (next === 'bench') {
-        void visibility.prepareRearLightmap();
         void model.prepareRear('bench');
         looks.current.bench = { yaw: benchEye.yaw, pitch: benchEye.pitch };
         void model
@@ -629,13 +701,10 @@ function CameraRig(
         return;
       }
       if (target.type === 'gear') {
-        void visibility.prepareRearLightmap();
         void model.prepareRear('gear');
       } else if (target.id === 'collection-cabinet') {
-        void visibility.prepareRearLightmap();
         void model.prepareRear('cabinet');
       } else if (target.id === 'filament-printer') {
-        void visibility.prepareRearLightmap();
         void model.prepareRear('bench');
       }
       if (isWallView(target.type)) {
@@ -760,6 +829,10 @@ function CameraRig(
     };
 
     function move(event: PointerEvent) {
+      if (!userEngaged) {
+        userEngaged = true;
+        maybeStartDeskHeroPreload();
+      }
       pointerAim = { x: event.clientX, y: event.clientY };
       if (mode.current === 'map') {
         hoverPicker.scheduleHover(event.clientX, event.clientY);
@@ -846,12 +919,18 @@ function CameraRig(
     }
     function down(event: PointerEvent) {
       if (event.button !== 0 || !canPick(mode.current)) return;
+      if (!userEngaged) {
+        userEngaged = true;
+        maybeStartDeskHeroPreload();
+      }
       if (live.current.roomVisible) live.current.firstFrame.prioritizeInput();
       hoverPicker.cancelHover();
       openSequence.current++;
       const rect = element.getBoundingClientRect();
+      const picked = canPick(mode.current) ? pick(event.clientX, event.clientY) : undefined;
+      if (picked && !authoringMode.current) model.preloadHero(picked.id);
       pointer.current = {
-        target: canPick(mode.current) ? pick(event.clientX, event.clientY) : undefined,
+        target: picked,
         x: event.clientX,
         y: event.clientY,
         moved: false,
@@ -897,6 +976,7 @@ function CameraRig(
     }
     function wheel(event: WheelEvent) {
       event.preventDefault();
+      lastWheelAt.current = performance.now();
       const delta = event.deltaY * (event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? 300 : 1);
       if (mode.current === 'inspect' && inspection.current) {
         inspection.current.distance = T.MathUtils.clamp(
@@ -1008,6 +1088,8 @@ function CameraRig(
       window.removeEventListener('keyup', releaseKey);
       window.removeEventListener('blur', releaseMovement);
       reflectionMap.dispose();
+      clearHoverPreload();
+      if (deskHeroTimer !== undefined) window.clearTimeout(deskHeroTimer);
       hoverPicker.dispose();
       hoverPickerRef.current = null;
       heroLru.clear();
@@ -1129,6 +1211,10 @@ function CameraRig(
       }
     }
     const current = mode.current;
+    props.interacting.current =
+      Boolean(pointer.current?.moved) ||
+      turning.current.size > 0 ||
+      performance.now() - lastWheelAt.current < 160;
     if (model.mountedDetails.length) {
       let visibleArrival = false;
       for (const subtree of model.mountedDetails) {
@@ -1142,8 +1228,8 @@ function CameraRig(
       roomMeshes.current?.refresh();
       model.zoneCuller.refreshBounds();
       hoverPickerRef.current?.invalidate();
+      props.detailRevision.current++;
       if (visibleArrival) {
-        props.detailRevision.current++;
         shadowWarmup.current = 2;
       }
     }
@@ -1514,14 +1600,6 @@ function CameraRig(
     if (wallFocus.current) forcedObjects.push(wallFocus.current.object);
     if (drawerFocus.current) forcedObjects.push(drawerFocus.current.object);
 
-    if (
-      current === 'bench' ||
-      current === 'gear' ||
-      current === 'case' ||
-      Math.abs(looks.current[station.current].yaw) > 0.45
-    ) {
-      void roomMaterials.current?.prepareRearLightmap();
-    }
     model.zoneCuller.update(camera, {
       forceAll: authoring || needsShadowUpdate,
       forceZones: forcedZones,
@@ -1593,6 +1671,7 @@ function StudioRoom({
   const { firstFrame } = startup;
   const [assembly, setAssembly] = useState<Assembly | null>(() => {
     if (startup.sliced) return null;
+    initStudioKtx2(gl);
     firstFrame.warm(gl);
     const { assets, manager, frontReady } = assemblyLoading();
     performance.mark('studio-room-build-start');
@@ -1606,6 +1685,7 @@ function StudioRoom({
 
   useEffect(() => {
     if (!startup.sliced) return;
+    initStudioKtx2(gl);
     firstFrame.warm(gl);
     const { assets, manager, frontReady } = assemblyLoading();
     const steps = buildStudioSteps(manager, startup.environment, startup.options);
@@ -1687,6 +1767,7 @@ function StudioRoom({
         roomVisible={props.roomVisible}
         firstPicture={props.firstPicture}
         detailRevision={props.detailRevision}
+        interacting={props.interacting}
         workbench={assembly.model.workbench}
         setLowScale={setLowScale}
         nativeLow={nativeLow}
@@ -1709,6 +1790,7 @@ export default function StudioView(props: Props) {
     () => new URLSearchParams(location.search).get('studio-low') === 'native',
   );
   const detailRevision = useRef(0);
+  const interacting = useRef(false);
   const [lowScale, setLowScale] = useState(props.initialLowScale);
   useLayoutEffect(() => {
     if (props.roomVisible) performance.mark('studio-input-ready');
@@ -1744,6 +1826,7 @@ export default function StudioView(props: Props) {
           alpha: false,
         }}
         onCreated={({ gl }) => {
+          initStudioKtx2(gl);
           gl.debug.checkShaderErrors = import.meta.env.DEV;
           gl.toneMapping = T.ACESFilmicToneMapping;
           gl.toneMappingExposure = 1.04;
@@ -1763,6 +1846,7 @@ export default function StudioView(props: Props) {
           mapMarker={mapMarker}
           firstPicture={firstPicture}
           detailRevision={detailRevision}
+          interacting={interacting}
           preparedReflection={preparedReflection}
           phonePanel={phonePanel}
           setPhoneHeld={setPhoneHeld}

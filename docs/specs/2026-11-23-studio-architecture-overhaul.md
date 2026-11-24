@@ -139,7 +139,42 @@ node scripts/performance/studio-benchmark.mjs uhd-native 1 --seconds=10 --gpu-ti
 | RTX 4090 4K main-color GPU P50 / P95 (ms)         |                 4.73 / 6.82 |                        **4.28 / 5.30** |                                    — |           **-9.5% / -22.3%** |
 | Active draws / tris (desk steady, 4-zone culling) |                1,019 / 989k |                         **512 / 471k** |                                    — |          **-49.8% / -52.4%** |
 
-### Deferred follow-up items and environment scope
+### Phase 3 real-hardware refinement, zero-duplicate-GLB cleanup, and KTX2 (`2026-11-24`)
 
-- **KTX2 (Basis Universal UASTC/ETC1S) texture transcoding:** Explicitly deferred to a future pass because `toktx` / KTX-Software CLI is not installed in the workstation or `.authoring/` environment. All lightmaps, panorama tiers, field-notes atlas, and Meshopt Room LODs are shipped in standard WebP/JPEG/glTF 2.0 formats with zero visual regression.
-- **Live R2 & Vercel production publish:** Verified locally via `VITE_ASSET_BASE_URL=https://assets.felixpy.com/felix-studio/ npm run build` + `node scripts/deploy/r2-assets.mjs dist --check` and `tests/media-manifest.spec.ts` (confirming `public, max-age=31536000, immutable` on all hashed media/fonts, `public, no-cache` on `media/credits.txt`, and strictly additive non-destructive R2 uploads for old-version coexistence and instant rollback). Actual production publish is handled separately.
+Following playtesting on Apple Silicon (Mac M3 Pro 36 GB) and desktop RTX 4090, PR #11 (`perf/studio-lod-ktx2-lighting`) landed real-time lighting/shadow restoration, rotation/inspection stutter elimination, Interaction DRS, and hybrid ETC1S/UASTC+Zstd KTX2 GPU textures while removing all duplicate `*-room.glb` decimated models in favor of 100% original hero geometry (`felix-studio-art` zero `.blend` masters modified):
+
+1. **Real-time lighting and shadow restoration (`NUM_RECT_AREA_LIGHTS = 0`):**
+   - Removed the 3 stale 2D planar baked lightmaps (`room-contact-ao.webp`, `room-rect-lightmap.webp`, `room-rear-lightmap.webp`) to eliminate daylight dimming, the Codex Micro contact box artifact, and East workbench cutting-mat ghost shadows, ensuring newly added or moved 3D props receive accurate real-time lighting and shadows automatically.
+   - Replaced all 6 LTC `RectAreaLight` sources with calibrated real-time `SpotLight`/`PointLight` fixtures (`NUM_RECT_AREA_LIGHTS = 0`, 3× faster 4K fragment shading vs LTC) while restoring real-time shadows on `upper`, `benchLight`, and `wash` (`shadowMap.autoUpdate = false`), enabling zero-intensity direct light culling across both `high` and `low` quality, and gating off-screen desk/printer animations via `zoneCuller.isZoneVisible()`.
+2. **Rotation and close-up inspection stutter elimination + Interaction DRS:**
+   - Tagged zone-culled subtrees (`studioZoneCulled`) and hidden close-up detail subtrees (`studioWarmable`) so `roomWarmup.scan()` discovers `east-workshop`, `south-rear`, and hidden close-up shaders/textures while still off-screen and compiles them in parallel `gl.compileAsync` batches (`batchCap = 12`, paused during active drags; temporarily toggling leaf `visible` during synchronous `compileAsync` setup so hidden close-up details compile cleanly without rendering).
+   - Preloaded `fixtureReflections('aj' | 'camp')` HDR maps during idle after `rearReady` to prevent mid-rotation `material.needsUpdate = true` shader recompiles.
+   - Added post-first-interaction idle preloading (`keyboard`, `mac-studio`), 60 ms debounced hover preloading, and immediate `pointerdown` preloading for lazy interior splits, raised `HeroLru` capacity to 5, and memoized Nikon Z8 canvas legend textures.
+   - Added smooth Interaction Dynamic Resolution Scaling (DRS) for Apple Silicon and non-ultra high-tier GPUs when `dpr > 1.2` (stepping DPR to `1.125` during active drag/wheel/arrow interaction and restoring full DPR 160 ms after release).
+3. **Zero duplicate `*-room.glb` policy (100% original geometry, zero visual pop):**
+   - Visual playtesting showed that decimated `*-room.glb` swaps degraded silhouette/material fidelity (dull static GR701 fans/GPU replacing live Aura RGB, jarring close-up pop, lens/camp/sculpt normal distortion) while 4-zone frustum culling already keeps off-screen zones at 0 draws / 0 tris.
+   - Removed all 17 added `*-room.glb` duplicates and `pc-hero.bpk`, retaining only the repository's original unseen-interior splits (`mac-studio-m5-ultra-room.glb`, `rog-azoth-extreme-switches.glb`, `aurora-bottle-interior.glb`, `samsung-t7-interior.glb`, `prograde-card-detail`, `workshop-tools.bpk`, and `productDetail()`).
+   - Added zero-GLB code-level inner-optics culling in `src/scene/collection-vitrine.ts` (`innerOptics = productDetail()`) to hide unseen deep lens optics (entrance pupils, optical flock/baffles, inner coating layers `layer > 0`) at room distance and reveal them instantaneously on entering `collection-cabinet`.
+4. **Hybrid ETC1S / UASTC+Zstd KTX2 GPU textures (`toktx v4.4.2`):**
+   - Created `scripts/assets/encode-ktx2.mjs`, encoded **53 `.ktx2` textures** (`srgb` diffuse/photos/panoramas as ETC1S `--clevel 3 --qlevel 220`; `normal`/`linear` maps as UASTC `--uastc_quality 2 --uastc_rdo_l 1.2 --zcmp 18`; offline mipmaps; WebGL-correct Y orientation including `--upper_left_maps_to_s0t0` for `desk-portrait.webp`), cutting GPU texture VRAM from **307.24 MB → 76.85 MB (-230.39 MB / -75.0%)**.
+   - Bundled `basis_transcoder.{js,wasm}` via content-hashed `/media/basis/` with `KTX2Loader` (`src/scene/ktx2-loader.ts`), `image/ktx2` R2 MIME mapping, `?studio-ktx2=off` kill switch, and seamless automatic WebP/PNG fallback.
+
+### Measured final comparison (PR #10 baseline `fda7349` vs Phase 3 final zero-duplicate-GLB)
+
+| Metric (same build & desk route)                            | PR #10 Baseline (`fda7349`) | Phase 3 First-Screen (`before shaded`) | Phase 3 Settled (all 4 zones) |         Delta vs Baseline |
+| ----------------------------------------------------------- | --------------------------: | -------------------------------------: | ----------------------------: | ------------------------: |
+| Cold HTTP requests                                          |                         148 |                                 **81** |                            89 |       **-45.3%** (-39.9%) |
+| Cold model requests                                         |                          48 |                                  **5** |                            10 |       **-89.6%** (-79.2%) |
+| Cold wire transfer (MB)                                     |                       34.12 |                              **18.52** |                     **29.45** |       **-45.7%** (-13.7%) |
+| Cold models wire (MB)                                       |                       20.44 |                               **8.36** |                     **18.41** |        **-59.1%** (-9.9%) |
+| Warm repeat-visit wire / HTTP 304s                          |     revalidated (144 × 304) |                  **0.00 MB / 0 × 304** |         **0.00 MB / 0 × 304** | **87/88 disk cache hits** |
+| Warm `studio-input-ready` / `shaded` / `rearReady` (ms)     |                   — / 2,703 |              **1,363 / 2,190 / 2,835** |                             — |                **-19.0%** |
+| RTX 4090 4K steady FPS (Desk Day / Night / Bench / Cabinet) |          140.49 (desk warm) |      **142.1 / 143.3 / 144.0 / 144.0** |                             — |  **P50 6.9 / P95 7.0 ms** |
+| RTX 4090 4K main-color GPU P50 / P95 (Day / Night)          |              4.73 / 6.82 ms |   **5.28 / 6.43** · **5.30 / 6.33 ms** |                             — |   Full dynamic GR701 + Z8 |
+| Active desk draws / tris (4-zone culling)                   |                1,019 / 989k |                         **498 / 452k** |                             — |       **-51.1% / -54.3%** |
+| GPU texture VRAM (53 standalone textures)                   |                   307.24 MB |                           **76.85 MB** |                             — |     **-230.39 MB (-75%)** |
+| CI & targeted `@webgl` tests                                |                      passed |        **78 / 78 CI + 7 / 7 `@webgl`** |                             — |            **100% green** |
+
+### Production publish scope
+
+- **Live R2 & Vercel production publish:** Verified locally via `VITE_ASSET_BASE_URL=https://assets.felixpy.com/felix-studio/ npm run build` + `node scripts/deploy/r2-assets.mjs dist --check` and `tests/media-manifest.spec.ts` (confirming `public, max-age=31536000, immutable` on all hashed media/KTX2/WASM/fonts, `public, no-cache` on `media/credits.txt`, and strictly additive non-destructive R2 uploads for old-version coexistence and instant rollback). Actual production publish is handled separately.

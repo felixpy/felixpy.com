@@ -1,5 +1,6 @@
 import * as T from 'three';
 import { canvasTexture, surface } from './geometry';
+import { loadStudioTexture } from './ktx2-loader';
 
 function ashFinishes(albedo: T.Texture, normalMap: T.Texture, roughnessMap: T.Texture) {
   for (const map of [albedo, normalMap, roughnessMap]) {
@@ -40,16 +41,12 @@ export function plasterUV(geometry: T.BufferGeometry, origin: T.Vector3) {
 }
 
 export function materials(loader: T.TextureLoader) {
-  const loadColor = (source: string) => {
-    const texture = loader.load(source);
-    texture.colorSpace = T.SRGBColorSpace;
-    texture.anisotropy = 8;
-    return texture;
-  };
+  const loadColor = (source: string) =>
+    loadStudioTexture(loader, source, { srgb: true, anisotropy: 8 });
   const ash = ashFinishes(
     loadColor('/media/materials/ash-color.webp'),
-    loader.load('/media/materials/ash-normal.webp'),
-    loader.load('/media/materials/ash-roughness.webp'),
+    loadStudioTexture(loader, '/media/materials/ash-normal.webp', { srgb: false }),
+    loadStudioTexture(loader, '/media/materials/ash-roughness.webp', { srgb: false }),
   );
   const floor = ash.wood.clone();
   floor.roughness = 0.94;
@@ -61,16 +58,15 @@ export function materials(loader: T.TextureLoader) {
     map: upholsteryMap,
     roughness: 0.92,
   });
-  const micro = (name: string) => {
-    const tex = loader.load('/media/materials/' + name + '.webp');
-    tex.wrapS = tex.wrapT = T.RepeatWrapping;
-    tex.anisotropy = 8;
-    return tex;
-  };
+  const micro = (name: string, srgb = false) =>
+    loadStudioTexture(loader, '/media/materials/' + name + '.webp', {
+      srgb,
+      wrap: T.RepeatWrapping,
+      anisotropy: 8,
+    });
   function weave(name: 'carbon' | 'cloth') {
     const carbon = name === 'carbon';
-    const map = micro(name + '-weave');
-    map.colorSpace = T.SRGBColorSpace;
+    const map = micro(name + '-weave', true);
     return new T.MeshStandardMaterial({
       map,
       normalMap: micro(name + '-weave-normal'),

@@ -259,10 +259,9 @@ export function bookshelf(
   const lamps = luminous('#ffe9c5', 0.85);
   const lining = p.woodVertical.clone();
   lining.color.set('#a28b72');
-  const accent = new T.RectAreaLight('#ffddb3', 27, 0.01, height - 0.122);
-  accent.position.set(-width / 2 + 0.025, (height + 0.08) / 2, 0.153);
-  accent.rotation.y = -Math.PI * 0.49;
-  // Replaced in scene graph by emissive strip + Cycles Lightmap
+  const accent = new T.PointLight('#ffddb3', 0, 2.2, 1.6);
+  accent.position.set(-width / 2 + 0.14, (height + 0.08) / 2, 0.18);
+  unit.add(accent);
   for (const [i, y] of levels.entries()) {
     box(unit, [width, 0.025, 0.349], [0, y + 0.0015, -0.002], p.wood, 0.002);
     box(unit, [width - side, 0.033, 0.015], [0, y - 0.0025, 0.173], p.wood, 0.003);

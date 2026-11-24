@@ -22,7 +22,10 @@ import { assembleProducts, readProduct } from './static-product.mjs';
 
 const publicDirectory = resolve('public');
 const root = join(publicDirectory, 'media', 'models');
+const basisDirectory = resolve('node_modules', 'three', 'examples', 'jsm', 'libs', 'basis');
+const basisFiles = ['basis_transcoder.js', 'basis_transcoder.wasm'] as const;
 const unhashedPublicPaths = new Set(['/media/credits.txt']);
+const partLibraries: readonly PartLibrary[] = ['studio', 'workshop'];
 const roomFamilies = new Set([
   'aio',
   'amsterdam',
@@ -132,7 +135,7 @@ function deliveries() {
     else throw new Error('Assign Blender model to a room or workshop collection: ' + file);
   }
   if (libraries.workshop.length !== toolNames.size) throw new Error('Missing workshop tool mesh');
-  for (const collection of ['studio', 'workshop'] as const)
+  for (const collection of partLibraries)
     build.set(partLibraryPath(collection), () => pack(libraries[collection]));
   for (const zone of zoneBundleIds) {
     build.set(zoneBundlePath(zone) + '.gz', () => packZone(zone));
@@ -141,6 +144,9 @@ function deliveries() {
     build.set('/media/models/' + file + '.gz', () =>
       gzipSync(installedProduct(file, readFileSync(join(root, file))), { level: 9 }),
     );
+  }
+  for (const file of basisFiles) {
+    build.set('/media/basis/' + file, () => readFileSync(join(basisDirectory, file)));
   }
   return build;
 }
@@ -226,17 +232,21 @@ export function studioParts(assetBase = ''): {
           cache.delete('/media/models/' + relative(root, file).replaceAll('\\', '/') + '.gz');
           for (const zone of zoneBundleIds) cache.delete(zoneBundlePath(zone) + '.gz');
         } else {
-          cache.delete(partLibraryPath('studio'));
-          cache.delete(partLibraryPath('workshop'));
+          for (const collection of partLibraries) cache.delete(partLibraryPath(collection));
         }
       });
       server.middlewares.use((request, response, next) => {
         const url = request.url?.split('?')[0] ?? '';
-        if (!url.startsWith('/media/models/')) return next();
+        if (!url.startsWith('/media/models/') && !url.startsWith('/media/basis/')) return next();
         const build = (builds ??= deliveries()).get(url);
         if (!build) return next();
         if (!cache.has(url)) cache.set(url, build());
-        response.setHeader('Content-Type', 'application/octet-stream');
+        const contentType = url.endsWith('.js')
+          ? 'application/javascript; charset=utf-8'
+          : url.endsWith('.wasm')
+            ? 'application/wasm'
+            : 'application/octet-stream';
+        response.setHeader('Content-Type', contentType);
         response.end(cache.get(url));
       });
     },

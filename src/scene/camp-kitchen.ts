@@ -141,5 +141,6 @@ export function campKitchen(
       reflections.select(night, high);
       track.setPower(enabled);
     },
+    preloadReflections: reflections.preload,
   };
 }

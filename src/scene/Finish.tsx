@@ -39,6 +39,7 @@ export function Finish({
   night,
   firstFrame,
   progressiveStartup,
+  interacting,
 }: {
   enabled: boolean;
   look: RoomLook;
@@ -55,6 +56,7 @@ export function Finish({
   night: boolean;
   firstFrame: ReturnType<typeof roomFirstFrame>;
   progressiveStartup: boolean;
+  interacting: RefObject<boolean>;
 }) {
   const { gl, scene, camera, size, viewport, setDpr } = useThree();
   const device = useMemo(() => detectGraphicsProfile(gl.getContext()), [gl]);
@@ -119,6 +121,11 @@ export function Finish({
   const workbenchPreparation = useRef<ReturnType<typeof roomWarmup> | null>(null);
   const scannedRevision = useRef(-1);
   const sample = useRef({ frames: 0, slowFrames: 0, elapsed: 0, headroom: 0 });
+  const interactionDrs = useRef<{ active: boolean; restDpr: number; releasedAt: number }>({
+    active: false,
+    restDpr: 0,
+    releasedAt: 0,
+  });
 
   useEffect(() => {
     if (new URLSearchParams(location.search).get('studio-present-witness') !== 'roi') return;
@@ -248,7 +255,44 @@ export function Finish({
     }
     if (inComputer && !lookChanged && now - lastRoomFrame.current < 0.25) return;
     lastRoomFrame.current = now;
-    if (firstPicture.current === 'drawn' && !inComputer && !nativeLow && delta < 0.1) {
+    const isInteracting = interacting.current;
+    const drs = interactionDrs.current;
+    const allowInteractionDrs =
+      firstPicture.current === 'drawn' &&
+      enabled &&
+      !nativeLow &&
+      !inComputer &&
+      (device.appleSilicon || device.tier !== 'ultra');
+    if (allowInteractionDrs) {
+      if (isInteracting) {
+        drs.releasedAt = 0;
+        if (!drs.active && viewport.dpr > 1.2) {
+          drs.restDpr = viewport.dpr;
+          drs.active = true;
+          setDpr(Math.min(viewport.dpr, 1.125));
+        }
+      } else if (drs.active) {
+        const nowMs = performance.now();
+        if (!drs.releasedAt) drs.releasedAt = nowMs;
+        else if (nowMs - drs.releasedAt >= 160) {
+          drs.active = false;
+          drs.releasedAt = 0;
+          setDpr(drs.restDpr);
+        }
+      }
+    } else if (drs.active) {
+      drs.active = false;
+      drs.releasedAt = 0;
+      if (drs.restDpr > 0) setDpr(drs.restDpr);
+    }
+    if (
+      firstPicture.current === 'drawn' &&
+      !inComputer &&
+      !nativeLow &&
+      !drs.active &&
+      !isInteracting &&
+      delta < 0.1
+    ) {
       const timing = sample.current;
       timing.elapsed += delta;
       if (delta > 1 / 42) timing.slowFrames++;
@@ -316,7 +360,7 @@ export function Finish({
         preparation.current.scan();
         scannedRevision.current = detailRevision.current;
       }
-      if (!pacing) preparation.current.step(active?.beauty ?? null);
+      if (!pacing) preparation.current.step(active?.beauty ?? null, isInteracting);
     }
     if (firstPicture.current === 'preparing') {
       const parallel = gl.extensions.has('KHR_parallel_shader_compile');

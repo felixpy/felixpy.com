@@ -1,5 +1,4 @@
 import * as T from 'three';
-import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { box, cable, group, luminous, mesh, surface, tube } from './geometry';
 import type { Palette } from './materials';
 
@@ -36,13 +35,15 @@ export function acousticWall(
 }
 
 export function archiveLight(root: T.Group, p: Palette, north: number) {
-  RectAreaLightUniformsLib.init();
   const fixture = group(root, 'Brass archive light', [-0.18, 2.237, north]);
   const brass = p.bronze.clone();
   brass.color.set('#ad855a');
   brass.roughness = 0.35;
   const diffuser = luminous('#ffe1b2', 1.7);
-  const lamp = new T.RectAreaLight('#ffe5c7', 29, 0.727, 0.017);
+  const lamp = new T.SpotLight('#ffe5c7', 0, 1.9, 1.18, 0.88, 2);
+  lamp.name = 'Brass archive picture light';
+  lamp.position.set(0, 0.024, 0.152);
+  lamp.target.position.set(0, -0.42, -0.04);
   for (const x of [-0.219, 0.219]) {
     tube(fixture, [x, 0, 0.001], [x, 0, 0.015], 0.025, brass);
     tube(fixture, [x, 0, 0.016], [x, 0, 0.027], 0.012, brass);
@@ -65,9 +66,7 @@ export function archiveLight(root: T.Group, p: Palette, north: number) {
   for (const x of [-0.232, 0.232])
     tube(fixture, [x - 0.004, 0.038, 0.159], [x + 0.004, 0.038, 0.159], 0.015, brass);
   box(fixture, [0.731, 0.003, 0.016], [0, 0.025, 0.157], diffuser, 0.001);
-  lamp.position.set(0, 0.024, 0.152);
-  lamp.rotation.x = -1.13;
-  // Replaced in scene graph by Cycles multi-channel Lightmap (R channel); retain light object for state/tests
+  fixture.add(lamp, lamp.target);
   return { fixture, lamp, diffuser };
 }
 

@@ -1,5 +1,6 @@
 import * as T from 'three';
 import { box, cable, canvasTexture, group, surface, tube } from './geometry';
+import { loadStudioTexture } from './ktx2-loader';
 import type { Palette } from './materials';
 
 type Dimensions = { left: number; right: number; front: number; back: number; top: number };
@@ -9,13 +10,13 @@ function oakWorktop(
   loader: T.TextureLoader,
   { left, right, front, back, top }: Dimensions,
 ) {
-  const maps = ['color', 'normal', 'roughness'].map((channel) => {
-    const texture = loader.load(`/media/materials/desk-oak-${channel}.webp`);
-    texture.wrapS = texture.wrapT = T.RepeatWrapping;
-    texture.anisotropy = 8;
-    return texture;
-  });
-  maps[0].colorSpace = T.SRGBColorSpace;
+  const maps = ['color', 'normal', 'roughness'].map((channel) =>
+    loadStudioTexture(loader, `/media/materials/desk-oak-${channel}.webp`, {
+      srgb: channel === 'color',
+      wrap: T.RepeatWrapping,
+      anisotropy: 8,
+    }),
+  );
   const oak = new T.MeshStandardMaterial({
     map: maps[0],
     normalMap: maps[1],

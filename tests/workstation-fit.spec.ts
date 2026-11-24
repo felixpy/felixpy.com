@@ -16,6 +16,7 @@ test('the workstation OLEDs cover their operating ranges with gradual changes', 
 test('the processor, memory, GPU support and power harness fit their workstation interfaces', async ({
   page,
 }) => {
+  await page.route('**/zone-desk.glb.gz', (route) => route.abort());
   await page.goto('/media/credits.txt');
   const fit = await page.evaluate(async () => {
     const scenePath = '/src/scene/';

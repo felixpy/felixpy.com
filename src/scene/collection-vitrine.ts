@@ -104,6 +104,11 @@ export function collectionVitrine(
   deferRoomDetail(spots.load);
   const finishes = new Map<T.Material, T.Material>();
   const assembledLens = productDetail();
+  const innerOptics = productDetail();
+  const hideInnerOptic = (part: T.Mesh) => {
+    part.userData.studioWarmable = true;
+    innerOptics.close(part);
+  };
   const behindRearCap = new Set([
     'Z14-24 · plated CPU contacts',
     'Telephoto Z mount · plated contacts',
@@ -191,6 +196,7 @@ export function collectionVitrine(
               );
           };
           part.castShadow = part.receiveShadow = false;
+          hideInnerOptic(part);
           return;
         }
         if (
@@ -205,6 +211,7 @@ export function collectionVitrine(
           finishes.set(source, stop);
           part.material = stop;
           part.castShadow = false;
+          hideInnerOptic(part);
           return;
         }
         if (
@@ -226,6 +233,7 @@ export function collectionVitrine(
             };
             finishes.set(source, source);
           }
+          hideInnerOptic(part);
           return;
         }
         if (Array.isArray(source) || !source.name.startsWith('NIKKOR glass')) return;
@@ -308,6 +316,7 @@ export function collectionVitrine(
         part.material = finish;
         part.renderOrder = layer + 1;
         part.receiveShadow = part.castShadow = false;
+        if (layer > 0) hideInnerOptic(part);
       },
     }),
   );
@@ -317,5 +326,9 @@ export function collectionVitrine(
       mounted: (scene) => scene.traverse(spots.illuminate),
     }),
   );
-  return { unit, lightPower: spots.power };
+  return {
+    unit,
+    lightPower: spots.power,
+    selectDetail: innerOptics.select,
+  };
 }

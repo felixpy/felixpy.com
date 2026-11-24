@@ -1,5 +1,6 @@
 import * as T from 'three';
 import { createStudioLoadingManager, defaultStudioLoadingManager } from './asset-loading';
+import { loadStudioTexture } from './ktx2-loader';
 import { initialEnvironment, type Environment } from '../app/environment';
 import { ceilingLightLevel } from '../app/home-lights';
 import { publicProfiles } from '../content/profile';
@@ -112,10 +113,14 @@ export function* buildStudioSteps(
     typeof createImageBitmap === 'function' &&
     new URLSearchParams(location.search).get('studio-images') === 'bitmap';
   const photo = (src: string, useBitmap = false) => {
-    const texture = bitmapTextures && useBitmap ? loadBitmapTexture(loader, src) : loader.load(src);
-    texture.colorSpace = T.SRGBColorSpace;
-    texture.anisotropy = 8;
-    return texture;
+    const isLinear = src.endsWith('cork-grain.webp');
+    if (bitmapTextures && useBitmap) {
+      const texture = loadBitmapTexture(loader, src);
+      texture.colorSpace = isLinear ? T.NoColorSpace : T.SRGBColorSpace;
+      texture.anisotropy = 8;
+      return texture;
+    }
+    return loadStudioTexture(loader, src, { srgb: !isLinear, anisotropy: 8 });
   };
   const atlas = photo('/media/photography/travel-prints.webp', true);
   const hometown = photo('/media/photography/fanjingshan-print.webp', true);
@@ -242,21 +247,15 @@ export function* buildStudioSteps(
   const skog = skogDiffuser(interior, [-1.085, 1.31, 2.951], rearLoader, deferDesk);
   const proof = flightProof(interior, p);
   yield;
-  const authoring =
-    import.meta.env.DEV &&
-    typeof location !== 'undefined' &&
-    new URLSearchParams(location.search).get('review') === 'authoring';
-  const useRoomLod = !authoring && !preloadInspection;
   const {
     unit: pc,
     updateLightGuide,
     updateTelemetry,
     setComponentLights,
     selectDetail: selectTowerDetail,
-    refreshRoomLod: refreshTowerRoomLod,
     fanGuides,
     reflections,
-  } = tower(interior, p, aura, manager, { roomLod: useRoomLod, mounted: detailMounted });
+  } = tower(interior, p, aura, manager);
   yield;
   const channelHues = [0.926, 0.815, 0.727, 0.669, 0.614, 0.558, 0.526];
   const fans: T.Object3D[] = [];
@@ -270,7 +269,8 @@ export function* buildStudioSteps(
     prepareSwitches,
     evictSwitches,
     selectDetail: selectKeySwitches,
-  } = keyboard(interior, manager, keyLight, detailMounted, { roomLod: useRoomLod });
+    preloadHero: preloadKeyboardHero,
+  } = keyboard(interior, manager, keyLight, detailMounted);
   if (preloadInspection) {
     deferDesk(() => prepareMacDetail(rearLoader));
     deferDesk(() => prepareSwitches(rearLoader));
@@ -291,10 +291,7 @@ export function* buildStudioSteps(
   const pencil = group(interior, 'Mitsubishi 9850 HB', [0.344, desk.top, 0.313]);
   pencil.rotation.y = Math.PI / 2 - 0.18;
   loadDisplayModel(pencil, '/media/models/mitsubishi-9850.glb', manager);
-  const deskCamera = nikonZ8(interior, p, bridgePrint, manager, {
-    roomLod: useRoomLod,
-    mounted: detailMounted,
-  });
+  const deskCamera = nikonZ8(interior, p, bridgePrint, manager);
   yield;
   const samplePrint = photoPrinter(
     bench.unit,
@@ -951,12 +948,12 @@ export function* buildStudioSteps(
   ])
     zoneCuller.register('east-workshop', node);
   for (const node of [rearWall, floorLamp.unit, skog]) zoneCuller.register('south-rear', node);
-  const hemisphere = new T.HemisphereLight('#dce7f0', '#a89883', 0.18);
+  const hemisphere = new T.HemisphereLight('#dce7f0', '#a89883', 0.25);
   const { wall, z0, z1, y0, y1 } = windowOpening;
-  const aperture = new T.RectAreaLight('#c6dfef', 2, z1 - z0 - 0.074, y1 - y0 - 0.073);
+  const aperture = new T.SpotLight('#c6dfef', 0, 7.2, Math.PI * 0.46, 0.92, 1.25);
   aperture.name = 'Sky through the west window';
-  aperture.position.set(wall - 0.13, (y0 + y1) / 2, (z0 + z1) / 2);
-  aperture.rotation.y = -Math.PI / 2;
+  aperture.position.set(wall - 0.65, (y0 + y1) / 2 + 0.14, (z0 + z1) / 2);
+  aperture.target.position.set(0.95, 1.05, (z0 + z1) / 2);
   const windowLight = new T.DirectionalLight('#6eabff', 1.25);
   windowLight.position.set(-3.4, 2.93, 1.86);
   windowLight.target.position.set(0.4, 1.08, -0.33);
@@ -998,17 +995,27 @@ export function* buildStudioSteps(
   ceiling.outlet.getWorldPosition(upper.position);
   upper.target.position.copy(upper.position);
   upper.target.position.y -= 1;
-  upper.castShadow = false;
+  upper.castShadow = true;
   upper.shadow.mapSize.set(1024, 1024);
   upper.shadow.normalBias = 0.003;
   upper.shadow.radius = 5.5;
   upper.shadow.intensity = 0.48;
-  const screenFill = new T.RectAreaLight('#c3d9ef', 1.75, display.width, display.height);
-  screenFill.position.set(display.x, display.y, display.z + 0.016);
-  screenFill.rotation.y = Math.PI;
-  root.add(hemisphere, windowLight, windowLight.target, warm, warm.target, upper, upper.target);
+  const screenFill = new T.PointLight('#c3d9ef', 0.45, 2.2, 1.8);
+  screenFill.position.set(display.x, display.y - 0.02, display.z + 0.22);
+  root.add(
+    hemisphere,
+    windowLight,
+    windowLight.target,
+    aperture,
+    aperture.target,
+    warm,
+    warm.target,
+    upper,
+    upper.target,
+    screenFill,
+  );
   const benchLight = new T.SpotLight('#ffe9cd', 2.7, 1.85, 1.13, 0.76, 2);
-  benchLight.castShadow = false;
+  benchLight.castShadow = true;
   benchLight.shadow.mapSize.set(512, 512);
   benchLight.shadow.camera.near = 0.045;
   benchLight.shadow.camera.far = 1.85;
@@ -1045,7 +1052,16 @@ export function* buildStudioSteps(
     gearWall: fieldGear.zone,
     pickRoots: [interior, window.unit],
     zoneCuller,
-    refreshTowerRoomLod,
+    preloadFixtureReflections() {
+      floorLamp.preload();
+      fieldGear.preloadReflections();
+    },
+    preloadHero(id: string) {
+      if (id === 'keyboard') preloadKeyboardHero();
+      else if (id === 'mac-studio') void prepareMacDetail(rearLoader);
+      else if (id === 'collection-cabinet') void rear.prepare('cabinet');
+      else if (id === 'equipment-wall') void rear.prepare('gear');
+    },
     evictHero(id: string) {
       if (id === 'keyboard') evictSwitches();
       else if (id === 'travel-map' && atlasDetailOnInspect) disposeAtlasDetail();
@@ -1077,7 +1093,7 @@ export function* buildStudioSteps(
       screenBar: screenBar.deskWash.intensity,
       wallLamp: fieldGear.track.spots[0].intensity,
       caseLighting: aura[0].emissiveIntensity,
-      pictureLamp: architectureParts.pictureLight.lamp.intensity,
+      pictureLamp: architectureParts.pictureLight.lamp.intensity * 18,
       displayCabinet: vitrine.lightPower.value,
       toolBoardLamp: bench.boardLight.wash.intensity,
       benchLamp: benchLight.intensity,
@@ -1164,12 +1180,14 @@ export function* buildStudioSteps(
       closeWindow = false,
     ) {
       selectTowerDetail(inspectedHardware === 'case');
+      vitrine.selectDetail(inspectedHardware === 'collection-cabinet');
       fieldGear.updateLanternPort();
       fieldGear.bottleClosure.update();
       selectMacDetail(
         inspectedHardware === 'mac-studio' && (env.quality === 'high' || fullInspection),
       );
-      printer.update(delta, env.reducedMotion, env.locale, camera);
+      const benchVisible = atWorkbench || zoneCuller.isZoneVisible('east-workshop');
+      if (benchVisible) printer.update(delta, env.reducedMotion, env.locale, camera);
       if (env.locale !== printLocale) {
         printLocale = env.locale;
         setBoardLocale(printLocale);
@@ -1187,10 +1205,16 @@ export function* buildStudioSteps(
       const ease = env.reducedMotion ? 1 : 1 - Math.exp(-delta * 5);
       const dim = (current: number, goal: number) =>
         Math.abs(current - goal) < 0.0001 ? goal : T.MathUtils.lerp(current, goal, ease);
-      updateSteam(env.reducedMotion ? 1 : clock);
-      updateDisplay(env.locale, env.reducedMotion ? 0 : clock);
-      updateTelemetry(clock, fullInspection && env.quality === 'low');
-      updatePhone(env.locale);
+      const deskVisible =
+        zoneCuller.isZoneVisible('desk') ||
+        inspectedHardware === 'case' ||
+        inspectedHardware === 'mac-studio';
+      if (deskVisible) {
+        updateSteam(env.reducedMotion ? 1 : clock);
+        updateDisplay(env.locale, env.reducedMotion ? 0 : clock);
+        updateTelemetry(clock, fullInspection && env.quality === 'low');
+        updatePhone(env.locale);
+      }
       const phase = env.reducedMotion ? 0 : Math.sin(clock * 0.16) * 0.036;
       for (const [i, source] of aura.entries()) {
         source.emissive.setHSL(channelHues[i] + phase, 0.92, 0.64, T.SRGBColorSpace);
@@ -1249,12 +1273,12 @@ export function* buildStudioSteps(
       aperture.color.lerp(env.night ? night : cloudy, ease);
       aperture.intensity = dim(
         aperture.intensity,
-        (env.night ? 0.95 : env.weather === '晴' ? 8.5 : env.weather === '雨' ? 5.2 : 7.1) *
+        (env.night ? 0.55 : env.weather === '晴' ? 5.6 : env.weather === '雨' ? 3.5 : 4.8) *
           (1 - blocked * 0.9),
       );
       hemisphere.intensity = dim(
         hemisphere.intensity,
-        env.night ? 0.035 : 0.18 * (1 - blocked * 0.7),
+        env.night ? 0.045 : 0.25 * (1 - blocked * 0.7),
       );
       warm.intensity = dim(warm.intensity, env.lamp ? 7.1 : 0);
       task.emitter.emissiveIntensity = dim(task.emitter.emissiveIntensity, env.lamp ? 3.2 : 0.03);
@@ -1282,14 +1306,14 @@ export function* buildStudioSteps(
       upper.intensity = dim(upper.intensity, practicals * (usePanelLights ? 3.1 : 4.4));
       architectureParts.pictureLight.lamp.intensity = dim(
         architectureParts.pictureLight.lamp.intensity,
-        pictureLevel * 58,
+        pictureLevel * 3.4,
       );
       architectureParts.pictureLight.diffuser.emissiveIntensity = dim(
         architectureParts.pictureLight.diffuser.emissiveIntensity,
         pictureLevel * 2.4,
       );
       shelfLamps.emissiveIntensity = dim(shelfLamps.emissiveIntensity, practicals * 2.5);
-      shelfAccent.intensity = dim(shelfAccent.intensity, practicals * 49);
+      shelfAccent.intensity = dim(shelfAccent.intensity, practicals * 0.9);
       ceiling.opal.emissiveIntensity = dim(ceiling.opal.emissiveIntensity, practicals * 2.4);
       ceiling.halo.emissiveIntensity = dim(ceiling.halo.emissiveIntensity, practicals * 1.6);
       ceiling.reflector.emissiveIntensity = dim(
