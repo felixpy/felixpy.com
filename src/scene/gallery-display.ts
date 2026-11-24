@@ -1,11 +1,12 @@
 import * as T from 'three';
+import { assetUrl } from '../app/asset-url';
 import { canvasTexture, group, mesh, surface } from './geometry';
 import type { Palette } from './materials';
 
 import { hexcalStudio } from './hexcal-studio';
 import { desk, deskSetup } from './layout';
 import { blenderMesh } from './blender-mesh';
-import { loadDisplayModel } from './display-model';
+import { deferredDisplayModel, loadDisplayModel } from './display-model';
 
 function fittedParts(parent: T.Group, name: string, finishes: Record<string, T.Material>) {
   for (const [key, material] of Object.entries(finishes))
@@ -113,7 +114,15 @@ export function galleryDisplay(
   manager: T.LoadingManager,
   deskParent: T.Object3D,
 ) {
-  void loadDisplayModel(tv, '/media/models/lg-oled-g6.glb', manager);
+  const authoring =
+    import.meta.env.DEV &&
+    typeof location !== 'undefined' &&
+    new URLSearchParams(location.search).get('review') === 'authoring';
+  void loadDisplayModel(
+    tv,
+    authoring ? '/media/models/lg-oled-g6.glb' : '/media/models/lg-oled-g6-room.glb',
+    manager,
+  );
   const surfaceHeight = desk.top - centerHeight;
   const shelf = group(tv, 'Hexcal Studio', [0, surfaceHeight, 0.067]);
   hexcalStudio(shelf, manager);
@@ -121,11 +130,43 @@ export function galleryDisplay(
   const pivotHeight = 0.014;
   const codexMicro = group(deskParent, 'Codex Micro', [pad.x, desk.top + pivotHeight, pad.z]);
   codexMicro.rotation.y = pad.yaw;
-  void loadDisplayModel(codexMicro, '/media/models/codex-micro.glb', manager, {
-    mounted(scene) {
-      scene.position.y -= pivotHeight;
-    },
-  });
+  if (authoring) {
+    void loadDisplayModel(codexMicro, '/media/models/codex-micro.glb', manager, {
+      mounted(scene) {
+        scene.position.y -= pivotHeight;
+      },
+    });
+  } else {
+    const codexRoom = group(codexMicro, 'Codex Micro room LOD');
+    const codexHero = group(codexMicro, 'Codex Micro hero detail');
+    codexHero.visible = false;
+    let heroReady = false;
+    let inspecting = false;
+    const syncCodex = () => {
+      codexHero.visible = inspecting && heroReady;
+      codexRoom.visible = !codexHero.visible;
+    };
+    const loadCodexHero = deferredDisplayModel(codexHero, '/media/models/codex-micro.glb', {
+      mounted(scene) {
+        scene.position.y -= pivotHeight;
+        heroReady = true;
+        syncCodex();
+      },
+    });
+    void loadDisplayModel(codexRoom, '/media/models/codex-micro-room.glb', manager, {
+      mounted(scene) {
+        scene.position.y -= pivotHeight;
+      },
+    });
+    codexMicro.userData.preloadDetail = () => {
+      if (!heroReady) void loadCodexHero(new T.LoadingManager().setURLModifier(assetUrl));
+    };
+    codexMicro.userData.selectDetail = (active: boolean) => {
+      inspecting = active;
+      if (active && !heroReady) void loadCodexHero(new T.LoadingManager().setURLModifier(assetUrl));
+      syncCodex();
+    };
+  }
   const titanium = surface('#807c74', 0.34, 0.82);
   const { arm, strip, bias, deskWash, wallWash } = monitorLight(tv, p, height / 2, titanium);
   const { lightController } = deskSetup;

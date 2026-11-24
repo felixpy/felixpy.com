@@ -585,29 +585,79 @@ export function keyboard(
   };
 }
 
-export function mouse(parent: T.Object3D, manager: T.LoadingManager, glow: T.MeshStandardMaterial) {
+export function mouse(
+  parent: T.Object3D,
+  manager: T.LoadingManager,
+  glow: T.MeshStandardMaterial,
+  options: { roomLod?: boolean; mounted?: (scene: T.Group) => void } = {},
+) {
   const unit = group(parent, 'Wireless mouse', [
     display.x + 0.36,
     deskSetup.mat.top,
     deskSetup.inputZ,
   ]);
   const badge = glow.clone();
-  loadDisplayModel(unit, '/media/models/rog-harpe-extreme.glb', manager, {
-    mesh(part) {
-      if (!(part.material instanceof T.Material)) return;
-      const guide =
-        part.material.name === 'Harpe wheel light'
-          ? glow
-          : part.material.name === 'Harpe palm light guide'
-            ? badge
-            : undefined;
-      if (guide) {
-        part.material.dispose();
-        part.material = guide;
-      }
+  const applyMouseMaterial = (part: T.Mesh) => {
+    if (!(part.material instanceof T.Material)) return;
+    const guide =
+      part.material.name === 'Harpe wheel light'
+        ? glow
+        : part.material.name === 'Harpe palm light guide'
+          ? badge
+          : undefined;
+    if (guide) {
+      part.material.dispose();
+      part.material = guide;
+    }
+  };
+  const authoring =
+    import.meta.env.DEV &&
+    typeof location !== 'undefined' &&
+    new URLSearchParams(location.search).get('review') === 'authoring';
+  const useRoomLod = Boolean(options.roomLod && !authoring);
+  if (!useRoomLod) {
+    loadDisplayModel(unit, '/media/models/rog-harpe-extreme.glb', manager, {
+      mesh: applyMouseMaterial,
+    });
+    return {
+      unit,
+      badge,
+      selectDetail(_active: boolean) {},
+      preloadHero() {},
+    };
+  }
+  const roomGroup = group(unit, 'Harpe room LOD');
+  const heroGroup = group(unit, 'Harpe hero detail');
+  heroGroup.visible = false;
+  let heroReady = false;
+  let inspecting = false;
+  const sync = () => {
+    heroGroup.visible = inspecting && heroReady;
+    roomGroup.visible = !heroGroup.visible;
+  };
+  const loadHero = deferredDisplayModel(heroGroup, '/media/models/rog-harpe-extreme.glb', {
+    mesh: applyMouseMaterial,
+    mounted(scene) {
+      heroReady = true;
+      sync();
+      options.mounted?.(scene);
     },
   });
-  return { unit, badge };
+  void loadDisplayModel(roomGroup, '/media/models/rog-harpe-extreme-room.glb', manager, {
+    mesh: applyMouseMaterial,
+  });
+  return {
+    unit,
+    badge,
+    selectDetail(active: boolean) {
+      inspecting = active;
+      if (active && !heroReady) void loadHero(new T.LoadingManager().setURLModifier(assetUrl));
+      sync();
+    },
+    preloadHero() {
+      if (!heroReady) void loadHero(new T.LoadingManager().setURLModifier(assetUrl));
+    },
+  };
 }
 
 export function speaker(parent: T.Object3D, p: Palette, side: -1 | 1, meter: T.Material[]) {
