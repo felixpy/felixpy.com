@@ -1,5 +1,6 @@
 import * as T from 'three';
 import { fixtureReflections } from './fixture-reflections';
+import { loadStudioTexture } from './ktx2-loader';
 import { blenderMesh } from './blender-mesh';
 import { group, luminous, mesh, surface, type XYZ } from './geometry';
 import ceilingLayout from './ceiling-light-layout.json';
@@ -29,12 +30,14 @@ export function deskFixture(
   loader: T.TextureLoader,
 ) {
   const map = loader.load('/media/materials/solarcycle-grille.png');
-  const normal = loader.load('/media/materials/solarcycle-grille-normal.png');
+  const normal = loadStudioTexture(loader, '/media/materials/solarcycle-grille-normal.png', {
+    srgb: false,
+    wrap: T.RepeatWrapping,
+    anisotropy: 4,
+  });
   map.colorSpace = T.SRGBColorSpace;
-  for (const texture of [map, normal]) {
-    texture.wrapS = texture.wrapT = T.RepeatWrapping;
-    texture.anisotropy = 4;
-  }
+  map.wrapS = map.wrapT = T.RepeatWrapping;
+  map.anisotropy = 4;
   const emitter = luminous('#ffebcc', 1.2);
   const unit = assemble(parent, 'solarcycle', 'Dyson Solarcycle Morph Desk · CD06', position, {
     alloy: surface('#b6b8b5', 0.29, 0.87),
@@ -66,9 +69,11 @@ export function workbenchFixture(
   loader: T.TextureLoader,
 ) {
   const emitter = luminous('#fff0d9', 1.2);
-  const grain = loader.load('/media/materials/tolomeo-axial-grain.png');
-  grain.wrapS = grain.wrapT = T.RepeatWrapping;
-  grain.anisotropy = 4;
+  const grain = loadStudioTexture(loader, '/media/materials/tolomeo-axial-grain.png', {
+    srgb: false,
+    wrap: T.RepeatWrapping,
+    anisotropy: 4,
+  });
   const finishes = {
     alloy: surface('#c5c8c5', 0.25, 0.96),
     extrusion: new T.MeshStandardMaterial({
