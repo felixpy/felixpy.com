@@ -23,6 +23,7 @@ import { assembleProducts, readProduct } from './static-product.mjs';
 const publicDirectory = resolve('public');
 const root = join(publicDirectory, 'media', 'models');
 const unhashedPublicPaths = new Set(['/media/credits.txt']);
+const partLibraries: readonly PartLibrary[] = ['studio', 'workshop', 'pc-hero'];
 const roomFamilies = new Set([
   'aio',
   'amsterdam',
@@ -46,7 +47,37 @@ const roomCollections = new Set([
   'ryuo-mf12c',
   'stationery',
 ]);
+const pcHeroFamilies = new Set(['aio', 'astral', 'atx', 'eps', 'ryuo', 'strix']);
+const pcHeroCollections = new Set(['ryuo-mf12c']);
+const pcRoomLiveParts = new Set([
+  'astral-impeller-shell',
+  'ryuo-mf12c/medallion',
+  'ryuo-mf12c/rotor-foil',
+  'ryuo-mf12c/vanes',
+  'strix-fan-graphite',
+  'strix-fan-opal',
+  'strix-fan-white',
+]);
+const pcHeroExplicitParts = new Set([
+  'gr701-cable-bay-contact',
+  'gr701-cable-bay-drive',
+  'gr701-cable-bay-polymer',
+  'gr701-cable-bay-print',
+  'gr701-cable-bay-smoke',
+  'gr701-cable-bay-steel',
+  'gr701-cable-bay-wire',
+  'gr701-rail',
+  'thor-1600-pixels',
+]);
 const toolNames = new Set<string>(Object.values(workshopToolParts));
+
+function isPcHeroPart(name: string) {
+  if (pcRoomLiveParts.has(name)) return false;
+  if (pcHeroExplicitParts.has(name)) return true;
+  return name.includes('/')
+    ? pcHeroCollections.has(name.split('/')[0])
+    : pcHeroFamilies.has(name.split('-')[0]);
+}
 
 function shortHash(bytes: Buffer) {
   return createHash('sha256').update(bytes).digest('hex').slice(0, 10);
@@ -119,10 +150,11 @@ function packZone(zone: ZoneBundleId) {
 
 function deliveries() {
   const build = new Map<string, () => Buffer>();
-  const libraries: Record<PartLibrary, string[]> = { studio: [], workshop: [] };
+  const libraries: Record<PartLibrary, string[]> = { studio: [], workshop: [], 'pc-hero': [] };
   for (const file of modelFiles('.mesh')) {
     const name = file.slice(0, -5);
     if (toolNames.has(name)) libraries.workshop.push(file);
+    else if (isPcHeroPart(name)) libraries['pc-hero'].push(file);
     else if (
       name.includes('/')
         ? roomCollections.has(name.split('/')[0])
@@ -132,7 +164,8 @@ function deliveries() {
     else throw new Error('Assign Blender model to a room or workshop collection: ' + file);
   }
   if (libraries.workshop.length !== toolNames.size) throw new Error('Missing workshop tool mesh');
-  for (const collection of ['studio', 'workshop'] as const)
+  if (!libraries['pc-hero'].length) throw new Error('Missing PC hero mesh');
+  for (const collection of partLibraries)
     build.set(partLibraryPath(collection), () => pack(libraries[collection]));
   for (const zone of zoneBundleIds) {
     build.set(zoneBundlePath(zone) + '.gz', () => packZone(zone));
@@ -226,8 +259,7 @@ export function studioParts(assetBase = ''): {
           cache.delete('/media/models/' + relative(root, file).replaceAll('\\', '/') + '.gz');
           for (const zone of zoneBundleIds) cache.delete(zoneBundlePath(zone) + '.gz');
         } else {
-          cache.delete(partLibraryPath('studio'));
-          cache.delete(partLibraryPath('workshop'));
+          for (const collection of partLibraries) cache.delete(partLibraryPath(collection));
         }
       });
       server.middlewares.use((request, response, next) => {

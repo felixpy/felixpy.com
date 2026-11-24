@@ -15,7 +15,7 @@ test('both coolant sleeves carry Aura from pump to radiator and respect reduced 
         typeof import('../src/scene/blender-library')
       >,
     ]);
-    await loadParts('studio');
+    await Promise.all([loadParts('studio'), loadParts('pc-hero')]);
     const manager = new T.LoadingManager();
     const aura = Array.from({ length: 7 }, () => new T.MeshStandardMaterial());
     const pc = tower(new T.Group(), materials(new T.TextureLoader(manager)), aura, manager);

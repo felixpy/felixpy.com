@@ -1,5 +1,5 @@
 import * as T from 'three';
-import { canvasTexture, group, mesh, surface, type XYZ } from './geometry';
+import { canvasTexture, group, mesh, surface, tube, type XYZ } from './geometry';
 import { assetUrl } from '../app/asset-url';
 import type { Locale } from '../app/locale';
 import type { Palette } from './materials';
@@ -15,6 +15,9 @@ import { pcReadings } from './pc-telemetry';
 import { productDetail } from './product-detail';
 import { nearfieldSpeaker } from './nearfield-speaker';
 import { blenderMesh } from './blender-mesh';
+import { hasParts, loadParts } from './blender-library';
+import { partLibraryPath } from './blender-parts';
+import { rogEye } from './rog-mark';
 import { caseReflections } from './case-reflections';
 import { caseComponentLights } from './case-component-lights';
 import { oledWallpaper } from './oled-wallpaper';
@@ -67,31 +70,78 @@ export function monitor(parent: T.Object3D, p: Palette, manager: T.LoadingManage
   return { screen, updateDisplay, screenBar, codexMicro };
 }
 
-function chassisFan(
+function chassisFanRotor(
   parent: T.Object3D,
   position: XYZ,
   p: Palette,
   bladeMaterial: T.MeshStandardMaterial,
   rotorParts: readonly T.BufferGeometry[],
   label: T.Material,
-  frame: readonly { geometry: T.BufferGeometry; material: T.Material; finish: string }[],
-  exhaust: boolean,
 ) {
   const unit = group(parent, 'ROG Strix Fan Model 14 ARGB', position);
-  for (const { geometry, material, finish } of frame) {
-    const item = mesh(unit, geometry, material);
-    item.name = 'Model 14 stationary frame · ' + finish;
-    if (exhaust && finish === 'screws') {
-      item.rotation.x = Math.PI;
-      item.position.z = -0.011;
-    }
-  }
   const rotor = group(unit, 'Fan rotor');
   mesh(rotor, rotorParts[0], bladeMaterial);
   mesh(rotor, rotorParts[1], bladeMaterial);
   mesh(rotor, rotorParts[2], p.graphite);
   mesh(rotor, new T.PlaneGeometry(0.03, 0.008), label, [0, 0, 0.00887]).castShadow = false;
   return unit;
+}
+
+function mountChassisFanFrames(fans: readonly { unit: T.Group; exhaust: boolean }[]) {
+  const frameMaterials = {
+    nylon: surface('#2a2b2f', 0.51),
+    satin: surface('#3c3e42', 0.37, 0.09),
+    label: surface('#222428', 0.48, 0.05),
+    ink: surface('#cbd0d0', 0.49, 0.15),
+    screws: surface('#45454a', 0.37, 0.78),
+  };
+  const frame = Object.entries(frameMaterials).map(([finish, material]) => ({
+    geometry: blenderMesh('strix-140-' + finish),
+    material,
+    finish,
+  }));
+  for (const { unit, exhaust } of fans) {
+    for (const { geometry, material, finish } of frame) {
+      const item = mesh(unit, geometry, material);
+      item.name = 'Model 14 stationary frame · ' + finish;
+      if (exhaust && finish === 'screws') {
+        item.rotation.x = Math.PI;
+        item.position.z = -0.011;
+      }
+    }
+  }
+}
+
+function createRoomGpuRotors(parent: T.Object3D, p: Palette) {
+  const rotors = group(parent, 'ROG Astral room fan rotors', [0.004 - 0.0047, -0.008, -0.1236]);
+  rotors.scale.x = 0.936;
+  const impeller = blenderMesh('astral-impeller-shell');
+  const polymer = surface('#44464a', 0.38, 0.17);
+  const mark = new T.MeshStandardMaterial({
+    map: rogEye('lit'),
+    color: '#bebbb5',
+    roughness: 0.43,
+    alphaTest: 0.4,
+  });
+  const addRotor = (mount: T.Group, counterRotating = false) => {
+    if (counterRotating) mount.scale.x = -1;
+    const rotor = group(mount, 'Fan rotor');
+    mesh(rotor, impeller, polymer).name = 'Axial-tech cambered blades and rotating tip ring';
+    tube(rotor, [0, 0, -0.0025], [0, 0, 0.006], 0.018, p.graphite, 0.0168);
+    mesh(rotor, new T.TorusGeometry(0.0168, 0.00058, 5, 48), p.steel, [0, 0, 0.006]);
+    const eye = mesh(rotor, new T.PlaneGeometry(0.026, 0.015), mark, [0, 0, 0.00634]);
+    eye.scale.x = counterRotating ? -1 : 1;
+    eye.castShadow = false;
+  };
+  for (const [index, z] of ([-0.116, 0, 0.116] as const).entries()) {
+    const intake = group(rotors, 'Axial-tech room intake ' + (index + 1), [0, -0.033, z]);
+    intake.rotation.x = Math.PI / 2;
+    addRotor(intake, index === 1);
+  }
+  const reverse = group(rotors, 'Fourth room pass-through fan', [0, 0.033, 0.116]);
+  reverse.rotation.x = -Math.PI / 2;
+  addRotor(reverse);
+  return rotors;
 }
 
 const LIVE_TOWER_MESH_NAMES = new Set([
@@ -116,6 +166,9 @@ function isInsideNamedAncestor(
 function isLiveTowerMesh(part: T.Mesh, towerRoot: T.Object3D): boolean {
   if (LIVE_TOWER_MESH_NAMES.has(part.name)) return true;
   if (isInsideNamedAncestor(part, 'ROG Hyperion GR701 chassis', towerRoot)) return true;
+  if (isInsideNamedAncestor(part, 'ROG Astral GeForce RTX 5090 · PCIe 5.0 slot', towerRoot)) {
+    return false;
+  }
   if (isInsideNamedAncestor(part, 'Fan rotor', towerRoot)) return true;
   if (
     isInsideNamedAncestor(part, 'ROG Ryuo IV · curved 6.67-inch AMOLED and cold plate', towerRoot)
@@ -141,36 +194,28 @@ export function tower(
   options: TowerOptions = {},
 ) {
   const details = productDetail();
-  const { unit, updateLightGuide, showPower, accents } = workstationCase(
-    parent,
-    p,
-    aura,
-    manager,
-    details,
-  );
-  const { registerLight, setComponentLights } = caseComponentLights(unit, accents);
   const authoring =
     import.meta.env.DEV &&
     typeof location !== 'undefined' &&
     new URLSearchParams(location.search).get('review') === 'authoring';
   const deferHeroInterior = Boolean(options.roomLod && !authoring);
+  const syncHeroParts = !deferHeroInterior && hasParts('pc-hero');
+  const { unit, updateLightGuide, showPower, accents, mountCableBay } = workstationCase(
+    parent,
+    p,
+    aura,
+    manager,
+    details,
+    { deferCableBay: !syncHeroParts },
+  );
+  const { registerLight, setComponentLights: applyComponentLights } = caseComponentLights(
+    unit,
+    accents,
+  );
   const support = group(unit, 'ROG Herculx XH01', [-0.0789, -0.1685, -0.074]);
   support.rotation.y = -Math.PI / 2;
-  let heroInteriorMounted = false;
-  function ensureHeroInterior(
-    loaderManager: T.LoadingManager = new T.LoadingManager().setURLModifier(assetUrl),
-  ) {
-    if (heroInteriorMounted) return;
-    heroInteriorMounted = true;
-    installMotherboard(unit, loaderManager, registerLight, details, options.mounted);
-    loadDisplayModel(support, '/media/models/rog-herculx-xh01.glb', loaderManager, {
-      mesh: registerLight,
-      mounted: options.mounted,
-    });
-  }
-  if (!deferHeroInterior) ensureHeroInterior(manager);
-  const power = pcPowerHarness(unit, p);
-  const showTemperature = ryuoIV(unit, p, aura, power.braid, registerLight, details);
+  const ryuo = ryuoIV(unit, p, aura, registerLight, details);
+  const { showTemperature } = ryuo;
   const telemetryMode =
     typeof location === 'undefined'
       ? null
@@ -217,18 +262,6 @@ export function tower(
   const rotorParts = ['opal', 'white', 'graphite'].map((finish) =>
     blenderMesh('strix-fan-' + finish),
   );
-  const frameMaterials = {
-    nylon: surface('#2a2b2f', 0.51),
-    satin: surface('#3c3e42', 0.37, 0.09),
-    label: surface('#222428', 0.48, 0.05),
-    ink: surface('#cbd0d0', 0.49, 0.15),
-    screws: surface('#45454a', 0.37, 0.78),
-  };
-  const frame = Object.entries(frameMaterials).map(([finish, material]) => ({
-    geometry: blenderMesh('strix-140-' + finish),
-    material,
-    finish,
-  }));
   const hub = canvasTexture(128, 32, (ctx) => {
     ctx.fillStyle = '#d2d4d8';
     ctx.font = 'italic 700 28px Arial';
@@ -246,27 +279,37 @@ export function tower(
     roughness: 0.43,
   });
   const intakeBlades = surface('#474b50', 0.54, 0.03);
-  for (const height of [-0.153, -0.013, 0.127])
-    chassisFan(unit, [0, height, 0.225], p, intakeBlades, rotorParts, label, frame, false);
+  const fanUnits: Array<{ unit: T.Group; exhaust: boolean }> = [];
+  for (const height of [-0.153, -0.013, 0.127]) {
+    fanUnits.push({
+      unit: chassisFanRotor(unit, [0, height, 0.225], p, intakeBlades, rotorParts, label),
+      exhaust: false,
+    });
+  }
   const exhaustBlades = surface('#bbc3ce', 0.38, 0.04);
   exhaustBlades.emissive = aura[1].emissive;
   exhaustBlades.emissiveMap = scattering;
-  chassisFan(unit, [-0.041, 0.137, -0.2812], p, exhaustBlades, rotorParts, label, frame, true);
+  fanUnits.push({
+    unit: chassisFanRotor(unit, [-0.041, 0.137, -0.2812], p, exhaustBlades, rotorParts, label),
+    exhaust: true,
+  });
   const reflections = caseReflections(unit, aura);
-  const gpu = astralGraphics(unit, p, aura[0], details, reflections.apply);
-  const harness = group(gpu, 'Seated 12V-2x6 power and sense loom');
-  const graphiteBraid = power.carbon.clone();
-  graphiteBraid.color.set('#62646a');
-  fittedCable(harness, 'astral-harness-black', power.carbon);
-  fittedCable(harness, 'astral-harness-satin', graphiteBraid);
-  fittedCable(harness, 'astral-harness-graphite', power.comb);
+  const roomGpuRotors = syncHeroParts ? undefined : createRoomGpuRotors(unit, p);
+  const deferredRotors: T.Object3D[] = [];
 
   const roomLodGroup = group(unit, 'GR701 room LOD');
   roomLodGroup.visible = false;
   let roomLodReady = false;
+  let roomLodFailed = false;
   let roomLodApplied = false;
   let inspectingCase = false;
+  let heroInteriorReady = false;
+  let heroGlbsRequested = false;
+  let heroPartsLoading = false;
   const swappedHidden = new Set<T.Object3D>();
+
+  const shouldShowRoomLod = () =>
+    roomLodReady && !roomLodFailed && (!inspectingCase || !heroInteriorReady);
 
   function applyRoomLodVisibility(useRoomLod: boolean, forceSweep = false) {
     if (!roomLodReady) return;
@@ -274,19 +317,98 @@ export function tower(
     if (useRoomLod) {
       unit.traverse((node) => {
         if (node === roomLodGroup || isInsideNamedAncestor(node, roomLodGroup.name, unit)) return;
+        if (
+          roomGpuRotors &&
+          (node === roomGpuRotors || isInsideNamedAncestor(node, roomGpuRotors.name, unit))
+        )
+          return;
         if (!(node instanceof T.Mesh) || !node.visible) return;
         if (isLiveTowerMesh(node, unit)) return;
         node.visible = false;
         swappedHidden.add(node);
       });
       roomLodGroup.visible = true;
+      if (roomGpuRotors) roomGpuRotors.visible = true;
       roomLodApplied = true;
     } else {
       roomLodGroup.visible = false;
+      if (roomGpuRotors) roomGpuRotors.visible = false;
       for (const node of swappedHidden) node.visible = true;
       swappedHidden.clear();
       roomLodApplied = false;
     }
+  }
+
+  function mountHeroParts() {
+    if (heroInteriorReady) return;
+    heroInteriorReady = true;
+    mountCableBay();
+    const power = pcPowerHarness(unit, p);
+    ryuo.mountHero(power.braid);
+    mountChassisFanFrames(fanUnits);
+    const gpu = astralGraphics(unit, p, aura[0], details, reflections.apply);
+    if (!syncHeroParts) {
+      gpu.traverse((node) => {
+        if (node.name === 'Fan rotor') deferredRotors.push(node);
+      });
+    }
+    const harness = group(gpu, 'Seated 12V-2x6 power and sense loom');
+    const graphiteBraid = power.carbon.clone();
+    graphiteBraid.color.set('#62646a');
+    fittedCable(harness, 'astral-harness-black', power.carbon);
+    fittedCable(harness, 'astral-harness-satin', graphiteBraid);
+    fittedCable(harness, 'astral-harness-graphite', power.comb);
+    details.select(inspectingCase);
+    if (roomGpuRotors) roomGpuRotors.visible = shouldShowRoomLod();
+  }
+
+  const onHeroSubtreeMounted = (scene: T.Group) => {
+    if (shouldShowRoomLod()) applyRoomLodVisibility(true, true);
+    options.mounted?.(scene);
+  };
+
+  function ensureHeroInterior(
+    loaderManager: T.LoadingManager = new T.LoadingManager().setURLModifier(assetUrl),
+  ) {
+    if (!heroGlbsRequested) {
+      heroGlbsRequested = true;
+      installMotherboard(unit, loaderManager, registerLight, details, onHeroSubtreeMounted);
+      loadDisplayModel(support, '/media/models/rog-herculx-xh01.glb', loaderManager, {
+        mesh: registerLight,
+        mounted: onHeroSubtreeMounted,
+      });
+    }
+    if (heroInteriorReady || heroPartsLoading) return;
+    if (hasParts('pc-hero')) {
+      mountHeroParts();
+      if (roomLodReady) applyRoomLodVisibility(shouldShowRoomLod(), true);
+      options.mounted?.(unit);
+      return;
+    }
+    heroPartsLoading = true;
+    const partsItem = partLibraryPath('pc-hero');
+    loaderManager.itemStart(partsItem);
+    void loadParts('pc-hero')
+      .then(() => {
+        heroPartsLoading = false;
+        mountHeroParts();
+        if (roomLodReady) applyRoomLodVisibility(shouldShowRoomLod(), true);
+        options.mounted?.(unit);
+      })
+      .catch(() => {
+        heroPartsLoading = false;
+        loaderManager.itemError(partsItem);
+      })
+      .finally(() => {
+        loaderManager.itemEnd(partsItem);
+      });
+  }
+
+  if (syncHeroParts) {
+    mountHeroParts();
+    ensureHeroInterior(manager);
+  } else if (!deferHeroInterior) {
+    ensureHeroInterior(manager);
   }
 
   function selectDetail(inspecting: boolean) {
@@ -294,11 +416,11 @@ export function tower(
     inspectingCase = inspecting;
     if (inspecting) {
       ensureHeroInterior();
-      applyRoomLodVisibility(false);
       details.select(true);
+      applyRoomLodVisibility(shouldShowRoomLod());
     } else {
       details.select(false);
-      if (roomLodReady) applyRoomLodVisibility(true);
+      if (roomLodReady) applyRoomLodVisibility(shouldShowRoomLod());
     }
   }
 
@@ -307,13 +429,23 @@ export function tower(
       mesh: registerLight,
       mounted(lodScene) {
         roomLodReady = true;
-        applyRoomLodVisibility(!inspectingCase, true);
+        applyRoomLodVisibility(shouldShowRoomLod(), true);
         options.mounted?.(lodScene);
       },
     }).catch(() => {
+      roomLodFailed = true;
       ensureHeroInterior();
     });
   }
+
+  const setComponentLights: typeof applyComponentLights = (enabled, delta, clock, env) => {
+    applyComponentLights(enabled, delta, clock, env);
+    if (delta !== undefined && !env?.reducedMotion && deferredRotors.length) {
+      deferredRotors.forEach((rotor, i) => {
+        rotor.rotation.z += delta * (10 + ((i + 7) % 3) * 3.5);
+      });
+    }
+  };
 
   return {
     unit,
@@ -325,7 +457,7 @@ export function tower(
       ensureHeroInterior();
     },
     refreshRoomLod() {
-      if (roomLodReady && !inspectingCase) applyRoomLodVisibility(true, true);
+      if (shouldShowRoomLod()) applyRoomLodVisibility(true, true);
     },
     fanGuides: [exhaustBlades],
     reflections,
