@@ -437,27 +437,49 @@ export function roomVisibility(
         resolve();
         return;
       }
-      new T.TextureLoader(defaultStudioLoadingManager).setCrossOrigin('anonymous').load(
-        url,
-        (loaded) => {
-          if (controller.signal.aborted) {
-            loaded.dispose();
-            resolve();
-            return;
-          }
-          loaded.colorSpace = T.NoColorSpace;
-          loaded.minFilter = T.LinearFilter;
-          loaded.magFilter = T.LinearFilter;
-          loaded.generateMipmaps = false;
-          loaded.wrapS = loaded.wrapT = T.ClampToEdgeWrapping;
-          target.value.dispose();
-          target.value = loaded;
-          readyFlag.value = 1;
+      const install = (loaded: T.Texture) => {
+        if (controller.signal.aborted) {
+          loaded.dispose();
           resolve();
-        },
-        undefined,
-        () => resolve(),
-      );
+          return;
+        }
+        loaded.colorSpace = T.NoColorSpace;
+        loaded.minFilter = T.LinearFilter;
+        loaded.magFilter = T.LinearFilter;
+        loaded.generateMipmaps = false;
+        loaded.wrapS = loaded.wrapT = T.ClampToEdgeWrapping;
+        loaded.needsUpdate = true;
+        target.value.dispose();
+        target.value = loaded;
+        readyFlag.value = 1;
+        resolve();
+      };
+      const fallbackLoad = () => {
+        new T.TextureLoader(defaultStudioLoadingManager)
+          .setCrossOrigin('anonymous')
+          .load(url, install, undefined, () => resolve());
+      };
+      if (typeof createImageBitmap === 'function') {
+        new T.ImageBitmapLoader(defaultStudioLoadingManager)
+          .setCrossOrigin('anonymous')
+          .setOptions({
+            imageOrientation: 'flipY',
+            premultiplyAlpha: 'none',
+            colorSpaceConversion: 'none',
+          })
+          .load(
+            url,
+            (bitmap) => {
+              const texture = new T.Texture(bitmap);
+              texture.flipY = false;
+              install(texture);
+            },
+            undefined,
+            fallbackLoad,
+          );
+      } else {
+        fallbackLoad();
+      }
     });
   let rearLightmapPromise: Promise<void> | undefined;
   const prepareRearLightmap = () => {
