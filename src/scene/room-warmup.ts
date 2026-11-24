@@ -133,6 +133,16 @@ export function roomWarmup(
   let warmingSubtrees = false;
   let liveFront: LiveFront | undefined;
   let smallMapBatches = 0;
+  let bgLinking = false;
+  const bgSignatures = new Set<string>();
+
+  function traverseWarmable(object: Object3D, callback: (node: Object3D) => void) {
+    if (!object.visible && object.userData.studioZoneCulled !== true) return;
+    callback(object);
+    for (let i = 0; i < object.children.length; i++) {
+      traverseWarmable(object.children[i], callback);
+    }
+  }
 
   function hasPreviewProgram(object: Renderable, target: WebGLRenderTarget | null) {
     const { material } = object;
@@ -328,7 +338,7 @@ export function roomWarmup(
   }
 
   function scan(front?: Frustum) {
-    scene.traverseVisible((object) => {
+    const visit = (object: Object3D) => {
       if (!renderable(object)) return;
       const version = Array.isArray(object.material)
         ? object.material.map(materialVersion).join(',')
@@ -342,7 +352,9 @@ export function roomWarmup(
         queue.push(object);
         collectMaps(object, maps);
       }
-    });
+    };
+    if (front) scene.traverseVisible(visit);
+    else traverseWarmable(scene, visit);
   }
 
   function residentMap(texture: Texture) {
@@ -414,6 +426,7 @@ export function roomWarmup(
     if (environment !== scene.environment || surface !== target || lights !== lightKey) {
       seen = new WeakMap();
       partial = new WeakMap();
+      bgSignatures.clear();
       environment = scene.environment;
       surface = target;
       lights = lightKey;
@@ -742,6 +755,8 @@ export function roomWarmup(
     },
     dispose() {
       disposed = true;
+      bgLinking = false;
+      bgSignatures.clear();
       liveFront = undefined;
       frontQueue.length = queue.length = 0;
       maps.clear();
@@ -750,8 +765,9 @@ export function roomWarmup(
       visible = [];
     },
     scan: () => scan(),
-    step(target: WebGLRenderTarget | null) {
+    step(target: WebGLRenderTarget | null, paused = false) {
       liveFront = undefined;
+      if (paused) return;
       if (pacePrograms) {
         const until = budgetAfterDraw();
         trackPrograms();
@@ -763,16 +779,33 @@ export function roomWarmup(
         return;
       }
       if (offset < queue.length) {
-        const end = Math.min(offset + 40, queue.length);
-        for (; offset < end; offset++) {
-          const object = queue[offset];
-          if (!hasPreviewProgram(object, target)) group.children.push(object);
+        if (bgLinking) return;
+        const canAsync =
+          typeof gl.compileAsync === 'function' &&
+          Boolean(gl.extensions?.has('KHR_parallel_shader_compile'));
+        const batchCap = canAsync ? 4 : 3;
+        while (offset < queue.length && group.children.length < batchCap) {
+          const object = queue[offset++];
+          if (!object.parent || hasPreviewProgram(object, target)) continue;
+          const sig = frontSignature(object);
+          if (bgSignatures.has(sig)) continue;
+          bgSignatures.add(sig);
+          group.children.push(object);
         }
         if (group.children.length) {
           const previous = gl.getRenderTarget();
           gl.setRenderTarget(target);
           try {
-            gl.compile(group, camera, scene);
+            if (canAsync) {
+              bgLinking = true;
+              const linking = gl.compileAsync(group, camera, scene);
+              const finish = () => {
+                bgLinking = false;
+              };
+              void linking.then(finish, finish);
+            } else {
+              gl.compile(group, camera, scene);
+            }
           } finally {
             group.children.length = 0;
             gl.setRenderTarget(previous);

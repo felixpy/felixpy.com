@@ -253,6 +253,7 @@ export function* buildStudioSteps(
     updateTelemetry,
     setComponentLights,
     selectDetail: selectTowerDetail,
+    preloadHero: preloadTowerHero,
     refreshRoomLod: refreshTowerRoomLod,
     fanGuides,
     reflections,
@@ -270,6 +271,7 @@ export function* buildStudioSteps(
     prepareSwitches,
     evictSwitches,
     selectDetail: selectKeySwitches,
+    preloadHero: preloadKeyboardHero,
   } = keyboard(interior, manager, keyLight, detailMounted, { roomLod: useRoomLod });
   if (preloadInspection) {
     deferDesk(() => prepareMacDetail(rearLoader));
@@ -1056,6 +1058,18 @@ export function* buildStudioSteps(
     pickRoots: [interior, window.unit],
     zoneCuller,
     refreshTowerRoomLod,
+    preloadFixtureReflections() {
+      floorLamp.preload();
+      fieldGear.preloadReflections();
+    },
+    preloadHero(id: string) {
+      if (id === 'keyboard') preloadKeyboardHero();
+      else if (id === 'case') preloadTowerHero();
+      else if (id === 'camera') deskCamera.userData.preloadDetail?.();
+      else if (id === 'mac-studio') void prepareMacDetail(rearLoader);
+      else if (id === 'collection-cabinet') void rear.prepare('cabinet');
+      else if (id === 'gear-wall') void rear.prepare('gear');
+    },
     evictHero(id: string) {
       if (id === 'keyboard') evictSwitches();
       else if (id === 'travel-map' && atlasDetailOnInspect) disposeAtlasDetail();

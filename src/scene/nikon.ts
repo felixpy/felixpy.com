@@ -6,6 +6,8 @@ import { nikonBody } from './nikon-body';
 import { nikkorZoom } from './nikon-lens';
 import type { Palette } from './materials';
 
+const markingTextureCache = new Map<string, T.CanvasTexture>();
+
 function marking(
   parent: T.Object3D,
   text: string,
@@ -14,22 +16,27 @@ function marking(
   pos: XYZ,
   color = '#e1e0d8',
 ) {
-  const map = canvasTexture(384, 108, (ctx) => {
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = color;
-    ctx.font =
-      text === 'Nikon' ? 'italic 900 77px Arial, sans-serif' : '600 61px Arial, sans-serif';
-    const bounds = ctx.measureText(text);
-    ctx.translate(192, 54);
-    const correction = (height / width) * (384 / 108);
-    const scale = Math.min(
-      352 / (bounds.width * correction),
-      82 / (bounds.actualBoundingBoxAscent + bounds.actualBoundingBoxDescent),
-    );
-    ctx.scale(scale * correction, scale);
-    ctx.fillText(text, 0, (bounds.actualBoundingBoxAscent - bounds.actualBoundingBoxDescent) / 2);
-  });
+  const key = `${text}|${color}|${(height / width).toFixed(4)}`;
+  let map = markingTextureCache.get(key);
+  if (!map) {
+    map = canvasTexture(384, 108, (ctx) => {
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillStyle = color;
+      ctx.font =
+        text === 'Nikon' ? 'italic 900 77px Arial, sans-serif' : '600 61px Arial, sans-serif';
+      const bounds = ctx.measureText(text);
+      ctx.translate(192, 54);
+      const correction = (height / width) * (384 / 108);
+      const scale = Math.min(
+        352 / (bounds.width * correction),
+        82 / (bounds.actualBoundingBoxAscent + bounds.actualBoundingBoxDescent),
+      );
+      ctx.scale(scale * correction, scale);
+      ctx.fillText(text, 0, (bounds.actualBoundingBoxAscent - bounds.actualBoundingBoxDescent) / 2);
+    });
+    markingTextureCache.set(key, map);
+  }
   const label = mesh(
     parent,
     new T.PlaneGeometry(width, height),
@@ -279,6 +286,12 @@ export function nikonZ8(
     if (useRoomLod) options.mounted?.(heroGroup);
     sync();
   }
+
+  camera.userData.preloadDetail = () => {
+    if (!heroMounted) {
+      ensureHero(new T.LoadingManager().setURLModifier(assetUrl));
+    }
+  };
 
   camera.userData.selectDetail = (active: boolean) => {
     inspecting = active;

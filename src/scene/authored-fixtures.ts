@@ -149,5 +149,5 @@ export function cabinetFloorLight(parent: T.Object3D, p: Palette) {
   unit.add(light, light.target);
   const reflections = fixtureReflections('aj');
   reflections.bind(polish);
-  return { unit, light, opal, lining, select: reflections.select };
+  return { unit, light, opal, lining, select: reflections.select, preload: reflections.preload };
 }

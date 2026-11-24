@@ -113,6 +113,7 @@ type RigProps = Props & {
   mapMarker: RefObject<SVGGElement | null>;
   firstPicture: RefObject<FirstPicture>;
   detailRevision: RefObject<number>;
+  interacting: RefObject<boolean>;
   preparedReflection: RefObject<PreparedReflection | null>;
   phonePanel: RefObject<HTMLDivElement | null>;
   setPhoneHeld: (held: boolean) => void;
@@ -219,6 +220,7 @@ function CameraRig(
     orientation: T.Quaternion;
   } | null>(null);
   const hover = useRef<Target | undefined>(undefined);
+  const lastWheelAt = useRef(0);
   const animationStart = useRef(0);
   const computerStart = useRef({
     position: new T.Vector3(),
@@ -388,7 +390,14 @@ function CameraRig(
     camera.rotation.set(looks.current.room.pitch, looks.current.room.yaw, 0, 'YXZ');
     camera.updateMatrixWorld(true);
     let pointerAim: { x: number; y: number } | undefined;
-    const heroLru = createHeroLru(3);
+    let hoverPreloadTimer: number | undefined;
+    const clearHoverPreload = () => {
+      if (hoverPreloadTimer !== undefined) {
+        window.clearTimeout(hoverPreloadTimer);
+        hoverPreloadTimer = undefined;
+      }
+    };
+    const heroLru = createHeroLru(5);
     heroLruRef.current = heroLru;
     const hoverPicker = createHoverPicker({
       element,
@@ -422,6 +431,16 @@ function CameraRig(
         if (!canPick(mode.current) || pointer.current) return;
         if (target || target !== hover.current) {
           hover.current = target;
+          clearHoverPreload();
+          if (target && !authoringMode.current) {
+            const preloadId = target.id;
+            hoverPreloadTimer = window.setTimeout(() => {
+              hoverPreloadTimer = undefined;
+              if (!surfaceAbort.signal.aborted && hover.current?.id === preloadId) {
+                model.preloadHero(preloadId);
+              }
+            }, 120);
+          }
           const locale = live.current.environment.locale;
           const text =
             target?.type === 'drawer' &&
@@ -462,6 +481,12 @@ function CameraRig(
       props.detailRevision.current++;
       shadowWarmup.current = 2;
       performance.mark('studio-room-rear-ready');
+      const warmReflections = () => {
+        if (!surfaceAbort.signal.aborted) model.preloadFixtureReflections();
+      };
+      if (typeof window.requestIdleCallback === 'function')
+        window.requestIdleCallback(warmReflections, { timeout: 1200 });
+      else window.setTimeout(warmReflections, 64);
     });
 
     function walkTo(x: number, y: number, z: number) {
@@ -893,6 +918,7 @@ function CameraRig(
     }
     function wheel(event: WheelEvent) {
       event.preventDefault();
+      lastWheelAt.current = performance.now();
       const delta = event.deltaY * (event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? 300 : 1);
       if (mode.current === 'inspect' && inspection.current) {
         inspection.current.distance = T.MathUtils.clamp(
@@ -1004,6 +1030,7 @@ function CameraRig(
       window.removeEventListener('keyup', releaseKey);
       window.removeEventListener('blur', releaseMovement);
       reflectionMap.dispose();
+      clearHoverPreload();
       hoverPicker.dispose();
       hoverPickerRef.current = null;
       heroLru.clear();
@@ -1125,6 +1152,10 @@ function CameraRig(
       }
     }
     const current = mode.current;
+    props.interacting.current =
+      Boolean(pointer.current?.moved) ||
+      turning.current.size > 0 ||
+      performance.now() - lastWheelAt.current < 160;
     if (model.mountedDetails.length) {
       let visibleArrival = false;
       for (const subtree of model.mountedDetails) {
@@ -1675,6 +1706,7 @@ function StudioRoom({
         roomVisible={props.roomVisible}
         firstPicture={props.firstPicture}
         detailRevision={props.detailRevision}
+        interacting={props.interacting}
         workbench={assembly.model.workbench}
         setLowScale={setLowScale}
         nativeLow={nativeLow}
@@ -1697,6 +1729,7 @@ export default function StudioView(props: Props) {
     () => new URLSearchParams(location.search).get('studio-low') === 'native',
   );
   const detailRevision = useRef(0);
+  const interacting = useRef(false);
   const [lowScale, setLowScale] = useState(props.initialLowScale);
   useLayoutEffect(() => {
     if (props.roomVisible) performance.mark('studio-input-ready');
@@ -1751,6 +1784,7 @@ export default function StudioView(props: Props) {
           mapMarker={mapMarker}
           firstPicture={firstPicture}
           detailRevision={detailRevision}
+          interacting={interacting}
           preparedReflection={preparedReflection}
           phonePanel={phonePanel}
           setPhoneHeld={setPhoneHeld}

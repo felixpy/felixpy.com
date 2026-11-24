@@ -55,6 +55,9 @@ export function fixtureReflections(location: 'aj' | 'camp') {
         samples.clear();
       });
     },
+    preload() {
+      loadVisible();
+    },
     select(night: boolean, high: boolean) {
       const time = night ? 'night' : 'day';
       if (time === active && high === detailed) return;

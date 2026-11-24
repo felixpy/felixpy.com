@@ -321,6 +321,9 @@ export function tower(
     updateTelemetry,
     setComponentLights,
     selectDetail,
+    preloadHero() {
+      ensureHeroInterior();
+    },
     refreshRoomLod() {
       if (roomLodReady && !inspectingCase) applyRoomLodVisibility(true, true);
     },
@@ -441,6 +444,11 @@ export function keyboard(
         void prepareSwitches(new T.LoadingManager().setURLModifier(assetUrl));
       }
       syncBody();
+    },
+    preloadHero() {
+      if (useRoomLod && !heroReady)
+        void loadHeroBody(new T.LoadingManager().setURLModifier(assetUrl));
+      void prepareSwitches(new T.LoadingManager().setURLModifier(assetUrl));
     },
   };
 }
