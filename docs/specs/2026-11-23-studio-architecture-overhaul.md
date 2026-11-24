@@ -94,6 +94,52 @@ node scripts/performance/studio-benchmark.mjs uhd-native 1 --seconds=10 --gpu-ti
 ### Verification summary
 
 - `npm run build` (`tsc --noEmit` + Vite production build): passed cleanly.
-- `npm run test:ci`: **69 / 69** passed (`35.1 s`).
-- Targeted `@webgl` Playwright suite (`studio.spec.ts`, `room-picking.spec.ts`, `rear-loading.spec.ts`, `workstation-fit.spec.ts`, `case-accent-lighting.spec.ts`, `room-warmup.spec.ts`, `studio-gpu-color-passes.spec.mjs`): all passed.
+- `npm run test:ci`: **75 / 75** passed (`40.0 s`).
+- Targeted `@webgl` Playwright suite (`studio.spec.ts`, `room-picking.spec.ts`, `rear-loading.spec.ts`, `workstation-fit.spec.ts`, `case-accent-lighting.spec.ts`, `nikon-card-bay.spec.ts`, `azoth-inspection.spec.ts`, `room-warmup.spec.ts`, `studio-gpu-color-passes.spec.mjs`): all passed.
 - 5-camera visual regression verified via full-resolution screenshots: Desk (night & daylight), PC Tower close-up (`case` Hero swap), East Workbench (`bench` seated), South Collection Cabinet (`cabinet`), and West Window (`window`), plus Intel UHD 770 native 1080p render.
+
+## Phase 2 delivery and asset consolidation (`2026-11-24`)
+
+### Art-to-web provenance (Phase 2)
+
+- **Art repository:** `felix-studio-art` (branch `perf/cook-asset-delivery`, commit `be38a27`, zero `.blend` source masters modified; Blender 5.3.0 native `EXT_meshopt_compression` + JPEG/PNG export)
+- **Web repository follow-up commits:** `d7d3b67` → `219a8bd` (pushed to PR #10)
+
+| Export                                            | Generator                                                         | Size (KB) | SHA-256                                                            |
+| ------------------------------------------------- | ----------------------------------------------------------------- | --------: | ------------------------------------------------------------------ |
+| `public/media/lighting/room-contact-ao.webp`      | `uv` WebP q=90 from `room-contact-ao.png`                         |      25.6 | `0ccdeb6bb237055d1cc51521385426af4c7f71e9e47dd22fa6b80617f357efc7` |
+| `public/media/lighting/room-rect-lightmap.webp`   | `uv` channel-independent 512² lossless exact RGBA WebP            |     129.7 | `0805ee53b9cce5128470f775dacd6fb1fa4f0ae4de92781529716a6d6ce882d5` |
+| `public/media/lighting/room-rear-lightmap.webp`   | `uv` channel-independent 512² lossless exact RGBA WebP (deferred) |     265.6 | `b0d8e330580a41b0b69ced3db32572f20d351b80b5bd5b1727b0f18aaf9b5cf8` |
+| `public/media/lighting/desk-day.pmrem.gz`         | `scripts/assets/bake-pmrem.mjs` (PMR2 128×6 planar-delta RGBE)    |     299.4 | `e9deec0e4aa468ebd4f498c80e302036d8d3ba9aa674e8e157682647bc3fed7d` |
+| `public/media/lighting/desk-night.pmrem.gz`       | `scripts/assets/bake-pmrem.mjs` (PMR2 128×6 planar-delta RGBE)    |     296.3 | `e9788cb31751ae40b4809a1905b90ac479c51fb2972357412c686d20e99b3889` |
+| `public/media/models/gr701-room.glb`              | `pipeline/cook/cook-gr701-room-lod.py` (Meshopt + JPEG)           |     679.9 | `91e0ccf80c6c25c26f6ab5e3a33aff632b552b31efd20d5792017538d9691e72` |
+| `public/media/models/rog-azoth-extreme-room.glb`  | `pipeline/cook/cook-room-lods.py --preset rog-azoth-extreme`      |     576.5 | `4f86ae570f31aca0ac6d428f042c626841161d6f389d13751c910953b7c415d1` |
+| `public/media/models/nikon-z8-room.glb`           | `pipeline/cook/cook-room-lods.py --preset nikon-z8`               |     668.7 | `1d96a4c38427ec8081f550d81e065fe62864862eb75ca14715c3fd939eb66e38` |
+| `public/media/panoramas/shanghai-day-room.webp`   | `scripts/assets/build-panorama-tiers.py` (2.5K room tier)         |     133.1 | `7c6cad4d0bf8a8e98575c220d783c91a6e19ba375bcdf1c745482e46dacfd3c0` |
+| `public/media/panoramas/new-york-night-room.webp` | `scripts/assets/build-panorama-tiers.py` (2.5K room tier)         |     176.2 | `efd7b47f89bcf8f593f5bb1d80eb4157f9181ccb2e98b867c260123751e91012` |
+| `public/media/photography/field-notes-atlas.webp` | `scripts/assets/build-field-notes-atlas.py` (17 tiles, 5×4 grid)  |     739.1 | `9a08599a4c75cc7e6d26ff926946e49e499ef449af2b01dd3a407699b8bb779a` |
+
+### Measured delivery and 4K performance comparison (PR #10 baseline `fda7349` vs Phase 2 `219a8bd`)
+
+| Metric (same build & desk route)                  | PR #10 Baseline (`fda7349`) | Phase 2 First-Screen (`before shaded`) | Phase 2 Settled (with deferred rear) |            Delta vs Baseline |
+| ------------------------------------------------- | --------------------------: | -------------------------------------: | -----------------------------------: | ---------------------------: |
+| Cold HTTP requests                                |                         148 |                                 **81** |                                   89 |          **-45.3%** (-39.9%) |
+| Cold model requests                               |                          48 |                                  **5** |                                   10 |          **-89.6%** (-79.2%) |
+| Cold photography requests                         |                          21 |                                  **5** |                                    5 |                   **-76.2%** |
+| Cold wire transfer (MB)                           |                       34.12 |                              **16.69** |                                27.62 |          **-51.1%** (-19.1%) |
+| Cold models wire (MB)                             |                       20.44 |                               **7.83** |                                18.12 |                   **-61.7%** |
+| Cold lighting wire (MB)                           |                        4.25 |                               **1.17** |                                 1.21 |                   **-72.5%** |
+| Cold `studio-input-ready` (ms)                    |                       1,854 |                              **1,678** |                                1,678 |                    **-9.5%** |
+| Cold `studio-room-shaded` (ms)                    |                       5,913 |                              **4,494** |                                4,494 |                   **-24.0%** |
+| Warm reload `studio-room-shaded` (ms)             |                       2,703 |                              **2,254** |                                2,254 |                   **-16.6%** |
+| Warm repeat-visit wire transfer (MB)              |     revalidated (144 × 304) |                               **0.00** |                         0.23 (ferry) |     **0.00 MB** first screen |
+| Warm repeat-visit HTTP 304s (immutable assets)    |                         144 |                                  **0** |                                **0** | **-100%** (87/91 cache hits) |
+| RTX 4090 4K steady FPS (cold / warm)              |               140.49 (warm) |      **143.83** cold / **144.00** warm |                                    — |           **144 FPS locked** |
+| RTX 4090 4K frame P50 / P95 (ms)                  |                   6.9 / 7.0 |                          **6.9 / 7.0** |                                    — |           0 frames > 33.4 ms |
+| RTX 4090 4K main-color GPU P50 / P95 (ms)         |                 4.73 / 6.82 |                        **4.28 / 5.30** |                                    — |           **-9.5% / -22.3%** |
+| Active draws / tris (desk steady, 4-zone culling) |                1,019 / 989k |                         **512 / 471k** |                                    — |          **-49.8% / -52.4%** |
+
+### Deferred follow-up items and environment scope
+
+- **KTX2 (Basis Universal UASTC/ETC1S) texture transcoding:** Explicitly deferred to a future pass because `toktx` / KTX-Software CLI is not installed in the workstation or `.authoring/` environment. All lightmaps, panorama tiers, field-notes atlas, and Meshopt Room LODs are shipped in standard WebP/JPEG/glTF 2.0 formats with zero visual regression.
+- **Live R2 & Vercel production publish:** Verified locally via `VITE_ASSET_BASE_URL=https://assets.felixpy.com/felix-studio/ npm run build` + `node scripts/deploy/r2-assets.mjs dist --check` and `tests/media-manifest.spec.ts` (confirming `public, max-age=31536000, immutable` on all hashed media/fonts, `public, no-cache` on `media/credits.txt`, and strictly additive non-destructive R2 uploads for old-version coexistence and instant rollback). Actual production publish is handled separately.
