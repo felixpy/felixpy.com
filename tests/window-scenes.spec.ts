@@ -437,9 +437,11 @@ test('both river cities load original plates and apply each exposure mask and sa
   ]);
   expect(requests).toContain('/media/panoramas/river-slopes.webp');
   const { CatmullRomCurve3, Vector3 } = await import('three');
+  const tiered = new Set(['shanghai-day', 'new-york-night']);
   for (const view of views) {
     const exposure = windowCities[view.city][view.name];
-    expect(view.asset).toBe('/media/panoramas/' + exposure.asset + '.webp');
+    const expectedAsset = tiered.has(exposure.asset) ? exposure.asset + '-room' : exposure.asset;
+    expect(view.asset).toBe('/media/panoramas/' + expectedAsset + '.webp');
     expect(view.shore).toEqual([...Float32Array.from(exposure.shoreline)]);
     expect(view.secondShore).toEqual(view.shore);
     expect(view.visible).toBe(true);

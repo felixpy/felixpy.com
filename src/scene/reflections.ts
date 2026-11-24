@@ -2,14 +2,20 @@ import * as T from 'three';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import type { Environment } from '../app/environment';
 import { defaultStudioLoadingManager } from './asset-loading';
+import { packedBuffer } from './packed-buffer';
+import { decodePmrem } from './pmrem-decode';
 import radiance from './desk-radiance.json';
 
 type Time = keyof typeof radiance;
 type Probe = {
   preview?: T.WebGLCubeRenderTarget;
-  full?: T.WebGLCubeRenderTarget;
+  full?: T.WebGLCubeRenderTarget | T.CompressedCubeTexture;
   loading?: boolean;
 };
+
+function probeTexture(entry: T.WebGLCubeRenderTarget | T.CompressedCubeTexture): T.Texture {
+  return entry instanceof T.WebGLCubeRenderTarget ? entry.texture : entry;
+}
 
 function previewTexture(time: Time) {
   const rgbe = Uint8Array.from(atob(radiance[time]), (byte) => byte.charCodeAt(0));
@@ -101,6 +107,24 @@ export function studioReflections(
       source.dispose();
     }
   }
+  function loadHdrFallback(time: Time, probe: Probe) {
+    loader.load(
+      '/media/lighting/desk-' + time + '.hdr',
+      (texture) => {
+        if (disposed) {
+          texture.dispose();
+          return;
+        }
+        probe.full = prefilter(texture);
+        probe.loading = false;
+        if (time === active && detailed) scene.environment = probeTexture(probe.full);
+      },
+      undefined,
+      () => {
+        probe.loading = false;
+      },
+    );
+  }
   return {
     select(night: boolean, quality: Environment['quality']) {
       if (!canPrefilter) return;
@@ -109,25 +133,27 @@ export function studioReflections(
       const time = active;
       const probe = probes[time];
       probe.preview ??= prefilter(previewTexture(time));
-      scene.environment = ((detailed && probe.full) || probe.preview).texture;
+      scene.environment = probeTexture((detailed && probe.full) || probe.preview);
       if (!detailed || probe.full || probe.loading) return;
       probe.loading = true;
-      loader.load(
-        '/media/lighting/desk-' + time + '.hdr',
-        (texture) => {
+      const pmremPath = '/media/lighting/desk-' + time + '.pmrem.gz';
+      const url = defaultStudioLoadingManager.resolveURL(pmremPath);
+      void fetch(url)
+        .then((response) => packedBuffer(response))
+        .then((buffer) => {
+          const cube = decodePmrem(buffer);
           if (disposed) {
-            texture.dispose();
+            cube.dispose();
             return;
           }
-          probe.full = prefilter(texture);
+          probe.full = cube;
           probe.loading = false;
-          if (time === active && detailed) scene.environment = probe.full.texture;
-        },
-        undefined,
-        () => {
-          probe.loading = false;
-        },
-      );
+          if (time === active && detailed) scene.environment = cube;
+        })
+        .catch(() => {
+          if (disposed) return;
+          loadHdrFallback(time, probe);
+        });
     },
     dispose() {
       disposed = true;

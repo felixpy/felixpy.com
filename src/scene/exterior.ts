@@ -43,19 +43,25 @@ export function buildExterior(
   const world = group(root, 'Outdoor volume');
   world.add(glass.highlights);
   const depths = new Map<string, T.Texture>();
-  function loadPhoto(asset: string) {
-    const image = loader.load('/media/panoramas/' + asset + '.webp');
+  const tieredPanoramas = new Set(['shanghai-day', 'new-york-night']);
+  const hiResLoader = new T.TextureLoader(defaultStudioLoadingManager);
+  function loadPhoto(asset: string, roomTier = false) {
+    const file = roomTier && tieredPanoramas.has(asset) ? asset + '-room' : asset;
+    const image = loader.load('/media/panoramas/' + file + '.webp');
     image.colorSpace = T.SRGBColorSpace;
     image.anisotropy = 8;
     return image;
   }
   function loadPlate(scene: WindowExposure) {
-    const photo = loadPhoto(scene.asset);
+    const tiered = tieredPanoramas.has(scene.asset);
+    const photo = loadPhoto(scene.asset, tiered);
     if (scene.kind === 'land') {
       photo.wrapS = T.RepeatWrapping;
       return {
         scene,
         photo,
+        tiered,
+        hiResRequested: false,
         depth: photo,
         bank: 0,
         range: new T.Vector2(650, 2000),
@@ -76,6 +82,8 @@ export function buildExterior(
     return {
       scene,
       photo,
+      tiered,
+      hiResRequested: false,
       depth,
       range: new T.Vector2(...scene.range),
       bank,
@@ -83,6 +91,26 @@ export function buildExterior(
       shoreline: Float32Array.from(scene.shoreline),
       current: new T.Vector3(...scene.flow, scene.waveScale),
     };
+  }
+  function upgradePlateToHiRes(plateEntry: ReturnType<typeof loadPlate>) {
+    if (!plateEntry.tiered || plateEntry.hiResRequested) return;
+    plateEntry.hiResRequested = true;
+    hiResLoader.load(
+      '/media/panoramas/' + plateEntry.scene.asset + '.webp',
+      (hiRes) => {
+        hiRes.colorSpace = T.SRGBColorSpace;
+        hiRes.anisotropy = 8;
+        if (plateEntry.scene.kind === 'land') hiRes.wrapS = T.RepeatWrapping;
+        const previous = plateEntry.photo;
+        plateEntry.photo = hiRes;
+        if (plateEntry.scene.kind === 'land') plateEntry.depth = hiRes;
+        previous.dispose();
+      },
+      undefined,
+      () => {
+        // Keep the 2.5K room tier texture if the 5K close-up upgrade fails.
+      },
+    );
   }
   const plates = new Map<WindowExposure, ReturnType<typeof loadPlate>>();
   function view(env: Environment) {
@@ -233,6 +261,10 @@ export function buildExterior(
       if (keepStaticMaterial) plate.material = visibleMotion ?? material;
       if (!env.reducedMotion && visibleMotion) time += delta;
       const desired = view(env);
+      if (closeWindow) {
+        upgradePlateToHiRes(desired);
+        if (shown !== desired) upgradePlateToHiRes(shown);
+      }
       if (desired.photo.image && desired.depth.image && desired !== target) {
         if (desired === shown) {
           shown = target;

@@ -168,10 +168,13 @@ export function studioParts(): Plugin {
       if (!dir) throw new Error('The studio requires a static output directory');
       cpSync(publicDirectory, dir, {
         recursive: true,
-        filter: (file) =>
-          !/^media\/models\/.*\.(mesh|glb)$/.test(
-            relative(publicDirectory, file).replaceAll('\\', '/'),
-          ),
+        filter: (file) => {
+          const rel = relative(publicDirectory, file).replaceAll('\\', '/');
+          return (
+            !/^media\/models\/.*\.(mesh|glb)$/.test(rel) &&
+            !/^media\/photography\/field-notes(\/|$)/.test(rel)
+          );
+        },
       });
     },
   };

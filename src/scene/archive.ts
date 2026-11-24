@@ -234,14 +234,17 @@ export function personalArchive(
       setLocale: photo.setLocale,
     };
   });
+  const instantAtlas = load('/media/photography/field-notes-atlas.webp');
+  const instantCols = 5;
+  const instantRows = 4;
   const instant = instantPhotos.map(([key, en, zh, x, y, turn], i) => {
-    const photo = instantPhoto(
-      board,
-      p,
-      load('/media/photography/field-notes/' + key + '.webp'),
-      en,
-      i,
+    const tile = instantAtlas.clone();
+    tile.repeat.set(1 / instantCols, 1 / instantRows);
+    tile.offset.set(
+      (i % instantCols) / instantCols,
+      (instantRows - 1 - Math.floor(i / instantCols)) / instantRows,
     );
+    const photo = instantPhoto(board, p, tile, en, i);
     const backing = overlaidFilm.has(key) ? printThickness + printCurl + 0.000025 : 0;
     photo.position.set(x, y, corkFace + backing + filmThickness / 2 + 0.000025);
     photo.rotation.z = turn;
