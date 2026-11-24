@@ -2,14 +2,17 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFile, readdir, unlink } from 'node:fs/promises';
 import { extname, join, relative, resolve, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { isHostedAssetPath } from '../../src/app/asset-url.ts';
+import { isHostedAssetPath, isImmutableAssetPath } from '../../src/app/asset-url.ts';
 
 const bucket = 'assets';
 const contentTypes = {
   '.avif': 'image/avif',
+  '.bpk': 'application/octet-stream',
   '.glb': 'model/gltf-binary',
   '.gz': 'application/gzip',
+  '.hdr': 'application/octet-stream',
   '.jpeg': 'image/jpeg',
   '.jpg': 'image/jpeg',
   '.json': 'application/json',
@@ -26,6 +29,10 @@ const contentTypes = {
   '.woff2': 'font/woff2',
 };
 
+export function cacheControlForAsset(key) {
+  return isImmutableAssetPath(key) ? 'public, max-age=31536000, immutable' : 'public, no-cache';
+}
+
 const exec = promisify(execFile);
 const parallelism = 8;
 
@@ -41,7 +48,7 @@ async function inBatches(items, action) {
   return results;
 }
 
-async function collectAssets(root) {
+export async function collectAssets(root) {
   const files = await readdir(root, { recursive: true, withFileTypes: true });
   const assets = [];
   for (const entry of files) {
@@ -53,9 +60,7 @@ async function collectAssets(root) {
       path,
       key,
       contentType: contentTypes[extname(key).toLowerCase()] ?? 'application/octet-stream',
-      cacheControl: key.startsWith('assets/')
-        ? 'public, max-age=31536000, immutable'
-        : 'public, no-cache',
+      cacheControl: cacheControlForAsset(key),
     });
   }
   return assets;
@@ -201,4 +206,8 @@ async function main() {
   console.log(`Verified and removed ${assets.length} R2 assets from the Vercel output.`);
 }
 
-await main();
+// Note: uploads are strictly additive — previous content-hashed keys remain live on R2
+// so in-flight sessions and instant deployment rollbacks always resolve their exact hashes.
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  await main();
+}

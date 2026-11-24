@@ -1,9 +1,11 @@
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
 import { createServer } from 'node:http';
 import { chromium } from 'playwright';
+import { isImmutableAssetPath } from '../../src/app/asset-url.ts';
 
 const distDir = resolve(process.cwd(), 'dist');
+const profileDir = resolve(process.cwd(), '.review', 'audit-profile');
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
@@ -19,20 +21,14 @@ const mimeTypes = {
   '.hdr': 'application/octet-stream',
   '.bpk': 'application/octet-stream',
   '.glb': 'model/gltf-binary',
-  '.gz': 'application/octet-stream',
+  '.gz': 'application/gzip',
   '.mp3': 'audio/mpeg',
   '.ogg': 'audio/ogg',
   '.txt': 'text/plain; charset=utf-8',
 };
 
 function cacheHeaderFor(urlPath) {
-  // Mirrors scripts/deploy/r2-assets.mjs and vercel.json production policy:
-  // hashed assets under /assets/ or /media/ with content hash (8+ hex chars before extension) are immutable;
-  // unhashed /media/ files revalidate via no-cache.
-  if (urlPath.startsWith('/assets/')) return 'public, max-age=31536000, immutable';
-  if (/[.-][0-9a-f]{8,}\.[a-z0-9.]+$/i.test(urlPath)) return 'public, max-age=31536000, immutable';
-  if (urlPath.startsWith('/media/')) return 'public, no-cache';
-  return 'public, no-cache';
+  return isImmutableAssetPath(urlPath) ? 'public, max-age=31536000, immutable' : 'public, no-cache';
 }
 
 function startStaticServer() {
@@ -51,16 +47,12 @@ function startStaticServer() {
         res.end();
         return;
       }
-      const isGlbGz = cleanPath.endsWith('.glb.gz');
       const headers = {
-        'Content-Type': isGlbGz
-          ? 'model/gltf-binary'
-          : (mimeTypes[extname(filePath).toLowerCase()] ?? 'application/octet-stream'),
+        'Content-Type': mimeTypes[extname(filePath).toLowerCase()] ?? 'application/octet-stream',
         'Content-Length': stat.size,
         ETag: etag,
         'Cache-Control': cacheControl,
       };
-      if (isGlbGz) headers['Content-Encoding'] = 'gzip';
       res.writeHead(200, headers);
       createReadStream(filePath).pipe(res);
     });
@@ -76,9 +68,7 @@ function classify(urlPath) {
   if (urlPath.startsWith('/media/models/')) return 'models';
   if (urlPath.startsWith('/media/materials/')) return 'materials';
   if (urlPath.startsWith('/media/photography/')) return 'photography';
-  if (urlPath.startsWith('/media/window/') || urlPath.startsWith('/media/waterfront/'))
-    return 'window';
-  if (urlPath.endsWith('.hdr') || urlPath.includes('pmrem')) return 'env';
+  if (urlPath.startsWith('/media/panoramas/')) return 'panoramas';
   if (urlPath.startsWith('/media/')) return 'media-other';
   if (urlPath.endsWith('.woff2') || urlPath.endsWith('.woff')) return 'fonts';
   if (urlPath.endsWith('.js')) return 'js';
@@ -86,73 +76,13 @@ function classify(urlPath) {
   return 'other';
 }
 
-async function measureVisit(page, cdp, url, label) {
-  const requests = new Map();
-  const onReq = (e) => {
-    const pathname = new URL(e.request.url).pathname;
-    if (!e.request.url.startsWith(url)) return;
-    requests.set(e.requestId, {
-      pathname,
-      category: classify(pathname),
-      fromCache: false,
-      status: 0,
-      encodedBytes: 0,
-      startTs: e.timestamp,
-      endTs: 0,
-    });
-  };
-  const onResp = (e) => {
-    const item = requests.get(e.requestId);
-    if (!item) return;
-    item.status = e.response.status;
-    item.fromCache = Boolean(e.response.fromDiskCache || e.response.fromServiceWorker);
-  };
-  const onCached = (e) => {
-    const item = requests.get(e.requestId);
-    if (item) item.fromCache = true;
-  };
-  const onFinish = (e) => {
-    const item = requests.get(e.requestId);
-    if (!item) return;
-    item.encodedBytes = e.encodedDataLength;
-    item.endTs = e.timestamp;
-  };
-  cdp.on('Network.requestWillBeSent', onReq);
-  cdp.on('Network.responseReceived', onResp);
-  cdp.on('Network.requestServedFromCache', onCached);
-  cdp.on('Network.loadingFinished', onFinish);
-
-  await page.goto(url, { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => performance.getEntriesByName('studio-input-ready').length > 0, {
-    timeout: 60000,
-  });
-  await page.waitForFunction(() => performance.getEntriesByName('studio-room-shaded').length > 0, {
-    timeout: 60000,
-  });
-  await page.waitForTimeout(1500);
-
-  const marks = await page.evaluate(() => {
-    const pick = (name) => performance.getEntriesByName(name)[0]?.startTime ?? null;
-    return {
-      inputReadyMs: pick('studio-input-ready'),
-      frontPrepMs: pick('studio-room-material-prep-end'),
-      shadedMs: pick('studio-room-shaded'),
-      rearReadyMs: pick('studio-room-rear-ready'),
-    };
-  });
-
-  cdp.off('Network.requestWillBeSent', onReq);
-  cdp.off('Network.responseReceived', onResp);
-  cdp.off('Network.requestServedFromCache', onCached);
-  cdp.off('Network.loadingFinished', onFinish);
-
-  const all = [...requests.values()].filter((r) => r.status > 0 || r.fromCache);
+function summarize(items, label, marks) {
   const byCategory = {};
   let totalWireBytes = 0;
   let diskCacheHits = 0;
   let revalidated304 = 0;
   let fetched200 = 0;
-  for (const r of all) {
+  for (const r of items) {
     const c = (byCategory[r.category] ??= { count: 0, wireKB: 0, hits: 0, r304: 0 });
     c.count++;
     if (r.fromCache) {
@@ -172,34 +102,110 @@ async function measureVisit(page, cdp, url, label) {
   for (const c of Object.values(byCategory)) c.wireKB = Number(c.wireKB.toFixed(1));
   return {
     label,
-    totalRequests: all.length,
+    totalRequests: items.length,
     fetched200,
     diskCacheHits,
     revalidated304,
     wireMB: Number((totalWireBytes / (1024 * 1024)).toFixed(2)),
-    marks: Object.fromEntries(
-      Object.entries(marks).map(([k, v]) => [k, v == null ? null : Math.round(v)]),
-    ),
+    marks,
     byCategory,
   };
 }
 
+async function measureVisit(page, cdp, url, label) {
+  const requests = new Map();
+  let shadedWallTime = null;
+  const onReq = (e) => {
+    const pathname = new URL(e.request.url).pathname;
+    if (!e.request.url.startsWith(url)) return;
+    requests.set(e.requestId, {
+      pathname,
+      category: classify(pathname),
+      fromCache: false,
+      status: 0,
+      encodedBytes: 0,
+      beforeShaded: shadedWallTime === null,
+    });
+  };
+  const onResp = (e) => {
+    const item = requests.get(e.requestId);
+    if (!item) return;
+    item.status = e.response.status;
+    item.fromCache ||= Boolean(e.response.fromDiskCache || e.response.fromServiceWorker);
+  };
+  const onCached = (e) => {
+    const item = requests.get(e.requestId);
+    if (item) item.fromCache = true;
+  };
+  const onFinish = (e) => {
+    const item = requests.get(e.requestId);
+    if (!item) return;
+    item.encodedBytes = e.encodedDataLength;
+  };
+  cdp.on('Network.requestWillBeSent', onReq);
+  cdp.on('Network.responseReceived', onResp);
+  cdp.on('Network.requestServedFromCache', onCached);
+  cdp.on('Network.loadingFinished', onFinish);
+
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => performance.getEntriesByName('studio-input-ready').length > 0, {
+    timeout: 60000,
+  });
+  await page.waitForFunction(() => performance.getEntriesByName('studio-room-shaded').length > 0, {
+    timeout: 60000,
+  });
+  shadedWallTime = Date.now();
+  await page.waitForFunction(
+    () => performance.getEntriesByName('studio-room-rear-ready').length > 0,
+    { timeout: 60000 },
+  );
+  await page.waitForTimeout(800);
+
+  const marks = await page.evaluate(() => {
+    const pick = (name) => performance.getEntriesByName(name)[0]?.startTime ?? null;
+    return {
+      inputReadyMs: pick('studio-input-ready'),
+      frontPrepMs: pick('studio-room-material-prep-end'),
+      shadedMs: pick('studio-room-shaded'),
+      rearReadyMs: pick('studio-room-rear-ready'),
+    };
+  });
+  const roundedMarks = Object.fromEntries(
+    Object.entries(marks).map(([k, v]) => [k, v == null ? null : Math.round(v)]),
+  );
+
+  cdp.off('Network.requestWillBeSent', onReq);
+  cdp.off('Network.responseReceived', onResp);
+  cdp.off('Network.requestServedFromCache', onCached);
+  cdp.off('Network.loadingFinished', onFinish);
+
+  const all = [...requests.values()].filter((r) => r.status > 0 || r.fromCache);
+  const firstScreen = all.filter((r) => r.beforeShaded);
+  return {
+    firstScreen: summarize(firstScreen, `${label}-first-screen`, roundedMarks),
+    settled: summarize(all, `${label}-settled`, roundedMarks),
+  };
+}
+
+rmSync(profileDir, { recursive: true, force: true });
+mkdirSync(profileDir, { recursive: true });
+
 const { server, url } = await startStaticServer();
-const browser = await chromium.launch({
+const context = await chromium.launchPersistentContext(profileDir, {
   channel: 'chrome',
   headless: true,
+  viewport: { width: 1920, height: 1080 },
   args: ['--use-angle=d3d11', '--enable-gpu', '--mute-audio'],
 });
 try {
-  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
-  const page = await context.newPage();
-  await page.route(/^https:\/\//, (route) => route.abort());
+  const page = context.pages()[0] ?? (await context.newPage());
   const cdp = await context.newCDPSession(page);
   await cdp.send('Network.enable');
   const cold = await measureVisit(page, cdp, url, 'cold');
   const warm = await measureVisit(page, cdp, url, 'warm');
   console.log(JSON.stringify({ cold, warm }, null, 2));
 } finally {
-  await browser.close();
+  await context.close();
   server.close();
+  rmSync(profileDir, { recursive: true, force: true });
 }
