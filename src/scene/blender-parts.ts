@@ -1,13 +1,7 @@
-export type PartLibrary = 'studio' | 'workshop' | 'pc-hero';
-
-const partLibraryFiles: Record<PartLibrary, string> = {
-  studio: 'room-parts.bpk',
-  workshop: 'workshop-tools.bpk',
-  'pc-hero': 'pc-hero.bpk',
-};
+export type PartLibrary = 'studio' | 'workshop';
 
 export function partLibraryPath(collection: PartLibrary) {
-  return '/media/models/' + partLibraryFiles[collection];
+  return '/media/models/' + (collection === 'studio' ? 'room-parts.bpk' : 'workshop-tools.bpk');
 }
 
 export function meshStreams(bytes: Uint8Array) {

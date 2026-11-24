@@ -10,14 +10,14 @@ import { packedBuffer } from '../src/scene/packed-buffer';
 import { workshopToolParts } from '../src/scene/workshop-tool-parts';
 import { zoneBundleIds, zoneBundlePath } from '../src/scene/zone-bundles';
 
-test('the room, PC hero, and deferred workshop archives partition the Blender meshes losslessly', async ({
+test('the room and deferred workshop archives partition the Blender meshes losslessly', async ({
   request,
 }) => {
   const root = 'public/media/models';
   const files = readdirSync(root, { recursive: true }).filter((path) => path.endsWith('.mesh'));
   const sources = new Map(files.map((file) => [file.slice(0, -5).replaceAll('\\', '/'), file]));
   const restored = new Set<string>();
-  for (const collection of ['studio', 'workshop', 'pc-hero'] as const) {
+  for (const collection of ['studio', 'workshop'] as const) {
     const url = partLibraryPath(collection);
     const response = await request.get(url);
     await expect(response).toBeOK();
@@ -26,17 +26,6 @@ test('the room, PC hero, and deferred workshop archives partition the Blender me
     const parts = unpackParts(buffer);
     if (collection === 'workshop')
       expect([...parts.keys()].sort()).toEqual(Object.values(workshopToolParts).sort());
-    if (collection === 'pc-hero') {
-      expect(parts.size).toBeGreaterThan(50);
-      expect(parts.has('astral-casting-graphite')).toBe(true);
-      expect(parts.has('atx-ivory')).toBe(true);
-      expect(parts.has('ryuo-radiator-white')).toBe(true);
-      expect(parts.has('strix-140-nylon')).toBe(true);
-      expect(parts.has('gr701-cable-bay-smoke')).toBe(true);
-      expect(parts.has('gr701-fascia-light')).toBe(false);
-      expect(parts.has('strix-fan-opal')).toBe(false);
-      expect(parts.has('thor-1600-aura')).toBe(false);
-    }
     for (const [name, bytes] of parts) {
       expect(restored.has(name), name).toBe(false);
       const source = readFileSync(join(root, sources.get(name)!));
@@ -98,7 +87,6 @@ test('the static build serves only the model deliveries available to site visito
     const expectedLogical = [
       partLibraryPath('studio'),
       partLibraryPath('workshop'),
-      partLibraryPath('pc-hero'),
       ...zoneBundleIds.map((zone) => zoneBundlePath(zone) + '.gz'),
     ];
     for (const file of sources) {
@@ -116,7 +104,6 @@ test('the static build serves only the model deliveries available to site visito
     for (const url of [
       partLibraryPath('studio'),
       partLibraryPath('workshop'),
-      partLibraryPath('pc-hero'),
       zoneBundlePath('desk') + '.gz',
       '/media/models/strix-z890-a.glb.gz',
       '/media/models/stationery/career-album.glb.gz',

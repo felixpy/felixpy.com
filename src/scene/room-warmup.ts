@@ -137,7 +137,12 @@ export function roomWarmup(
   const bgSignatures = new Set<string>();
 
   function traverseWarmable(object: Object3D, callback: (node: Object3D) => void) {
-    if (!object.visible && object.userData.studioZoneCulled !== true) return;
+    if (
+      !object.visible &&
+      object.userData.studioZoneCulled !== true &&
+      object.userData.studioWarmable !== true
+    )
+      return;
     callback(object);
     for (let i = 0; i < object.children.length; i++) {
       traverseWarmable(object.children[i], callback);
@@ -783,13 +788,18 @@ export function roomWarmup(
         const canAsync =
           typeof gl.compileAsync === 'function' &&
           Boolean(gl.extensions?.has('KHR_parallel_shader_compile'));
-        const batchCap = canAsync ? 4 : 3;
+        const batchCap = canAsync ? 12 : 3;
+        const revealed: Renderable[] = [];
         while (offset < queue.length && group.children.length < batchCap) {
           const object = queue[offset++];
           if (!object.parent || hasPreviewProgram(object, target)) continue;
           const sig = frontSignature(object);
           if (bgSignatures.has(sig)) continue;
           bgSignatures.add(sig);
+          if (!object.visible) {
+            object.visible = true;
+            revealed.push(object);
+          }
           group.children.push(object);
         }
         if (group.children.length) {
@@ -807,6 +817,7 @@ export function roomWarmup(
               gl.compile(group, camera, scene);
             }
           } finally {
+            for (const object of revealed) object.visible = false;
             group.children.length = 0;
             gl.setRenderTarget(previous);
           }

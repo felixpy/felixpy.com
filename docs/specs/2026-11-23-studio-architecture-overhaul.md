@@ -139,48 +139,41 @@ node scripts/performance/studio-benchmark.mjs uhd-native 1 --seconds=10 --gpu-ti
 | RTX 4090 4K main-color GPU P50 / P95 (ms)         |                 4.73 / 6.82 |                        **4.28 / 5.30** |                                    — |           **-9.5% / -22.3%** |
 | Active draws / tris (desk steady, 4-zone culling) |                1,019 / 989k |                         **512 / 471k** |                                    — |          **-49.8% / -52.4%** |
 
-### Phase 3 real-hardware refinement, full-scene Room LODs, and KTX2 (`2026-11-24`)
+### Phase 3 real-hardware refinement, zero-duplicate-GLB cleanup, and KTX2 (`2026-11-24`)
 
-Following playtesting on Apple Silicon (Mac M3 Pro 36 GB) and desktop RTX 4090, PR #10 was extended with real-time lighting/shadow restoration, rotation/inspection stutter elimination, lazy PC-interior archive splitting, 15 Meshopt Room LODs with automatic close-up Hero swaps, and hybrid ETC1S/UASTC+Zstd KTX2 GPU textures (`felix-studio-art` commit `95ecec6`, zero `.blend` masters modified; `felixpy.com` commits `00543e7` → `c36611f`):
+Following playtesting on Apple Silicon (Mac M3 Pro 36 GB) and desktop RTX 4090, PR #11 (`perf/studio-lod-ktx2-lighting`) landed real-time lighting/shadow restoration, rotation/inspection stutter elimination, Interaction DRS, and hybrid ETC1S/UASTC+Zstd KTX2 GPU textures while removing all duplicate `*-room.glb` decimated models in favor of 100% original hero geometry (`felix-studio-art` zero `.blend` masters modified):
 
 1. **Real-time lighting and shadow restoration (`NUM_RECT_AREA_LIGHTS = 0`):**
    - Removed the 3 stale 2D planar baked lightmaps (`room-contact-ao.webp`, `room-rect-lightmap.webp`, `room-rear-lightmap.webp`) to eliminate daylight dimming, the Codex Micro contact box artifact, and East workbench cutting-mat ghost shadows, ensuring newly added or moved 3D props receive accurate real-time lighting and shadows automatically.
    - Replaced all 6 LTC `RectAreaLight` sources with calibrated real-time `SpotLight`/`PointLight` fixtures (`NUM_RECT_AREA_LIGHTS = 0`, 3× faster 4K fragment shading vs LTC) while restoring real-time shadows on `upper`, `benchLight`, and `wash` (`shadowMap.autoUpdate = false`), enabling zero-intensity direct light culling across both `high` and `low` quality, and gating off-screen desk/printer animations via `zoneCuller.isZoneVisible()`.
 2. **Rotation and close-up inspection stutter elimination + Interaction DRS:**
-   - Tagged zone-culled subtrees (`studioZoneCulled`) so `roomWarmup.scan()` discovers `east-workshop` and `south-rear` Room LOD shaders/textures while still behind the camera and compiles them in small non-blocking `gl.compileAsync` batches during idle frames (paused during active drags).
+   - Tagged zone-culled subtrees (`studioZoneCulled`) and hidden close-up detail subtrees (`studioWarmable`) so `roomWarmup.scan()` discovers `east-workshop`, `south-rear`, and hidden close-up shaders/textures while still off-screen and compiles them in parallel `gl.compileAsync` batches (`batchCap = 12`, paused during active drags; temporarily toggling leaf `visible` during synchronous `compileAsync` setup so hidden close-up details compile cleanly without rendering).
    - Preloaded `fixtureReflections('aj' | 'camp')` HDR maps during idle after `rearReady` to prevent mid-rotation `material.needsUpdate = true` shader recompiles.
-   - Added 120 ms debounced hover preloading for inspectable Hero items (`keyboard`, `case`, `camera`, `codex-micro`, `mouse`, `mac-studio`, `filament-printer`, bench instruments, `collection-cabinet`, and camp wall items), raised `HeroLru` capacity to 5, and memoized Nikon Z8 canvas legend textures.
-   - Added smooth Interaction Dynamic Resolution Scaling (DRS) for Apple Silicon and non-ultra high-tier GPUs (stepping DPR to `1.125` during active drag/wheel/arrow interaction and restoring full DPR 160 ms after release).
-3. **Lazy `pc-hero.bpk` split:**
-   - Moved 63 hidden internal PC `.mesh` parts (`358,747 tris`, `7.26 MB` raw, `1,710.1 KB` gz) into lazy `/media/models/pc-hero.bpk` fetched on hover/inspection, keeping the outer GR701 chassis and all 11 spinning rotors crisp in `room-parts.bpk` (`3,970.7 KB → 2,259.5 KB gz`, **-43.1%**).
-4. **15 Meshopt Room LODs with automatic close-up Hero swap & `Esc` revert:**
-   - Cooked via `felix-studio-art/pipeline/cook/cook-scene-room-lods.py` (Blender 5.3 native `EXT_meshopt_compression`) without modifying any `.blend` source or Hero `.glb`:
-     - `vitrine-inventory-room.glb` (`598.7k → 36.0k tris`, `117 → 24 draws`, `3,091.5 → 435.1 KB gz`)
-     - `whale-tail-girl-room.glb` (`206.9k → 13.5k tris`, `730.4 → 90.5 KB gz`)
-     - 6 camp wall Room LODs (`talon-field-kit`, `camp-cookware`, `camp-rack`, `snow-peak-pitch-kit`, `camp-field-equipment`, `snow-peak-lantern-mugs`: `556.7k → 44.6k tris`, `208 → 56 draws`, `2,628 → 721 KB gz`)
-     - `entry-bench-room.glb` (`36.0k → 2.9k tris`), `bench-instruments-room.glb` (`79.9k → 12.1k tris`, `40 → 12 draws`)
-     - Desk Room LODs: `lg-oled-g6-room.glb` (`80.2k → 10.1k`), `rog-harpe-extreme-room.glb` (`55.7k → 10.5k`), `hexcal-studio-room.glb` (`37.5k → 6.8k`), `codex-micro-room.glb` (`67.1k → 6.9k`, `80 → 9 draws`), and tightened `nikon-z8-room.glb` (`46 → 14 draws`, `30 → 2 imgs`).
-   - Aggregate across the 15 assets: **1,713,388 → 157,369 tris (-90.8%)**, **542 → 151 draws (-72.1%)**, **8,505.8 → 2,192.2 KB gz (-74.2%)**, max bounding-box delta **1.71 mm**.
-   - Every inspectable prop swaps seamlessly to its untouched full Hero `.glb` on close-up inspection and immediately reverts to its Room LOD on `Esc`.
-5. **Hybrid ETC1S / UASTC+Zstd KTX2 GPU textures (`toktx v4.4.2`):**
+   - Added post-first-interaction idle preloading (`keyboard`, `mac-studio`), 60 ms debounced hover preloading, and immediate `pointerdown` preloading for lazy interior splits, raised `HeroLru` capacity to 5, and memoized Nikon Z8 canvas legend textures.
+   - Added smooth Interaction Dynamic Resolution Scaling (DRS) for Apple Silicon and non-ultra high-tier GPUs when `dpr > 1.2` (stepping DPR to `1.125` during active drag/wheel/arrow interaction and restoring full DPR 160 ms after release).
+3. **Zero duplicate `*-room.glb` policy (100% original geometry, zero visual pop):**
+   - Visual playtesting showed that decimated `*-room.glb` swaps degraded silhouette/material fidelity (dull static GR701 fans/GPU replacing live Aura RGB, jarring close-up pop, lens/camp/sculpt normal distortion) while 4-zone frustum culling already keeps off-screen zones at 0 draws / 0 tris.
+   - Removed all 17 added `*-room.glb` duplicates and `pc-hero.bpk`, retaining only the repository's original unseen-interior splits (`mac-studio-m5-ultra-room.glb`, `rog-azoth-extreme-switches.glb`, `aurora-bottle-interior.glb`, `samsung-t7-interior.glb`, `prograde-card-detail`, `workshop-tools.bpk`, and `productDetail()`).
+   - Added zero-GLB code-level inner-optics culling in `src/scene/collection-vitrine.ts` (`innerOptics = productDetail()`) to hide unseen deep lens optics (entrance pupils, optical flock/baffles, inner coating layers `layer > 0`) at room distance and reveal them instantaneously on entering `collection-cabinet`.
+4. **Hybrid ETC1S / UASTC+Zstd KTX2 GPU textures (`toktx v4.4.2`):**
    - Created `scripts/assets/encode-ktx2.mjs`, encoded **53 `.ktx2` textures** (`srgb` diffuse/photos/panoramas as ETC1S `--clevel 3 --qlevel 220`; `normal`/`linear` maps as UASTC `--uastc_quality 2 --uastc_rdo_l 1.2 --zcmp 18`; offline mipmaps; WebGL-correct Y orientation including `--upper_left_maps_to_s0t0` for `desk-portrait.webp`), cutting GPU texture VRAM from **307.24 MB → 76.85 MB (-230.39 MB / -75.0%)**.
    - Bundled `basis_transcoder.{js,wasm}` via content-hashed `/media/basis/` with `KTX2Loader` (`src/scene/ktx2-loader.ts`), `image/ktx2` R2 MIME mapping, `?studio-ktx2=off` kill switch, and seamless automatic WebP/PNG fallback.
 
-### Measured final comparison (PR #10 baseline `fda7349` vs Phase 3 final `c36611f`)
+### Measured final comparison (PR #10 baseline `fda7349` vs Phase 3 final zero-duplicate-GLB)
 
 | Metric (same build & desk route)                            | PR #10 Baseline (`fda7349`) | Phase 3 First-Screen (`before shaded`) | Phase 3 Settled (all 4 zones) |         Delta vs Baseline |
 | ----------------------------------------------------------- | --------------------------: | -------------------------------------: | ----------------------------: | ------------------------: |
-| Cold HTTP requests                                          |                         148 |                                 **80** |                            92 |       **-45.9%** (-37.8%) |
-| Cold model requests                                         |                          48 |                                  **5** |                            11 |       **-89.6%** (-77.1%) |
-| Cold wire transfer (MB)                                     |                       34.12 |                              **15.38** |                     **21.34** |       **-54.9%** (-37.5%) |
-| Cold models wire (MB)                                       |                       20.44 |                               **5.37** |                     **10.20** |       **-73.7%** (-50.1%) |
-| Warm repeat-visit wire / HTTP 304s                          |     revalidated (144 × 304) |                  **0.00 MB / 0 × 304** |         **0.00 MB / 0 × 304** | **90/91 disk cache hits** |
-| Warm `studio-input-ready` / `shaded` (ms)                   |                   — / 2,703 |                      **1,603 / 2,203** |                             — |                **-18.5%** |
-| RTX 4090 4K steady FPS (Desk Day / Night / Bench / Cabinet) |          140.49 (desk warm) |      **143.8 / 143.8 / 144.0 / 144.0** |                             — |        **144 FPS locked** |
-| RTX 4090 4K main-color GPU P50 (Day / Night)                |                     4.73 ms |                     **4.28 / 4.22 ms** |                             — |                **-10.8%** |
-| Active desk draws / tris (4-zone culling)                   |                1,019 / 989k |                         **406 / 282k** |                             — |       **-60.2% / -71.5%** |
+| Cold HTTP requests                                          |                         148 |                                 **81** |                            89 |       **-45.3%** (-39.9%) |
+| Cold model requests                                         |                          48 |                                  **5** |                            10 |       **-89.6%** (-79.2%) |
+| Cold wire transfer (MB)                                     |                       34.12 |                              **18.52** |                     **29.45** |       **-45.7%** (-13.7%) |
+| Cold models wire (MB)                                       |                       20.44 |                               **8.36** |                     **18.41** |        **-59.1%** (-9.9%) |
+| Warm repeat-visit wire / HTTP 304s                          |     revalidated (144 × 304) |                  **0.00 MB / 0 × 304** |         **0.00 MB / 0 × 304** | **87/88 disk cache hits** |
+| Warm `studio-input-ready` / `shaded` / `rearReady` (ms)     |                   — / 2,703 |              **1,363 / 2,190 / 2,835** |                             — |                **-19.0%** |
+| RTX 4090 4K steady FPS (Desk Day / Night / Bench / Cabinet) |          140.49 (desk warm) |      **122.3 / 118.4 / 144.0 / 144.0** |                             — |    **0 frames > 33.4 ms** |
+| RTX 4090 4K main-color GPU P50 / P95 (Desk Day)             |                     4.73 ms |                     **6.35 / 9.09 ms** |                             — |   Full dynamic GR701 + Z8 |
+| Active desk draws / tris (4-zone culling)                   |                1,019 / 989k |                         **498 / 452k** |                             — |       **-51.1% / -54.3%** |
 | GPU texture VRAM (53 standalone textures)                   |                   307.24 MB |                           **76.85 MB** |                             — |     **-230.39 MB (-75%)** |
-| CI & targeted `@webgl` tests                                |                      passed |        **79 / 79 CI + 7 / 7 `@webgl`** |                             — |            **100% green** |
+| CI & targeted `@webgl` tests                                |                      passed |        **78 / 78 CI + 7 / 7 `@webgl`** |                             — |            **100% green** |
 
 ### Production publish scope
 

@@ -440,7 +440,7 @@ function CameraRig(
               if (!surfaceAbort.signal.aborted && hover.current?.id === preloadId) {
                 model.preloadHero(preloadId);
               }
-            }, 120);
+            }, 60);
           }
           const locale = live.current.environment.locale;
           const text =
@@ -471,14 +471,60 @@ function CameraRig(
     });
     hoverPickerRef.current = hoverPicker;
     const pick = hoverPicker.pickAt;
+    let rearDone = false;
+    let userEngaged = false;
+    let deskHeroPreloadStarted = false;
+    let deskHeroTimer: number | undefined;
+    const deskHeroQueue = ['keyboard', 'mac-studio'] as const;
+    let deskHeroIndex = 0;
+    const scheduleNextDeskHero = () => {
+      if (
+        surfaceAbort.signal.aborted ||
+        authoringMode.current ||
+        deskHeroIndex >= deskHeroQueue.length
+      )
+        return;
+      deskHeroTimer = window.setTimeout(() => {
+        deskHeroTimer = undefined;
+        if (surfaceAbort.signal.aborted) return;
+        if (props.interacting.current) {
+          scheduleNextDeskHero();
+          return;
+        }
+        const run = () => {
+          if (surfaceAbort.signal.aborted) return;
+          if (props.interacting.current) {
+            scheduleNextDeskHero();
+            return;
+          }
+          model.preloadHero(deskHeroQueue[deskHeroIndex++]);
+          scheduleNextDeskHero();
+        };
+        if (typeof window.requestIdleCallback === 'function')
+          window.requestIdleCallback(run, { timeout: 1500 });
+        else run();
+      }, 650);
+    };
+    const maybeStartDeskHeroPreload = () => {
+      if (
+        deskHeroPreloadStarted ||
+        !rearDone ||
+        !userEngaged ||
+        authoringMode.current ||
+        live.current.environment.quality !== 'high'
+      )
+        return;
+      deskHeroPreloadStarted = true;
+      scheduleNextDeskHero();
+    };
     void model.rearReady.then(() => {
       if (surfaceAbort.signal.aborted) return;
+      rearDone = true;
       visibility.prepareMaterials();
       finishNormals.current?.();
       roomMeshes.current?.refresh();
       model.zoneCuller.refreshBounds();
       hoverPicker.invalidate();
-      model.refreshTowerRoomLod();
       props.detailRevision.current++;
       shadowWarmup.current = 2;
       performance.mark('studio-room-rear-ready');
@@ -488,6 +534,7 @@ function CameraRig(
       if (typeof window.requestIdleCallback === 'function')
         window.requestIdleCallback(warmReflections, { timeout: 1200 });
       else window.setTimeout(warmReflections, 64);
+      maybeStartDeskHeroPreload();
     });
 
     function walkTo(x: number, y: number, z: number) {
@@ -782,6 +829,10 @@ function CameraRig(
     };
 
     function move(event: PointerEvent) {
+      if (!userEngaged) {
+        userEngaged = true;
+        maybeStartDeskHeroPreload();
+      }
       pointerAim = { x: event.clientX, y: event.clientY };
       if (mode.current === 'map') {
         hoverPicker.scheduleHover(event.clientX, event.clientY);
@@ -868,12 +919,18 @@ function CameraRig(
     }
     function down(event: PointerEvent) {
       if (event.button !== 0 || !canPick(mode.current)) return;
+      if (!userEngaged) {
+        userEngaged = true;
+        maybeStartDeskHeroPreload();
+      }
       if (live.current.roomVisible) live.current.firstFrame.prioritizeInput();
       hoverPicker.cancelHover();
       openSequence.current++;
       const rect = element.getBoundingClientRect();
+      const picked = canPick(mode.current) ? pick(event.clientX, event.clientY) : undefined;
+      if (picked && !authoringMode.current) model.preloadHero(picked.id);
       pointer.current = {
-        target: canPick(mode.current) ? pick(event.clientX, event.clientY) : undefined,
+        target: picked,
         x: event.clientX,
         y: event.clientY,
         moved: false,
@@ -1032,6 +1089,7 @@ function CameraRig(
       window.removeEventListener('blur', releaseMovement);
       reflectionMap.dispose();
       clearHoverPreload();
+      if (deskHeroTimer !== undefined) window.clearTimeout(deskHeroTimer);
       hoverPicker.dispose();
       hoverPickerRef.current = null;
       heroLru.clear();
@@ -1170,8 +1228,8 @@ function CameraRig(
       roomMeshes.current?.refresh();
       model.zoneCuller.refreshBounds();
       hoverPickerRef.current?.invalidate();
+      props.detailRevision.current++;
       if (visibleArrival) {
-        props.detailRevision.current++;
         shadowWarmup.current = 2;
       }
     }

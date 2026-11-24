@@ -247,22 +247,15 @@ export function* buildStudioSteps(
   const skog = skogDiffuser(interior, [-1.085, 1.31, 2.951], rearLoader, deferDesk);
   const proof = flightProof(interior, p);
   yield;
-  const authoring =
-    import.meta.env.DEV &&
-    typeof location !== 'undefined' &&
-    new URLSearchParams(location.search).get('review') === 'authoring';
-  const useRoomLod = !authoring && !preloadInspection;
   const {
     unit: pc,
     updateLightGuide,
     updateTelemetry,
     setComponentLights,
     selectDetail: selectTowerDetail,
-    preloadHero: preloadTowerHero,
-    refreshRoomLod: refreshTowerRoomLod,
     fanGuides,
     reflections,
-  } = tower(interior, p, aura, manager, { roomLod: useRoomLod, mounted: detailMounted });
+  } = tower(interior, p, aura, manager);
   yield;
   const channelHues = [0.926, 0.815, 0.727, 0.669, 0.614, 0.558, 0.526];
   const fans: T.Object3D[] = [];
@@ -277,19 +270,14 @@ export function* buildStudioSteps(
     evictSwitches,
     selectDetail: selectKeySwitches,
     preloadHero: preloadKeyboardHero,
-  } = keyboard(interior, manager, keyLight, detailMounted, { roomLod: useRoomLod });
+  } = keyboard(interior, manager, keyLight, detailMounted);
   if (preloadInspection) {
     deferDesk(() => prepareMacDetail(rearLoader));
     deferDesk(() => prepareSwitches(rearLoader));
     deferDesk(() => prepareDrive(rearLoader));
     deferDesk(() => prepareCard(rearLoader));
   }
-  const {
-    unit: pointer,
-    badge: mouseBadge,
-    selectDetail: selectMouseDetail,
-    preloadHero: preloadMouseHero,
-  } = mouse(interior, manager, mouseLight, { roomLod: useRoomLod, mounted: detailMounted });
+  const { unit: pointer, badge: mouseBadge } = mouse(interior, manager, mouseLight);
   const task = deskFixture(interior, p, [-0.981, 0.75, 0.01], loader);
   const control = remote(interior, manager, window.remoteRest);
   const { model: rocket, prepare: prepareRocket } = rocketModel(bench.unit, p, detailMounted);
@@ -303,10 +291,7 @@ export function* buildStudioSteps(
   const pencil = group(interior, 'Mitsubishi 9850 HB', [0.344, desk.top, 0.313]);
   pencil.rotation.y = Math.PI / 2 - 0.18;
   loadDisplayModel(pencil, '/media/models/mitsubishi-9850.glb', manager);
-  const deskCamera = nikonZ8(interior, p, bridgePrint, manager, {
-    roomLod: useRoomLod,
-    mounted: detailMounted,
-  });
+  const deskCamera = nikonZ8(interior, p, bridgePrint, manager);
   yield;
   const samplePrint = photoPrinter(
     bench.unit,
@@ -415,7 +400,6 @@ export function* buildStudioSteps(
       id: 'talon-pack',
       type: 'inspect',
       object: fieldGear.bag,
-      onInspect: (active: boolean) => fieldGear.selectBagDetail(active),
       size: 0.56,
       viewDistance: 0.94,
       pose: [0.07, -0.49, -0.02],
@@ -426,11 +410,10 @@ export function* buildStudioSteps(
         zh: '小鹰魔爪 26 升 · 幻影灰 / 深炭灰',
       },
     },
-    ...fieldGear.poles.map((object, index): Target => ({
+    ...fieldGear.poles.map((object): Target => ({
       id: object.name,
       type: 'inspect',
       object,
-      onInspect: (active: boolean) => fieldGear.selectPoleDetail(index, active),
       size: 0.61,
       viewDistance: 0.88,
       pose: [0.05, 0.18, -0.21],
@@ -445,7 +428,6 @@ export function* buildStudioSteps(
       id: 'titanium-cup',
       type: 'inspect',
       object: fieldGear.cup,
-      onInspect: (active: boolean) => fieldGear.selectCupDetail(active),
       size: 0.135,
       viewDistance: 0.3,
       pose: [0.38, -0.18, 0.04],
@@ -484,7 +466,6 @@ export function* buildStudioSteps(
       id: 'trek-cookset',
       type: 'inspect',
       object: fieldGear.cookset,
-      onInspect: (active: boolean) => fieldGear.selectCookwareDetail('cookset', active),
       size: 0.145,
       viewDistance: 0.29,
       pose: [0.26, -0.22, 0],
@@ -496,7 +477,6 @@ export function* buildStudioSteps(
       id: 'field-coffee-master',
       type: 'inspect',
       object: fieldGear.coffee,
-      onInspect: (active: boolean) => fieldGear.selectCookwareDetail('coffee', active),
       size: 0.2,
       viewDistance: 0.39,
       pose: [0.18, -0.23, 0],
@@ -548,7 +528,6 @@ export function* buildStudioSteps(
       id: 'codex-micro',
       type: 'inspect',
       object: codexMicro,
-      onInspect: (active: boolean) => codexMicro.userData.selectDetail?.(active),
       size: 0.108,
       viewDistance: 0.19,
       pose: [1.1, -0.12, 0],
@@ -727,7 +706,6 @@ export function* buildStudioSteps(
       id: 'mouse',
       type: 'inspect',
       object: pointer,
-      onInspect: selectMouseDetail,
       label: '检视无线鼠标',
       english: 'Inspect the wireless mouse',
       size: 0.132,
@@ -821,7 +799,6 @@ export function* buildStudioSteps(
       id: 'switch-sampler',
       type: 'inspect',
       object: bench.tray,
-      onInspect: (active: boolean) => bench.selectInstrumentDetail(active ? 'tester' : undefined),
       label: '检视轴体试样',
       english: 'Examine the switch sampler',
       size: 0.079,
@@ -832,7 +809,6 @@ export function* buildStudioSteps(
       id: 'multimeter',
       type: 'inspect',
       object: bench.meter,
-      onInspect: (active: boolean) => bench.selectInstrumentDetail(active ? 'meter' : undefined),
       label: '检视 Fluke 115 万用表',
       english: 'Examine the Fluke 115 multimeter',
       size: 0.167,
@@ -843,7 +819,6 @@ export function* buildStudioSteps(
       id: 'pliers',
       type: 'inspect',
       object: bench.pliers,
-      onInspect: (active: boolean) => bench.selectInstrumentDetail(active ? 'cutters' : undefined),
       label: '检视斜口钳',
       english: 'Examine the diagonal cutters',
       size: 0.125,
@@ -1077,26 +1052,15 @@ export function* buildStudioSteps(
     gearWall: fieldGear.zone,
     pickRoots: [interior, window.unit],
     zoneCuller,
-    refreshTowerRoomLod,
     preloadFixtureReflections() {
       floorLamp.preload();
       fieldGear.preloadReflections();
     },
     preloadHero(id: string) {
       if (id === 'keyboard') preloadKeyboardHero();
-      else if (id === 'case') preloadTowerHero();
-      else if (id === 'camera') deskCamera.userData.preloadDetail?.();
-      else if (id === 'codex-micro') codexMicro.userData.preloadDetail?.();
-      else if (id === 'mouse') preloadMouseHero();
       else if (id === 'mac-studio') void prepareMacDetail(rearLoader);
-      else if (id === 'filament-printer') printer.preloadHero();
-      else if (id === 'switch-sampler' || id === 'multimeter' || id === 'pliers')
-        bench.preloadInstrumentsHero();
-      else if (id === 'collection-cabinet') {
-        void rear.prepare('cabinet');
-        vitrine.preloadHero();
-      } else if (id === 'equipment-wall') void rear.prepare('gear');
-      else fieldGear.preloadOutdoorHero(id);
+      else if (id === 'collection-cabinet') void rear.prepare('cabinet');
+      else if (id === 'equipment-wall') void rear.prepare('gear');
     },
     evictHero(id: string) {
       if (id === 'keyboard') evictSwitches();
@@ -1217,7 +1181,6 @@ export function* buildStudioSteps(
     ) {
       selectTowerDetail(inspectedHardware === 'case');
       vitrine.selectDetail(inspectedHardware === 'collection-cabinet');
-      printer.selectDetail(inspectedHardware === 'filament-printer');
       fieldGear.updateLanternPort();
       fieldGear.bottleClosure.update();
       selectMacDetail(

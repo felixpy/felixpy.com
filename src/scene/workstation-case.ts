@@ -13,7 +13,6 @@ export function workstationCase(
   aura: T.MeshStandardMaterial[],
   manager: T.LoadingManager,
   details: ProductDetail,
-  options: { deferCableBay?: boolean } = {},
 ) {
   const assembly = group(parent, 'Computer tower', [1.035, 1.069, -0.048]);
   const unit = group(assembly, 'ROG Hyperion GR701 chassis');
@@ -67,26 +66,7 @@ export function workstationCase(
   glassDoor.name = 'GR701 starboard tempered glass';
   glassDoor.castShadow = false;
   glassDoor.renderOrder = 2;
-  let doorTrim: T.Mesh | undefined;
-  let cableBayMounted = false;
-  if (options.deferCableBay) {
-    doorTrim = mesh(door, blenderMesh('gr701-cable-bay-trim'), surface('#323439', 0.5, 0.22));
-    doorTrim.name = 'GR701 cable bay · trim';
-  } else {
-    cableBayMounted = true;
-    cableChamber(unit, door, details);
-  }
-  function mountCableBay() {
-    if (cableBayMounted) return;
-    cableBayMounted = true;
-    if (doorTrim) {
-      doorTrim.removeFromParent();
-      doorTrim.geometry.dispose();
-      (doorTrim.material as T.Material).dispose();
-      doorTrim = undefined;
-    }
-    cableChamber(unit, door, details);
-  }
+  cableChamber(unit, door, details);
   for (const y of [-0.263, 0.263]) {
     box(unit, [0.005, 0.006, 0.489], [-w / 2 + 0.012, y, -0.051], p.rubber, 0.001);
     box(unit, [0.0013, 0.0012, 0.484], [-w / 2 + 0.0083, y, -0.051], p.steel, 0.00035);
@@ -189,7 +169,6 @@ export function workstationCase(
     unit: assembly,
     showPower,
     accents: { fascia: finishes.light, psu: powerLight },
-    mountCableBay,
     updateLightGuide(active: boolean, high: boolean) {
       panel.emissive.setScalar(1).lerp(aura[5].emissive, 0.16);
       panel.emissiveIntensity = active ? 1.45 : 0;

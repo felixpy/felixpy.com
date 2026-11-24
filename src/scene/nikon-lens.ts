@@ -118,7 +118,7 @@ export function nikkorZoom(parent: T.Object3D, manager: T.LoadingManager) {
   const barrel = group(lens, 'Z mount flange');
   barrel.rotation.set(-Math.PI / 2, 0, Math.PI);
   const detail = productDetail();
-  void loadDisplayModel(barrel, '/media/models/nikkor-z24-70-sii.glb', manager, {
+  return loadDisplayModel(barrel, '/media/models/nikkor-z24-70-sii.glb', manager, {
     mesh(part) {
       const finish = part.material instanceof T.Material ? part.material.name : '';
       if (

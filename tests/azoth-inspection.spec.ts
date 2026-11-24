@@ -141,6 +141,7 @@ test('inspection preload waits for both the installed keyboard and its switch as
   const holdBase = Promise.withResolvers<void>();
   const holdSwitches = Promise.withResolvers<void>();
   let requests = 0;
+  await page.route('**/zone-desk.glb.gz', (route) => route.abort());
   await page.route('**/rog-azoth-extreme.glb*', async (route) => {
     await holdBase.promise;
     await route.continue();
