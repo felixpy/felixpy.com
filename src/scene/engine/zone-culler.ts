@@ -187,12 +187,20 @@ export function createZoneCuller(padding = DEFAULT_ZONE_PADDING) {
     };
   }
 
+  function isZoneVisible(zone: StudioZone): boolean {
+    for (let i = 0; i < entries.length; i++) {
+      if (entries[i].zone === zone && !entries[i].culled) return true;
+    }
+    return false;
+  }
+
   return {
     register,
     zoneOf,
     refreshBounds,
     restoreAll,
     update,
+    isZoneVisible,
     stats,
   };
 }
