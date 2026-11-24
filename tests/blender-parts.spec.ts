@@ -8,6 +8,7 @@ import { decodeBlenderMesh } from '../src/scene/blender-mesh';
 import { partLibraryPath, unpackParts } from '../src/scene/blender-parts';
 import { packedBuffer } from '../src/scene/packed-buffer';
 import { workshopToolParts } from '../src/scene/workshop-tool-parts';
+import { zoneBundleIds, zoneBundlePath } from '../src/scene/zone-bundles';
 
 test('the room and deferred workshop archives partition the Blender meshes losslessly', async ({
   request,
@@ -79,7 +80,11 @@ test('the static build serves only the model deliveries available to site visito
     expect(preloaded).toEqual([partLibraryPath('studio')]);
     const models = 'media/models';
     const sources = readdirSync(join('public', models), { recursive: true, withFileTypes: true });
-    const expected = [partLibraryPath('studio'), partLibraryPath('workshop')];
+    const expected = [
+      partLibraryPath('studio'),
+      partLibraryPath('workshop'),
+      ...zoneBundleIds.map((zone) => zoneBundlePath(zone) + '.gz'),
+    ];
     for (const file of sources) {
       if (!file.isFile() || file.name.endsWith('.mesh')) continue;
       const path = '/' + relative('public', join(file.parentPath, file.name)).replaceAll('\\', '/');

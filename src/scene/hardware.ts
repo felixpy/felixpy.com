@@ -1,6 +1,4 @@
 import * as T from 'three';
-import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { canvasTexture, group, mesh, surface, type XYZ } from './geometry';
 import { assetUrl } from '../app/asset-url';
 import type { Locale } from '../app/locale';
@@ -9,7 +7,6 @@ import { installMotherboard } from './motherboard';
 import { fittedCable, pcPowerHarness } from './case-interior-parts';
 import { ryuoIV } from './ryuo-iv';
 import { deferredDisplayModel, loadDisplayModel } from './display-model';
-import { packedBuffer } from './packed-buffer';
 import { disposeSubtree } from './engine/hero-lru';
 import { galleryDisplay } from './gallery-display';
 import { astralGraphics } from './astral-graphics';
@@ -97,8 +94,6 @@ function chassisFan(
   return unit;
 }
 
-const GLB_MAGIC = 0x46546c67; // 'glTF' little-endian
-
 const LIVE_TOWER_MESH_NAMES = new Set([
   'GR701 port tempered glass',
   'GR701 starboard tempered glass',
@@ -106,28 +101,6 @@ const LIVE_TOWER_MESH_NAMES = new Set([
   'Thor 1600W Titanium III • aura',
   'Thor OLED power draw',
 ]);
-
-async function tryLoadOptionalGlb(path: string): Promise<T.Group | null> {
-  if (typeof fetch !== 'function') return null;
-  for (const candidate of [path + '.gz', path]) {
-    try {
-      const response = await fetch(assetUrl(candidate));
-      if (!response.ok) continue;
-      const contentType = response.headers.get('content-type') ?? '';
-      if (contentType.startsWith('text/')) continue;
-      const buffer = await packedBuffer(response);
-      if (buffer.byteLength < 12) continue;
-      if (new DataView(buffer).getUint32(0, true) !== GLB_MAGIC) continue;
-      await MeshoptDecoder.ready;
-      const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
-      const { scene } = await loader.parseAsync(buffer, T.LoaderUtils.extractUrlBase(path));
-      return scene;
-    } catch {
-      // Optional asset absent or unavailable — fall back silently to full assembly.
-    }
-  }
-  return null;
-}
 
 function isInsideNamedAncestor(
   node: T.Object3D,
@@ -330,27 +303,16 @@ export function tower(
   }
 
   if (deferHeroInterior) {
-    const lodPath = '/media/models/gr701-room.glb';
-    manager.itemStart(lodPath);
-    void tryLoadOptionalGlb(lodPath)
-      .then((lodScene) => {
-        if (!lodScene) {
-          ensureHeroInterior();
-          return;
-        }
-        lodScene.traverse((part) => {
-          if (!(part instanceof T.Mesh)) return;
-          part.castShadow = !(part.material instanceof T.Material && part.material.transparent);
-          part.receiveShadow = true;
-          registerLight(part);
-        });
-        roomLodGroup.add(lodScene);
+    void loadDisplayModel(roomLodGroup, '/media/models/gr701-room.glb', manager, {
+      mesh: registerLight,
+      mounted(lodScene) {
         roomLodReady = true;
         applyRoomLodVisibility(!inspectingCase, true);
-        lodScene.updateWorldMatrix(true, true, true);
         options.mounted?.(lodScene);
-      })
-      .finally(() => manager.itemEnd(lodPath));
+      },
+    }).catch(() => {
+      ensureHeroInterior();
+    });
   }
 
   return {

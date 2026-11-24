@@ -46,6 +46,10 @@ export function assembleProducts(sources, roots) {
       if (item.skin !== undefined || item.camera !== undefined)
         throw Error('Expected a rigid display product');
       ref(item, 'mesh', 'meshes');
+      const instancing = item.extensions?.EXT_mesh_gpu_instancing?.attributes;
+      if (instancing) {
+        for (const semantic in instancing) ref(instancing, semantic, 'accessors');
+      }
       if (item.children) item.children = item.children.map((index) => map(source, 'nodes', index));
     } else if (type === 'meshes') {
       for (const primitive of item.primitives) {
