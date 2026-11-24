@@ -5,6 +5,7 @@ import type { ProductDetail } from './product-detail';
 
 export function cableChamber(chassis: T.Group, door: T.Group, details: ProductDetail) {
   const bay = group(chassis, 'GR701 rear cable-management chamber');
+  details.close(bay);
   const steel = surface('#42464d', 0.47, 0.48);
   const smoke = new T.MeshPhysicalMaterial({
     color: '#383c43',

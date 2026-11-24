@@ -138,13 +138,13 @@ export function buildWindow(
   box(unit, [0.15, 0.019, width - 0.029], [x - 0.063, y1 - 0.009, centerZ], p.wood, 0.002);
   box(unit, [0.414, 0.043, width + 0.066], [x + 0.003, y0 + 0.0155, centerZ], p.limestone, 0.0032);
   box(unit, [0.018, 0.046, width + 0.034], [x + 0.009, y0 - 0.024, centerZ], p.wood, 0.002);
-  const glass = new T.MeshPhysicalMaterial({
+  const glass = new T.MeshStandardMaterial({
     color: '#d3dedd',
-    roughness: 0.06,
-    metalness: 0,
+    roughness: 0.05,
+    metalness: 0.05,
+    envMapIntensity: 1.35,
     transparent: true,
     opacity: 0.032,
-    clearcoat: 1,
     depthWrite: false,
   });
   const pane = box(

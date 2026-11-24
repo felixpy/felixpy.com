@@ -1,4 +1,5 @@
 import * as T from 'three';
+import { assetUrl } from '../app/asset-url';
 import { box, canvasTexture, group, mesh, surface, tube, type XYZ } from './geometry';
 import { loadDisplayModel } from './display-model';
 import { nikonBody } from './nikon-body';
@@ -145,11 +146,11 @@ function rearControls(
 }
 
 function topControls(camera: T.Group, p: Palette) {
-  const lcd = new T.MeshPhysicalMaterial({
+  const lcd = new T.MeshStandardMaterial({
     color: '#182025',
-    roughness: 0.23,
-    clearcoat: 0.78,
-    clearcoatRoughness: 0.13,
+    roughness: 0.14,
+    metalness: 0.08,
+    envMapIntensity: 1.25,
   });
   box(camera, [0.035, 0.00065, 0.019], [-0.046, 0.04265, -0.012], p.black, 0.00025);
   box(camera, [0.028, 0.00045, 0.0156], [-0.043, 0.04299, -0.012], lcd, 0.0002);
@@ -192,52 +193,117 @@ export function nikonZ8(
   p: Palette,
   photo: T.Texture,
   manager: T.LoadingManager,
+  options: { roomLod?: boolean; mounted?: (scene: T.Group) => void } = {},
 ) {
   const camera = group(parent, 'Nikon Z8 with NIKKOR Z 24–70mm f/2.8 S II', [0.53, 0.802, -0.027]);
   camera.rotation.y = 0.65;
-  const { casting: alloy, closedGrip } = nikonBody(camera, p);
-  const ports = group(camera, 'Terminal cover gaskets', [0.0705, 0, -0.007]);
-  for (const [y, height] of [
-    [0.004, 0.026],
-    [-0.024, 0.024],
-  ]) {
-    box(ports, [0.0015, height, 0.028], [0, y, 0], p.black, 0.0007);
-    box(ports, [0.0018, height - 0.0022, 0.026], [0.001, y, 0], p.rubber, 0.00085);
-    box(ports, [0.00085, 0.005, 0.003], [0.0022, y - 0.001, -0.009], alloy, 0.00035);
+  const authoring =
+    import.meta.env.DEV &&
+    typeof location !== 'undefined' &&
+    new URLSearchParams(location.search).get('review') === 'authoring';
+  const useRoomLod = Boolean(options.roomLod && !authoring);
+  const roomGroup = group(camera, 'Nikon Z8 room LOD');
+  const roomCardDoorAnchor = useRoomLod
+    ? group(roomGroup, 'Z8 closed card door and overmould')
+    : undefined;
+  const roomHitProxy = useRoomLod
+    ? mesh(
+        roomGroup,
+        new T.BoxGeometry(0.145, 0.115, 0.16),
+        new T.MeshLambertMaterial({ colorWrite: false, depthWrite: false }),
+        [0, 0.005, 0.04],
+      )
+    : undefined;
+  if (roomHitProxy) roomHitProxy.castShadow = roomHitProxy.receiveShadow = false;
+  const heroGroup = group(camera, 'Nikon Z8 hero detail');
+  let roomLoaded = false;
+  let heroMounted = false;
+  let inspecting = false;
+
+  const sync = () => {
+    if (!useRoomLod) return;
+    heroGroup.visible = (inspecting || !roomLoaded) && heroMounted;
+    roomGroup.visible = !heroGroup.visible;
+  };
+
+  function ensureHero(loaderManager: T.LoadingManager) {
+    if (heroMounted) return;
+    heroMounted = true;
+    roomCardDoorAnchor?.removeFromParent();
+    const target = useRoomLod ? heroGroup : camera;
+    const { casting: alloy, closedGrip } = nikonBody(target, p);
+    const ports = group(target, 'Terminal cover gaskets', [0.0705, 0, -0.007]);
+    for (const [y, height] of [
+      [0.004, 0.026],
+      [-0.024, 0.024],
+    ]) {
+      box(ports, [0.0015, height, 0.028], [0, y, 0], p.black, 0.0007);
+      box(ports, [0.0018, height - 0.0022, 0.026], [0.001, y, 0], p.rubber, 0.00085);
+      box(ports, [0.00085, 0.005, 0.003], [0.0022, y - 0.001, -0.009], alloy, 0.00035);
+    }
+    const wordmark = marking(target, 'Nikon', 0.03, 0.0068, [0.016, 0.0525, 0.0163]);
+    wordmark.rotation.x = -0.57;
+    rearControls(target, closedGrip, p, photo, loaderManager);
+    topControls(target, p);
+    void loadDisplayModel(
+      group(target, 'Z8 serviceable body fittings'),
+      '/media/models/nikon-z8-hardware.glb',
+      loaderManager,
+      { mounted: options.mounted },
+    );
+    for (const side of [-1, 1]) {
+      const x = side * 0.0689;
+      const lug = group(target, 'Strap eyelet', [x, 0.032, -0.015]);
+      lug.rotation.y = side * 0.41;
+      box(lug, [0.006, 0.009, 0.007], [0, 0, 0], alloy, 0.0014);
+      const ring = mesh(lug, new T.TorusGeometry(0.00295, 0.00105, 10, 32), p.steel, [
+        side * 0.0046,
+        0,
+        0,
+      ]);
+      ring.scale.x = 0.9;
+    }
+    for (const [y, text] of [
+      [0.004, 'Fn1'],
+      [-0.012, 'Fn2'],
+    ] as const) {
+      const fn = group(target, text, [-0.022, y, 0.0205]);
+      fn.rotation.y = -0.46;
+      box(fn, [0.0085, 0.012, 0.0048], [0, 0, 0], p.rubber, 0.002);
+      marking(fn, text, 0.0062, 0.0032, [0, 0, 0.0025]);
+    }
+    const assist = group(target, 'Autofocus assist window', [-0.0245, 0.031, 0.0196]);
+    tube(assist, [0, 0, 0], [0, 0, 0.002], 0.0037, p.rubber);
+    tube(assist, [0, 0, 0.002], [0, 0, 0.0024], 0.00285, surface('#26302f', 0.21, 0.22));
+    nikkorZoom(target, loaderManager);
+    if (useRoomLod) options.mounted?.(heroGroup);
+    sync();
   }
-  const wordmark = marking(camera, 'Nikon', 0.03, 0.0068, [0.016, 0.0525, 0.0163]);
-  wordmark.rotation.x = -0.57;
-  rearControls(camera, closedGrip, p, photo, manager);
-  topControls(camera, p);
-  void loadDisplayModel(
-    group(camera, 'Z8 serviceable body fittings'),
-    '/media/models/nikon-z8-hardware.glb',
-    manager,
-  );
-  for (const side of [-1, 1]) {
-    const x = side * 0.0689;
-    const lug = group(camera, 'Strap eyelet', [x, 0.032, -0.015]);
-    lug.rotation.y = side * 0.41;
-    box(lug, [0.006, 0.009, 0.007], [0, 0, 0], alloy, 0.0014);
-    const ring = mesh(lug, new T.TorusGeometry(0.00295, 0.00105, 10, 32), p.steel, [
-      side * 0.0046,
-      0,
-      0,
-    ]);
-    ring.scale.x = 0.9;
+
+  camera.userData.selectDetail = (active: boolean) => {
+    inspecting = active;
+    if (active && !heroMounted) {
+      ensureHero(new T.LoadingManager().setURLModifier(assetUrl));
+    }
+    sync();
+  };
+
+  if (useRoomLod) {
+    sync();
+    void loadDisplayModel(roomGroup, '/media/models/nikon-z8-room.glb', manager, {
+      mounted() {
+        roomLoaded = true;
+        roomHitProxy?.removeFromParent();
+        sync();
+      },
+    }).catch(() => {
+      inspecting = true;
+      ensureHero(new T.LoadingManager().setURLModifier(assetUrl));
+    });
+  } else {
+    roomGroup.removeFromParent();
+    heroGroup.removeFromParent();
+    ensureHero(manager);
   }
-  for (const [y, text] of [
-    [0.004, 'Fn1'],
-    [-0.012, 'Fn2'],
-  ] as const) {
-    const fn = group(camera, text, [-0.022, y, 0.0205]);
-    fn.rotation.y = -0.46;
-    box(fn, [0.0085, 0.012, 0.0048], [0, 0, 0], p.rubber, 0.002);
-    marking(fn, text, 0.0062, 0.0032, [0, 0, 0.0025]);
-  }
-  const assist = group(camera, 'Autofocus assist window', [-0.0245, 0.031, 0.0196]);
-  tube(assist, [0, 0, 0], [0, 0, 0.002], 0.0037, p.rubber);
-  tube(assist, [0, 0, 0.002], [0, 0, 0.0024], 0.00285, surface('#26302f', 0.21, 0.22));
-  nikkorZoom(camera, manager);
   return camera;
 }

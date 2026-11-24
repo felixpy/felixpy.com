@@ -24,13 +24,10 @@ export function woolFelt(width: number, height: number, tint: string) {
   });
   fleece.wrapS = fleece.wrapT = T.RepeatWrapping;
   fleece.repeat.set(width * 8, height * 8);
-  return new T.MeshPhysicalMaterial({
+  return new T.MeshStandardMaterial({
     map: fleece,
     color: tint,
-    roughness: 0.98,
-    sheen: 0.33,
-    sheenColor: '#b7b4a7',
-    sheenRoughness: 0.94,
+    roughness: 0.96,
   });
 }
 

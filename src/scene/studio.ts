@@ -45,6 +45,7 @@ import { skogDiffuser } from './still-life';
 import { flightProof, cardStorage } from './flight-proof';
 
 import { opensStudioView, type Mode, type Target } from './interaction';
+import { createZoneCuller } from './engine/zone-culler';
 
 export {
   opensStudioView,
@@ -241,15 +242,21 @@ export function* buildStudioSteps(
   const skog = skogDiffuser(interior, [-1.085, 1.31, 2.951], rearLoader, deferDesk);
   const proof = flightProof(interior, p);
   yield;
+  const authoring =
+    import.meta.env.DEV &&
+    typeof location !== 'undefined' &&
+    new URLSearchParams(location.search).get('review') === 'authoring';
+  const useRoomLod = !authoring && !preloadInspection;
   const {
     unit: pc,
     updateLightGuide,
     updateTelemetry,
     setComponentLights,
     selectDetail: selectTowerDetail,
+    refreshRoomLod: refreshTowerRoomLod,
     fanGuides,
     reflections,
-  } = tower(interior, p, aura, manager);
+  } = tower(interior, p, aura, manager, { roomLod: useRoomLod, mounted: detailMounted });
   yield;
   const channelHues = [0.926, 0.815, 0.727, 0.669, 0.614, 0.558, 0.526];
   const fans: T.Object3D[] = [];
@@ -261,8 +268,9 @@ export function* buildStudioSteps(
     legendMaterials: keyLegends,
     badge: keyBadge,
     prepareSwitches,
+    evictSwitches,
     selectDetail: selectKeySwitches,
-  } = keyboard(interior, manager, keyLight, detailMounted);
+  } = keyboard(interior, manager, keyLight, detailMounted, { roomLod: useRoomLod });
   if (preloadInspection) {
     deferDesk(() => prepareMacDetail(rearLoader));
     deferDesk(() => prepareSwitches(rearLoader));
@@ -283,7 +291,10 @@ export function* buildStudioSteps(
   const pencil = group(interior, 'Mitsubishi 9850 HB', [0.344, desk.top, 0.313]);
   pencil.rotation.y = Math.PI / 2 - 0.18;
   loadDisplayModel(pencil, '/media/models/mitsubishi-9850.glb', manager);
-  const deskCamera = nikonZ8(interior, p, bridgePrint, manager);
+  const deskCamera = nikonZ8(interior, p, bridgePrint, manager, {
+    roomLod: useRoomLod,
+    mounted: detailMounted,
+  });
   yield;
   const samplePrint = photoPrinter(
     bench.unit,
@@ -652,6 +663,7 @@ export function* buildStudioSteps(
       id: 'camera',
       type: 'inspect',
       object: deskCamera,
+      onInspect: (active: boolean) => deskCamera.userData.selectDetail?.(active),
       label: '检视 Nikon Z 8 相机',
       english: 'Examine the Nikon Z 8',
       size: 0.17,
@@ -892,6 +904,53 @@ export function* buildStudioSteps(
   batchMeshes(interior, new Set([...byObject.keys(), bench.top]), mergeFirst);
   performance.mark('studio-batch-end');
   yield;
+  const zoneCuller = createZoneCuller();
+  // Keep architecture (walls/floor/ceiling/window/lights) always active; tag 4 spatial zones.
+  for (const node of [
+    interior.getObjectByName('Joiner-built writing desk'),
+    interior.getObjectByName('Cast iron radiator'),
+    interior.getObjectByName('Desk task chair'),
+    mat,
+    screen.parent,
+    mac.parent,
+    phone,
+    microphone,
+    proof.sheet,
+    pc,
+    keys,
+    pointer,
+    musicSpeakers['music-left'],
+    musicSpeakers.music,
+    task.unit,
+    control.unit,
+    groupPhoto,
+    deskCamera,
+    pencil,
+    notes,
+  ])
+    zoneCuller.register('desk', node);
+  for (const node of [
+    bookcase,
+    atlasFrame.frame,
+    board,
+    interior.getObjectByName('Narrow storage cabinet'),
+  ])
+    zoneCuller.register('north', node);
+  for (const node of [
+    bench.unit,
+    bench.boardLight.unit,
+    bench.taskLamp.unit,
+    bench.tray,
+    bench.electronics,
+    bench.pliers,
+    bench.unit.getObjectByName('Oak edged workshop pegboard'),
+    rocket,
+    samplePrint,
+    bench.stool,
+    printer.unit,
+  ])
+    zoneCuller.register('east-workshop', node);
+  for (const node of [rearWall, floorLamp.unit, skog]) zoneCuller.register('south-rear', node);
   const hemisphere = new T.HemisphereLight('#dce7f0', '#a89883', 0.18);
   const { wall, z0, z1, y0, y1 } = windowOpening;
   const aperture = new T.RectAreaLight('#c6dfef', 2, z1 - z0 - 0.074, y1 - y0 - 0.073);
@@ -939,7 +998,7 @@ export function* buildStudioSteps(
   ceiling.outlet.getWorldPosition(upper.position);
   upper.target.position.copy(upper.position);
   upper.target.position.y -= 1;
-  upper.castShadow = true;
+  upper.castShadow = false;
   upper.shadow.mapSize.set(1024, 1024);
   upper.shadow.normalBias = 0.003;
   upper.shadow.radius = 5.5;
@@ -947,19 +1006,9 @@ export function* buildStudioSteps(
   const screenFill = new T.RectAreaLight('#c3d9ef', 1.75, display.width, display.height);
   screenFill.position.set(display.x, display.y, display.z + 0.016);
   screenFill.rotation.y = Math.PI;
-  root.add(
-    hemisphere,
-    windowLight,
-    windowLight.target,
-    aperture,
-    warm,
-    warm.target,
-    upper,
-    upper.target,
-    screenFill,
-  );
+  root.add(hemisphere, windowLight, windowLight.target, warm, warm.target, upper, upper.target);
   const benchLight = new T.SpotLight('#ffe9cd', 2.7, 1.85, 1.13, 0.76, 2);
-  benchLight.castShadow = true;
+  benchLight.castShadow = false;
   benchLight.shadow.mapSize.set(512, 512);
   benchLight.shadow.camera.near = 0.045;
   benchLight.shadow.camera.far = 1.85;
@@ -995,6 +1044,12 @@ export function* buildStudioSteps(
     slats,
     gearWall: fieldGear.zone,
     pickRoots: [interior, window.unit],
+    zoneCuller,
+    refreshTowerRoomLod,
+    evictHero(id: string) {
+      if (id === 'keyboard') evictSwitches();
+      else if (id === 'travel-map' && atlasDetailOnInspect) disposeAtlasDetail();
+    },
     mountedDetails,
     setAtlasInspection: atlasDetailOnInspect ? setAtlasInspection : undefined,
     disposeAtlasDetail: atlasDetailOnInspect ? disposeAtlasDetail : undefined,

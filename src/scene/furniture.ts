@@ -262,7 +262,7 @@ export function bookshelf(
   const accent = new T.RectAreaLight('#ffddb3', 27, 0.01, height - 0.122);
   accent.position.set(-width / 2 + 0.025, (height + 0.08) / 2, 0.153);
   accent.rotation.y = -Math.PI * 0.49;
-  unit.add(accent);
+  // Replaced in scene graph by emissive strip + Cycles Lightmap
   for (const [i, y] of levels.entries()) {
     box(unit, [width, 0.025, 0.349], [0, y + 0.0015, -0.002], p.wood, 0.002);
     box(unit, [width - side, 0.033, 0.015], [0, y - 0.0025, 0.173], p.wood, 0.003);

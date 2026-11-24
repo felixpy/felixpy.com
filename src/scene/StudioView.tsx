@@ -26,7 +26,13 @@ import { Minimap } from './Minimap';
 import { prelinkPreviewReflection, studioReflections } from './reflections';
 import { roomVisibility } from './room-visibility';
 import { roomDetail } from './room-detail';
-import { roomPicking } from './room-picking';
+import {
+  createHeroLru,
+  createHoverPicker,
+  type HeroLru,
+  type HoverPicker,
+  type StudioZone,
+} from './engine';
 import { surfaceFinish } from './surface-finish';
 import { screenProjection } from './screen-projection';
 import { buildStudio, buildStudioSteps, type StudioModel } from './studio';
@@ -148,6 +154,16 @@ function CameraRig(
   const finishNormals = useRef<((subtree?: T.Object3D) => void) | null>(null);
   const roomMeshes = useRef<ReturnType<typeof roomDetail> | null>(null);
   const reflections = useRef<ReturnType<typeof studioReflections> | null>(null);
+  const hoverPickerRef = useRef<HoverPicker | null>(null);
+  const heroLruRef = useRef<HeroLru | null>(null);
+  const forcedZonesRef = useRef<StudioZone[]>([]);
+  const forcedObjectsRef = useRef<(T.Object3D | null | undefined)[]>([]);
+  const authoringMode = useRef(
+    import.meta.env.DEV && new URLSearchParams(location.search).get('review') === 'authoring',
+  );
+  const workbenchWarmup = useRef(
+    new URLSearchParams(location.search).get('studio-warmup') === 'workbench',
+  );
   const looks = useRef({
     room: { yaw: eye.yaw, pitch: eye.pitch },
     bench: { yaw: benchEye.yaw, pitch: benchEye.pitch },
@@ -273,6 +289,7 @@ function CameraRig(
     }
     turning.current.clear();
     hover.current = undefined;
+    hoverPickerRef.current?.cancelHover();
     mode.current = next;
     const held = inspection.current?.target;
     const selected = next === 'inspect' && held?.type === 'inspect' ? held : undefined;
@@ -280,6 +297,23 @@ function CameraRig(
       inspectedTarget.current?.onInspect?.(false, live.current.environment.reducedMotion);
       selected?.onInspect?.(true, live.current.environment.reducedMotion);
       inspectedTarget.current = selected;
+    }
+    const heroLru = heroLruRef.current;
+    if (heroLru) {
+      const heroId =
+        next === 'inspect'
+          ? held?.id
+          : next === 'case'
+            ? caseView.current.hardwareId
+            : next === 'map'
+              ? 'travel-map'
+              : undefined;
+      if (heroId) {
+        heroLru.touch({ id: heroId, evict: () => model.evictHero(heroId) });
+        heroLru.pin(heroId);
+      } else {
+        heroLru.pin(undefined);
+      }
     }
     live.current.setPhoneHeld(
       next === 'inspect' && inspection.current?.target.id === 'development-phone',
@@ -353,41 +387,82 @@ function CameraRig(
     camera.position.set(eye.x, eye.y, eye.defaultZ);
     camera.rotation.set(looks.current.room.pitch, looks.current.room.yaw, 0, 'YXZ');
     camera.updateMatrixWorld(true);
-    const ray = new T.Raycaster();
-    const position = new T.Vector2();
     let pointerAim: { x: number; y: number } | undefined;
-    const picking = roomPicking(model.pickRoots, (work) => {
-      const run = () => {
-        if (!surfaceAbort.signal.aborted) work();
-      };
-      if (typeof window.requestIdleCallback === 'function')
-        window.requestIdleCallback(run, { timeout: 1500 });
-      else window.setTimeout(run, 0);
+    const heroLru = createHeroLru(3);
+    heroLruRef.current = heroLru;
+    const hoverPicker = createHoverPicker({
+      element,
+      camera,
+      pickRoots: model.pickRoots,
+      targets: model.targets,
+      byObject: model.byObject,
+      canReach: model.canReach,
+      getState: () => ({
+        mode: mode.current,
+        hardwareId: caseView.current.hardwareId,
+        held: inspection.current?.target.object,
+        skipHover:
+          !canPick(mode.current) ||
+          (mode.current !== 'map' && pointer.current !== null) ||
+          turning.current.size > 0 ||
+          windowTravel.current !== null,
+      }),
+      onHoverResult(target, point) {
+        if (mode.current === 'map') {
+          if (target !== hover.current) {
+            hover.current = target;
+            if (target)
+              live.current.onHint(
+                local(live.current.environment.locale, target.english, target.label),
+              );
+            element.style.cursor = target ? 'pointer' : '';
+          }
+          return;
+        }
+        if (!canPick(mode.current) || pointer.current) return;
+        if (target || target !== hover.current) {
+          hover.current = target;
+          const locale = live.current.environment.locale;
+          const text =
+            target?.type === 'drawer' &&
+            mode.current === 'drawer' &&
+            target.object === drawerFocus.current?.object
+              ? local(locale, 'Close drawer', '关闭抽屉')
+              : target
+                ? local(locale, target.english, target.label)
+                : '';
+          if (mode.current === 'remote') live.current.onHint(text);
+          else live.current.onHover(text, point);
+        }
+        element.style.cursor = target
+          ? 'pointer'
+          : canLookAround(mode.current) || mode.current === 'bookshelf'
+            ? 'grab'
+            : '';
+      },
+      defer: (work) => {
+        const run = () => {
+          if (!surfaceAbort.signal.aborted) work();
+        };
+        if (typeof window.requestIdleCallback === 'function')
+          window.requestIdleCallback(run, { timeout: 1500 });
+        else window.setTimeout(run, 0);
+      },
     });
+    hoverPickerRef.current = hoverPicker;
+    const pick = hoverPicker.pickAt;
     void model.rearReady.then(() => {
       if (surfaceAbort.signal.aborted) return;
       visibility.prepareMaterials();
       finishNormals.current?.();
       roomMeshes.current?.refresh();
+      model.zoneCuller.refreshBounds();
+      hoverPicker.invalidate();
+      model.refreshTowerRoomLod();
       props.detailRevision.current++;
       shadowWarmup.current = 2;
       performance.mark('studio-room-rear-ready');
     });
-    function pick(x: number, y: number) {
-      const rect = element.getBoundingClientRect();
-      position.set(((x - rect.left) / rect.width) * 2 - 1, ((rect.top - y) / rect.height) * 2 + 1);
-      ray.setFromCamera(position, camera);
-      ray.far = Infinity;
-      const held = inspection.current?.target.object;
-      let current: T.Object3D | null = picking.closest(ray, held) ?? null;
-      while (current) {
-        if (current === held) return undefined;
-        const target = model.byObject.get(current);
-        if (target && model.canReach(target, mode.current, caseView.current.hardwareId))
-          return target;
-        current = current.parent;
-      }
-    }
 
     function walkTo(x: number, y: number, z: number) {
       const position = camera.position.clone();
@@ -441,6 +516,7 @@ function CameraRig(
     function moveToStation(next: Station) {
       station.current = next;
       if (next === 'bench') {
+        void visibility.prepareRearLightmap();
         void model.prepareRear('bench');
         looks.current.bench = { yaw: benchEye.yaw, pitch: benchEye.pitch };
         void model
@@ -450,6 +526,8 @@ function CameraRig(
               finishNormals.current?.();
               roomMeshes.current?.refresh();
               visibility.prepareMaterials();
+              model.zoneCuller.refreshBounds();
+              hoverPicker.invalidate();
               props.detailRevision.current++;
             }
           })
@@ -550,9 +628,16 @@ function CameraRig(
         live.current.onHint('');
         return;
       }
-      if (target.type === 'gear') void model.prepareRear('gear');
-      else if (target.id === 'collection-cabinet') void model.prepareRear('cabinet');
-      else if (target.id === 'filament-printer') void model.prepareRear('bench');
+      if (target.type === 'gear') {
+        void visibility.prepareRearLightmap();
+        void model.prepareRear('gear');
+      } else if (target.id === 'collection-cabinet') {
+        void visibility.prepareRearLightmap();
+        void model.prepareRear('cabinet');
+      } else if (target.id === 'filament-printer') {
+        void visibility.prepareRearLightmap();
+        void model.prepareRear('bench');
+      }
       if (isWallView(target.type)) {
         const bounds = localBounds(target.object);
         const center = target.object.localToWorld(bounds.getCenter(new T.Vector3()));
@@ -677,13 +762,7 @@ function CameraRig(
     function move(event: PointerEvent) {
       pointerAim = { x: event.clientX, y: event.clientY };
       if (mode.current === 'map') {
-        const pin = pick(event.clientX, event.clientY);
-        if (pin !== hover.current) {
-          hover.current = pin;
-          if (pin)
-            live.current.onHint(local(live.current.environment.locale, pin.english, pin.label));
-          element.style.cursor = pin ? 'pointer' : '';
-        }
+        hoverPicker.scheduleHover(event.clientX, event.clientY);
         if (
           pointer.current &&
           Math.hypot(event.clientX - pointer.current.x, event.clientY - pointer.current.y) >= 5
@@ -694,30 +773,10 @@ function CameraRig(
       if (!canPick(mode.current)) return;
       const drag = pointer.current;
       if (!drag) {
-        if (canPick(mode.current)) {
-          const target = pick(event.clientX, event.clientY);
-          if (target || target !== hover.current) {
-            hover.current = target;
-            const locale = live.current.environment.locale;
-            const text =
-              target?.type === 'drawer' &&
-              mode.current === 'drawer' &&
-              target.object === drawerFocus.current?.object
-                ? local(locale, 'Close drawer', '关闭抽屉')
-                : target
-                  ? local(locale, target.english, target.label)
-                  : '';
-            if (mode.current === 'remote') live.current.onHint(text);
-            else live.current.onHover(text, { x: event.clientX, y: event.clientY });
-          }
-          element.style.cursor = target
-            ? 'pointer'
-            : canLookAround(mode.current) || mode.current === 'bookshelf'
-              ? 'grab'
-              : '';
-        }
+        hoverPicker.scheduleHover(event.clientX, event.clientY);
         return;
       }
+      hoverPicker.cancelHover();
       const dx = event.clientX - drag.x,
         dy = event.clientY - drag.y;
       if (!drag.moved && Math.hypot(dx, dy) < 5) return;
@@ -788,6 +847,7 @@ function CameraRig(
     function down(event: PointerEvent) {
       if (event.button !== 0 || !canPick(mode.current)) return;
       if (live.current.roomVisible) live.current.firstFrame.prioritizeInput();
+      hoverPicker.cancelHover();
       openSequence.current++;
       const rect = element.getBoundingClientRect();
       pointer.current = {
@@ -814,11 +874,13 @@ function CameraRig(
         : '';
     }
     function cancel() {
+      hoverPicker.cancelHover();
       pointer.current = null;
       live.current.firstFrame.cancelInputPriority();
       element.style.cursor = '';
     }
     function leave() {
+      hoverPicker.cancelHover();
       pointerAim = undefined;
       if (!pointer.current) {
         hover.current = undefined;
@@ -887,6 +949,7 @@ function CameraRig(
           void model.prepareRear();
         turning.current.add(event.code);
         hover.current = undefined;
+        hoverPicker.cancelHover();
         live.current.onHover('');
         return;
       }
@@ -945,7 +1008,11 @@ function CameraRig(
       window.removeEventListener('keyup', releaseKey);
       window.removeEventListener('blur', releaseMovement);
       reflectionMap.dispose();
-      picking.dispose();
+      hoverPicker.dispose();
+      hoverPickerRef.current = null;
+      heroLru.clear();
+      heroLruRef.current = null;
+      model.zoneCuller.restoreAll();
       surfaceAbort.abort();
       roomMeshes.current?.select(false);
       roomMeshes.current = null;
@@ -1072,22 +1139,26 @@ function CameraRig(
         if (ancestor === null) visibleArrival = true;
       }
       model.mountedDetails.length = 0;
-      if (props.nativeLow) roomMeshes.current?.refresh();
+      roomMeshes.current?.refresh();
+      model.zoneCuller.refreshBounds();
+      hoverPickerRef.current?.invalidate();
       if (visibleArrival) {
         props.detailRevision.current++;
         shadowWarmup.current = 2;
       }
     }
-    const low = load.complete && env.quality === 'low';
-    if (props.nativeLow && low) {
+    const authoring = authoringMode.current;
+    const roomLodActive =
+      !authoring &&
+      load.complete &&
+      (isStation(current) || atWindow(current) || current === 'computer' || current === 'case');
+    if (roomLodActive) {
       const detail =
         inspection.current?.target.object ??
         (current === 'case' ? caseView.current.object : undefined);
       roomMeshes.current?.select(true, detail);
     } else {
-      roomMeshes.current?.select(
-        low && (isStation(current) || atWindow(current) || current === 'computer'),
-      );
+      roomMeshes.current?.select(false);
     }
     const cached = scratch.current;
     const ease = env.reducedMotion ? 1 : 1 - Math.exp(-delta * 10.5);
@@ -1425,7 +1496,39 @@ function CameraRig(
       props.nativeLow,
       lookingOutside,
     );
-    if (shadowWarmup.current > 0 || current === 'returning' || geometryMoving) {
+    const needsShadowUpdate = shadowWarmup.current > 0 || current === 'returning' || geometryMoving;
+    const forcedZones = forcedZonesRef.current;
+    forcedZones.length = 0;
+    if (current === 'bench' || atBench || (!load.complete && workbenchWarmup.current))
+      forcedZones.push('east-workshop');
+    if (current === 'gear') forcedZones.push('south-rear');
+    if (current === 'bookshelf' || current === 'map' || current === 'board')
+      forcedZones.push('north');
+    if (current === 'drawer' || current === 'computer') forcedZones.push('desk');
+
+    const forcedObjects = forcedObjectsRef.current;
+    forcedObjects.length = 0;
+    if (inspection.current) forcedObjects.push(inspection.current.target.object);
+    if ((current === 'case' || cabinetFocus.current) && caseView.current.object)
+      forcedObjects.push(caseView.current.object);
+    if (wallFocus.current) forcedObjects.push(wallFocus.current.object);
+    if (drawerFocus.current) forcedObjects.push(drawerFocus.current.object);
+
+    if (
+      current === 'bench' ||
+      current === 'gear' ||
+      current === 'case' ||
+      Math.abs(looks.current[station.current].yaw) > 0.45
+    ) {
+      void roomMaterials.current?.prepareRearLightmap();
+    }
+    model.zoneCuller.update(camera, {
+      forceAll: authoring || needsShadowUpdate,
+      forceZones: forcedZones,
+      forceObjects: forcedObjects,
+    });
+
+    if (needsShadowUpdate) {
       shadowWarmup.current = Math.max(0, shadowWarmup.current - 1);
       gl.shadowMap.needsUpdate = true;
     }
@@ -1469,7 +1572,7 @@ function StudioRoom({
       firstFrame,
       progressive,
       environment: props.environment,
-      earlyRear: rearMode === 'early' || rearMode === 'idle' || (progressive && rearMode === null),
+      earlyRear: rearMode === 'early' || rearMode === 'idle',
       sliced: query.get('studio-build') === 'sliced',
       simpleLow: query.get('studio-low-shading') === 'simple',
       options: {
@@ -1636,7 +1739,7 @@ export default function StudioView(props: Props) {
           position: [eye.x, eye.y, eye.defaultZ],
         }}
         gl={{
-          antialias: !nativeLow || props.environment.quality === 'high',
+          antialias: props.environment.quality === 'high',
           powerPreference: 'high-performance',
           alpha: false,
         }}

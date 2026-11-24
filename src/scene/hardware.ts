@@ -1,11 +1,13 @@
 import * as T from 'three';
 import { canvasTexture, group, mesh, surface, type XYZ } from './geometry';
+import { assetUrl } from '../app/asset-url';
 import type { Locale } from '../app/locale';
 import type { Palette } from './materials';
 import { installMotherboard } from './motherboard';
 import { fittedCable, pcPowerHarness } from './case-interior-parts';
 import { ryuoIV } from './ryuo-iv';
 import { deferredDisplayModel, loadDisplayModel } from './display-model';
+import { disposeSubtree } from './engine/hero-lru';
 import { galleryDisplay } from './gallery-display';
 import { astralGraphics } from './astral-graphics';
 import { workstationCase } from './workstation-case';
@@ -28,13 +30,13 @@ export function monitor(parent: T.Object3D, p: Palette, manager: T.LoadingManage
   const { screenBar, codexMicro } = galleryDisplay(monitor, p, outerHeight, y, manager, parent);
   const time = { value: 0 };
   const clock = oledClock();
-  const displayGlass = new T.MeshPhysicalMaterial({
+  const displayGlass = new T.MeshStandardMaterial({
     color: '#05090d',
-    roughness: 0.54,
-    clearcoat: 0.1,
-    clearcoatRoughness: 0.38,
+    roughness: 0.42,
+    metalness: 0.06,
   });
   Object.assign(displayGlass, { oledTime: time, oledClock: clock.texture });
+  displayGlass.customProgramCacheKey = () => 'lg-oled-display';
   displayGlass.onBeforeCompile = (shader) => {
     shader.uniforms.flowTime = time;
     shader.uniforms.oledClock = { value: clock.texture };
@@ -92,11 +94,51 @@ function chassisFan(
   return unit;
 }
 
+const LIVE_TOWER_MESH_NAMES = new Set([
+  'GR701 port tempered glass',
+  'GR701 starboard tempered glass',
+  'GR701 front assembly · light',
+  'Thor 1600W Titanium III • aura',
+  'Thor OLED power draw',
+]);
+
+function isInsideNamedAncestor(
+  node: T.Object3D,
+  ancestorName: string,
+  stopAt: T.Object3D,
+): boolean {
+  for (let cur: T.Object3D | null = node; cur && cur !== stopAt; cur = cur.parent) {
+    if (cur.name === ancestorName) return true;
+  }
+  return false;
+}
+
+function isLiveTowerMesh(part: T.Mesh, towerRoot: T.Object3D): boolean {
+  if (LIVE_TOWER_MESH_NAMES.has(part.name)) return true;
+  if (isInsideNamedAncestor(part, 'ROG Hyperion GR701 chassis', towerRoot)) return true;
+  if (isInsideNamedAncestor(part, 'Fan rotor', towerRoot)) return true;
+  if (
+    isInsideNamedAncestor(part, 'ROG Ryuo IV · curved 6.67-inch AMOLED and cold plate', towerRoot)
+  ) {
+    const mat = part.material;
+    if (!Array.isArray(mat) && mat instanceof T.MeshStandardMaterial && mat.emissiveMap) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export type TowerOptions = {
+  roomLod?: boolean;
+  mounted?: (scene: T.Group) => void;
+};
+
 export function tower(
   parent: T.Object3D,
   p: Palette,
   aura: T.MeshStandardMaterial[],
   manager: T.LoadingManager,
+  options: TowerOptions = {},
 ) {
   const details = productDetail();
   const { unit, updateLightGuide, showPower, accents } = workstationCase(
@@ -107,7 +149,26 @@ export function tower(
     details,
   );
   const { registerLight, setComponentLights } = caseComponentLights(unit, accents);
-  installMotherboard(unit, manager, registerLight, details);
+  const authoring =
+    import.meta.env.DEV &&
+    typeof location !== 'undefined' &&
+    new URLSearchParams(location.search).get('review') === 'authoring';
+  const deferHeroInterior = Boolean(options.roomLod && !authoring);
+  const support = group(unit, 'ROG Herculx XH01', [-0.0789, -0.1685, -0.074]);
+  support.rotation.y = -Math.PI / 2;
+  let heroInteriorMounted = false;
+  function ensureHeroInterior(
+    loaderManager: T.LoadingManager = new T.LoadingManager().setURLModifier(assetUrl),
+  ) {
+    if (heroInteriorMounted) return;
+    heroInteriorMounted = true;
+    installMotherboard(unit, loaderManager, registerLight, details, options.mounted);
+    loadDisplayModel(support, '/media/models/rog-herculx-xh01.glb', loaderManager, {
+      mesh: registerLight,
+      mounted: options.mounted,
+    });
+  }
+  if (!deferHeroInterior) ensureHeroInterior(manager);
   const power = pcPowerHarness(unit, p);
   const showTemperature = ryuoIV(unit, p, aura, power.braid, registerLight, details);
   const telemetryMode =
@@ -199,15 +260,70 @@ export function tower(
   fittedCable(harness, 'astral-harness-black', power.carbon);
   fittedCable(harness, 'astral-harness-satin', graphiteBraid);
   fittedCable(harness, 'astral-harness-graphite', power.comb);
-  const support = group(unit, 'ROG Herculx XH01', [-0.0789, -0.1685, -0.074]);
-  support.rotation.y = -Math.PI / 2;
-  loadDisplayModel(support, '/media/models/rog-herculx-xh01.glb', manager, { mesh: registerLight });
+
+  const roomLodGroup = group(unit, 'GR701 room LOD');
+  roomLodGroup.visible = false;
+  let roomLodReady = false;
+  let roomLodApplied = false;
+  let inspectingCase = false;
+  const swappedHidden = new Set<T.Object3D>();
+
+  function applyRoomLodVisibility(useRoomLod: boolean, forceSweep = false) {
+    if (!roomLodReady) return;
+    if (useRoomLod === roomLodApplied && !forceSweep) return;
+    if (useRoomLod) {
+      unit.traverse((node) => {
+        if (node === roomLodGroup || isInsideNamedAncestor(node, roomLodGroup.name, unit)) return;
+        if (!(node instanceof T.Mesh) || !node.visible) return;
+        if (isLiveTowerMesh(node, unit)) return;
+        node.visible = false;
+        swappedHidden.add(node);
+      });
+      roomLodGroup.visible = true;
+      roomLodApplied = true;
+    } else {
+      roomLodGroup.visible = false;
+      for (const node of swappedHidden) node.visible = true;
+      swappedHidden.clear();
+      roomLodApplied = false;
+    }
+  }
+
+  function selectDetail(inspecting: boolean) {
+    if (inspectingCase === inspecting) return;
+    inspectingCase = inspecting;
+    if (inspecting) {
+      ensureHeroInterior();
+      applyRoomLodVisibility(false);
+      details.select(true);
+    } else {
+      details.select(false);
+      if (roomLodReady) applyRoomLodVisibility(true);
+    }
+  }
+
+  if (deferHeroInterior) {
+    void loadDisplayModel(roomLodGroup, '/media/models/gr701-room.glb', manager, {
+      mesh: registerLight,
+      mounted(lodScene) {
+        roomLodReady = true;
+        applyRoomLodVisibility(!inspectingCase, true);
+        options.mounted?.(lodScene);
+      },
+    }).catch(() => {
+      ensureHeroInterior();
+    });
+  }
+
   return {
     unit,
     updateLightGuide,
     updateTelemetry,
     setComponentLights,
-    selectDetail: details.select,
+    selectDetail,
+    refreshRoomLod() {
+      if (roomLodReady && !inspectingCase) applyRoomLodVisibility(true, true);
+    },
     fanGuides: [exhaustBlades],
     reflections,
   };
@@ -218,6 +334,7 @@ export function keyboard(
   manager: T.LoadingManager,
   aura: T.MeshStandardMaterial[],
   detailMounted: (scene: T.Group) => void,
+  options: { roomLod?: boolean } = {},
 ) {
   const unit = group(parent, 'Mechanical keyboard', [
     display.x,
@@ -233,40 +350,97 @@ export function keyboard(
   const details = productDetail();
   const switches = group(unit, 'Azoth switch assembly');
   details.close(switches);
-  const prepareSwitches = deferredDisplayModel(
+  let loadSwitches = deferredDisplayModel(
     switches,
     '/media/models/rog-azoth-extreme-switches.glb',
-    { mounted: detailMounted },
+    {
+      mounted: detailMounted,
+    },
   );
+  const prepareSwitches = (loaderManager?: T.LoadingManager) => loadSwitches(loaderManager);
   if (switches.visible) void prepareSwitches(manager);
   aura.forEach((light, index) => {
     const suffix = String(index).padStart(2, '0');
     lighting.set('Azoth diffuser ' + suffix, light);
     lighting.set('Azoth legend ' + suffix, legendMaterials[index]);
   });
-  loadDisplayModel(unit, '/media/models/rog-azoth-extreme.glb', manager, {
-    mesh(part) {
-      if (!(part.material instanceof T.Material)) return;
-      const replacement = lighting.get(part.material.name);
-      if (replacement) {
-        if (replacement === badge && part.material instanceof T.MeshStandardMaterial) {
-          badge.map = part.material.map;
-          badge.emissiveMap = part.material.emissiveMap ?? part.material.map;
-          badge.needsUpdate = true;
-        }
-        part.material.dispose();
-        part.material = replacement;
+  const applyKeyboardMaterial = (part: T.Mesh) => {
+    if (!(part.material instanceof T.Material)) return;
+    const replacement = lighting.get(part.material.name);
+    if (replacement) {
+      if (replacement === badge && part.material instanceof T.MeshStandardMaterial) {
+        badge.map = part.material.map;
+        badge.emissiveMap = part.material.emissiveMap ?? part.material.map;
+        badge.needsUpdate = true;
       }
+      part.material.dispose();
+      part.material = replacement;
+    }
+  };
+  const authoring =
+    import.meta.env.DEV &&
+    typeof location !== 'undefined' &&
+    new URLSearchParams(location.search).get('review') === 'authoring';
+  const useRoomLod = Boolean(options.roomLod && !authoring);
+  const roomGroup = group(unit, 'Azoth room LOD');
+  const roomKeyAnchor = useRoomLod ? group(roomGroup, 'ROG_Azoth_Extreme') : undefined;
+  const heroGroup = group(unit, 'Azoth hero detail');
+  let roomFailed = false;
+  let heroReady = false;
+  let inspectingKeys = false;
+  const syncBody = () => {
+    if (!useRoomLod) return;
+    heroGroup.visible = (inspectingKeys || roomFailed) && heroReady;
+    roomGroup.visible = !heroGroup.visible;
+  };
+  const loadHeroBody = deferredDisplayModel(heroGroup, '/media/models/rog-azoth-extreme.glb', {
+    mesh: applyKeyboardMaterial,
+    mounted(scene) {
+      roomKeyAnchor?.removeFromParent();
+      heroReady = true;
+      syncBody();
+      detailMounted(scene);
     },
   });
+  if (useRoomLod) {
+    syncBody();
+    void loadDisplayModel(roomGroup, '/media/models/rog-azoth-extreme-room.glb', manager, {
+      mesh: applyKeyboardMaterial,
+    }).catch(() => {
+      roomFailed = true;
+      void loadHeroBody(new T.LoadingManager().setURLModifier(assetUrl));
+    });
+  } else {
+    loadDisplayModel(heroGroup, '/media/models/rog-azoth-extreme.glb', manager, {
+      mesh: applyKeyboardMaterial,
+    });
+  }
   return {
     unit,
     legendMaterials,
     badge,
+    switches,
     prepareSwitches,
+    evictSwitches() {
+      details.select(false);
+      disposeSubtree(switches, { keepRoot: true });
+      loadSwitches = deferredDisplayModel(
+        switches,
+        '/media/models/rog-azoth-extreme-switches.glb',
+        {
+          mounted: detailMounted,
+        },
+      );
+    },
     selectDetail(inspecting: boolean) {
+      inspectingKeys = inspecting;
       details.select(inspecting);
-      if (inspecting) void prepareSwitches();
+      if (inspecting) {
+        if (useRoomLod && !heroReady)
+          void loadHeroBody(new T.LoadingManager().setURLModifier(assetUrl));
+        void prepareSwitches(new T.LoadingManager().setURLModifier(assetUrl));
+      }
+      syncBody();
     },
   };
 }

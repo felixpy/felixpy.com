@@ -74,7 +74,7 @@ export function philodendron(parent: T.Object3D, p: Palette, position: XYZ) {
   const clay = p.plaster.clone();
   clay.color.set('#a46b52');
   clay.roughness = 0.93;
-  const glazed = new T.MeshPhysicalMaterial({ color: '#a98e76', roughness: 0.41, clearcoat: 0.24 });
+  const glazed = surface('#a98e76', 0.34, 0.03);
   const turned = (profile: number[][], material: T.Material) =>
     mesh(
       plant,

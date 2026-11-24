@@ -22,6 +22,12 @@ const punctualLighting = ShaderChunk.lights_pars_begin
   .replace(
     'vec3 lVector = spotLight.position - geometryPosition;',
     localLightRejection('spotLight'),
+  )
+  .replace(
+    'light.color = directionalLight.color;\n\t\tlight.direction = directionalLight.direction;\n\t\tlight.visible = true;',
+    `light.color = directionalLight.color;
+		light.direction = directionalLight.direction;
+		light.visible = ( directionalLight.color != vec3( 0.0 ) );`,
   );
 
 const physicalLighting = ShaderChunk.lights_physical_pars_fragment.replace(
@@ -50,9 +56,18 @@ export function cullRoomDirectLighting(
     .replace('#include <lights_physical_pars_fragment>', lean ? leanPhysical : physicalLighting)
     .replace(
       '#include <lights_fragment_begin>',
-      lightEvaluation.replace(
-        'RE_Direct_RectArea( rectAreaLight,',
-        'if (rectAreaLight.color != vec3(0.0)) RE_Direct_RectArea( rectAreaLight,',
-      ),
+      lightEvaluation
+        .replaceAll(
+          'RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );',
+          'if ( directLight.visible ) RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );',
+        )
+        .replace(
+          'RE_Direct_RectArea( rectAreaLight,',
+          `if (rectAreaLight.color != vec3(0.0) &&
+              dot(geometryNormal, rectAreaLight.position - geometryPosition) +
+              abs(dot(geometryNormal, rectAreaLight.halfWidth)) +
+              abs(dot(geometryNormal, rectAreaLight.halfHeight)) > 0.0)
+            RE_Direct_RectArea( rectAreaLight,`,
+        ),
     );
 }

@@ -67,7 +67,7 @@ export function archiveLight(root: T.Group, p: Palette, north: number) {
   box(fixture, [0.731, 0.003, 0.016], [0, 0.025, 0.157], diffuser, 0.001);
   lamp.position.set(0, 0.024, 0.152);
   lamp.rotation.x = -1.13;
-  fixture.add(lamp);
+  // Replaced in scene graph by Cycles multi-channel Lightmap (R channel); retain light object for state/tests
   return { fixture, lamp, diffuser };
 }
 

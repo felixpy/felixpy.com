@@ -57,14 +57,8 @@ export function astralGraphics(
   details.close(fine);
   fine.rotation.copy(gpu.rotation);
   const chassis = surface('#373a3f', 0.39, 0.72);
-  const milled = new T.MeshPhysicalMaterial({ color: '#8b8784', metalness: 0.74, roughness: 0.36 });
-  const polymer = new T.MeshPhysicalMaterial({
-    color: '#44464a',
-    roughness: 0.43,
-    metalness: 0.17,
-    clearcoat: 0.17,
-    clearcoatRoughness: 0.32,
-  });
+  const milled = surface('#8b8784', 0.36, 0.74);
+  const polymer = surface('#44464a', 0.38, 0.17);
   const impeller = blenderMesh('astral-impeller-shell');
   const mark = new T.MeshStandardMaterial({
     map: rogEye('lit'),

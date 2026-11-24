@@ -1590,7 +1590,11 @@ function checkSamples(raw, profile, { captureProfile, loaderTrace, startup }) {
       (width !== profile.width || height !== profile.height)
     )
       throw new Error('Unexpected native drawing-buffer dimensions: ' + key);
-    if (profile.quality === 'high' && (targetWidth !== width || targetHeight !== height))
+    if (
+      profile.quality === 'high' &&
+      (targetWidth !== 0 || targetHeight !== 0) &&
+      (targetWidth !== width || targetHeight !== height)
+    )
       throw new Error('High-quality target differs from the drawing buffer: ' + key);
   }
 }

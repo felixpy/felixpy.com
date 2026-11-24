@@ -6,13 +6,11 @@ function ashFinishes(albedo: T.Texture, normalMap: T.Texture, roughnessMap: T.Te
     map.wrapS = map.wrapT = T.RepeatWrapping;
     map.anisotropy = 8;
   }
-  const wood = new T.MeshPhysicalMaterial({
+  const wood = new T.MeshStandardMaterial({
     map: albedo,
     normalMap,
     roughnessMap,
-    roughness: 0.83,
-    clearcoat: 0.17,
-    clearcoatRoughness: 0.41,
+    roughness: 0.78,
     normalScale: new T.Vector2(0.65, 0.65),
     userData: { studioMatte: true },
   });
@@ -54,18 +52,14 @@ export function materials(loader: T.TextureLoader) {
     loader.load('/media/materials/ash-roughness.webp'),
   );
   const floor = ash.wood.clone();
-  floor.roughness = 1;
-  floor.clearcoat = 0.055;
+  floor.roughness = 0.94;
   floor.color.setRGB(1.32, 1.29, 1.21);
   const upholsteryMap = loadColor('/media/materials/task-chair-fabric.webp');
   upholsteryMap.wrapS = upholsteryMap.wrapT = T.RepeatWrapping;
   upholsteryMap.repeat.set(3, 3);
-  const upholstery = new T.MeshPhysicalMaterial({
+  const upholstery = new T.MeshStandardMaterial({
     map: upholsteryMap,
-    roughness: 0.93,
-    sheen: 0.32,
-    sheenColor: new T.Color('#666367'),
-    sheenRoughness: 0.84,
+    roughness: 0.92,
   });
   const micro = (name: string) => {
     const tex = loader.load('/media/materials/' + name + '.webp');
@@ -77,16 +71,11 @@ export function materials(loader: T.TextureLoader) {
     const carbon = name === 'carbon';
     const map = micro(name + '-weave');
     map.colorSpace = T.SRGBColorSpace;
-    return new T.MeshPhysicalMaterial({
+    return new T.MeshStandardMaterial({
       map,
       normalMap: micro(name + '-weave-normal'),
-      roughness: carbon ? 0.44 : 0.87,
+      roughness: carbon ? 0.4 : 0.87,
       metalness: carbon ? 0.27 : 0,
-      clearcoat: carbon ? 0.18 : 0,
-      clearcoatRoughness: 0.38,
-      sheen: carbon ? 0 : 0.28,
-      sheenColor: new T.Color('#61666b'),
-      sheenRoughness: 0.8,
     });
   }
   const cloth = weave('cloth');

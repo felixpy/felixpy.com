@@ -16,6 +16,15 @@ type Surface = {
   cluster: Cluster;
 };
 
+function matricesEqual(a: T.Matrix4, b: T.Matrix4) {
+  const ae = a.elements;
+  const be = b.elements;
+  for (let i = 0; i < 16; i++) {
+    if (ae[i] !== be[i]) return false;
+  }
+  return true;
+}
+
 function positionVersion(position: Surface['position']) {
   return position instanceof T.InterleavedBufferAttribute
     ? position.data.version
@@ -106,7 +115,7 @@ export function roomPicking(roots: T.Object3D[], defer?: (work: () => void) => v
         .expandByScalar(1e-6);
       surface = { object, geometry, position, version, world, cluster: { bounds } };
       cached.set(object, surface);
-    } else if (surface.version !== version || !surface.world.equals(object.matrixWorld)) {
+    } else if (surface.version !== version || !matricesEqual(surface.world, object.matrixWorld)) {
       surface.version = version;
       surface.world.copy(object.matrixWorld);
       surface.cluster.bounds
@@ -186,13 +195,23 @@ export function roomPicking(roots: T.Object3D[], defer?: (work: () => void) => v
     step();
   }
 
+  function isVisible(object: T.Object3D) {
+    for (let node: T.Object3D | null = object; node; node = node.parent) {
+      if (!node.visible) return false;
+      if (rootSet.has(node)) break;
+    }
+    return true;
+  }
+
   function refresh() {
     if (dirty) {
       if (defer) return false;
       rebuild();
       return true;
     }
-    for (const surface of surfaces) {
+    for (let i = 0; i < surfaces.length; i++) {
+      const surface = surfaces[i];
+      if (!isVisible(surface.object)) continue;
       if (currentSurface(surface.object) !== surface) {
         markDirty();
         return refresh();

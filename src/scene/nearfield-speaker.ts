@@ -149,30 +149,14 @@ function speakerAssets() {
   guide.roughness = 0.32;
   guide.side = T.DoubleSide;
   const materials = {
-    cabinet: new T.MeshPhysicalMaterial({
-      color: '#373b3c',
-      roughness: 0.41,
-      metalness: 0.1,
-      clearcoat: 0.1,
-      clearcoatRoughness: 0.37,
-    }),
+    cabinet: surface('#373b3c', 0.38, 0.1),
     baffle: surface('#3c4141', 0.45, 0.11),
     trim: surface('#343839', 0.42, 0.18),
-    rubber: new T.MeshPhysicalMaterial({
-      color: '#201f21',
-      roughness: 0.57,
-      specularIntensity: 0.54,
-    }),
+    rubber: surface('#201f21', 0.57, 0.02),
     shadow: surface('#141718', 0.53, 0.05),
     cone: copper,
     guide,
-    glass: new T.MeshPhysicalMaterial({
-      color: '#161b1c',
-      roughness: 0.135,
-      metalness: 0.2,
-      clearcoat: 0.88,
-      clearcoatRoughness: 0.14,
-    }),
+    glass: surface('#161b1c', 0.11, 0.25),
   };
   const surfaces = (Object.keys(parts) as (keyof typeof parts)[]).map((key) => ({
     key,

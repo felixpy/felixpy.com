@@ -14,7 +14,10 @@ function serveCleanAboutUrls(req: Connect.IncomingMessage, _: unknown, next: Con
   next();
 }
 
-export function renderAboutPages(assetBase: string): Plugin {
+export function renderAboutPages(
+  assetBase: string,
+  getManifest: () => Record<string, string> = () => ({}),
+): Plugin {
   return {
     name: 'render-about-pages',
     configureServer(server) {
@@ -27,7 +30,10 @@ export function renderAboutPages(assetBase: string): Plugin {
       if (path !== `${page.path}.html`) return;
 
       const canonical = siteOrigin + page.path;
-      const image = assetBase ? assetUrl(shareImage, assetBase) : siteOrigin + shareImage;
+      const manifest = getManifest();
+      const image = assetBase
+        ? assetUrl(shareImage, assetBase, manifest)
+        : siteOrigin + assetUrl(shareImage, '', manifest);
       const person = {
         '@context': 'https://schema.org',
         '@type': 'ProfilePage',

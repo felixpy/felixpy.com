@@ -8,6 +8,7 @@ import { decodeBlenderMesh } from '../src/scene/blender-mesh';
 import { partLibraryPath, unpackParts } from '../src/scene/blender-parts';
 import { packedBuffer } from '../src/scene/packed-buffer';
 import { workshopToolParts } from '../src/scene/workshop-tool-parts';
+import { zoneBundleIds, zoneBundlePath } from '../src/scene/zone-bundles';
 
 test('the room and deferred workshop archives partition the Blender meshes losslessly', async ({
   request,
@@ -74,17 +75,26 @@ test('the static build serves only the model deliveries available to site visito
   const output = await mkdtemp(testInfo.outputPath('static-site-'));
   try {
     await build({ logLevel: 'silent', build: { outDir: output, reportCompressedSize: false } });
+    const manifest = JSON.parse(
+      readFileSync(join(output, 'media-manifest.json'), 'utf8'),
+    ) as Record<string, string>;
+    const resolveDelivered = (logicalPath: string) => manifest[logicalPath] ?? logicalPath;
     const html = readFileSync(join(output, 'index.html'), 'utf8');
     const preloaded = Array.from(html.matchAll(/href="([^"]+\.bpk)"/g), (match) => match[1]);
-    expect(preloaded).toEqual([partLibraryPath('studio')]);
+    expect(preloaded).toEqual([resolveDelivered(partLibraryPath('studio'))]);
     const models = 'media/models';
     const sources = readdirSync(join('public', models), { recursive: true, withFileTypes: true });
-    const expected = [partLibraryPath('studio'), partLibraryPath('workshop')];
+    const expectedLogical = [
+      partLibraryPath('studio'),
+      partLibraryPath('workshop'),
+      ...zoneBundleIds.map((zone) => zoneBundlePath(zone) + '.gz'),
+    ];
     for (const file of sources) {
       if (!file.isFile() || file.name.endsWith('.mesh')) continue;
       const path = '/' + relative('public', join(file.parentPath, file.name)).replaceAll('\\', '/');
-      expected.push(file.name.endsWith('.glb') ? path + '.gz' : path);
+      expectedLogical.push(file.name.endsWith('.glb') ? path + '.gz' : path);
     }
+    const expected = expectedLogical.map(resolveDelivered);
     const delivered = readdirSync(join(output, models), { recursive: true, withFileTypes: true })
       .filter((file) => file.isFile())
       .map(
@@ -94,12 +104,16 @@ test('the static build serves only the model deliveries available to site visito
     for (const url of [
       partLibraryPath('studio'),
       partLibraryPath('workshop'),
+      zoneBundlePath('desk') + '.gz',
       '/media/models/strix-z890-a.glb.gz',
       '/media/models/stationery/career-album.glb.gz',
     ]) {
       const dev = await request.get(url);
       await expect(dev).toBeOK();
-      expect((await dev.body()).equals(readFileSync(join(output, url))), url).toBe(true);
+      expect(
+        (await dev.body()).equals(readFileSync(join(output, resolveDelivered(url)))),
+        url,
+      ).toBe(true);
     }
   } finally {
     await rm(output, { recursive: true });

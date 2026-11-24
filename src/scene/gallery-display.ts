@@ -65,7 +65,8 @@ function monitorLight(tv: T.Group, p: Palette, top: number, titanium: T.Material
   const wallWash = new T.RectAreaLight('#fff0da', 25, 0.08, 0.043);
   wallWash.name = 'ScreenBar rear ambient illumination';
   wallWash.position.set(0, 0.0183, -0.0759);
-  arm.add(deskWash, deskWash.target, wallWash);
+  // wallWash replaced in scene graph by Cycles multi-channel Lightmap (G channel)
+  arm.add(deskWash, deskWash.target);
   return { arm, strip, bias, deskWash, wallWash };
 }
 
@@ -134,13 +135,10 @@ export function galleryDisplay(
     desk.top,
     lightController.z,
   ]);
-  const glass = new T.MeshPhysicalMaterial({
+  const glass = new T.MeshStandardMaterial({
     color: '#08090a',
-    roughness: 0.22,
-    metalness: 0,
-    clearcoat: 0.14,
-    clearcoatRoughness: 0.17,
-    specularIntensity: 0.38,
+    roughness: 0.19,
+    metalness: 0.04,
     envMapIntensity: 0.46,
   });
   fittedParts(dial, 'halo-controller', {

@@ -63,7 +63,7 @@ test('all eight Home switches keep session changes until a daylight reload @webg
   const pendingFixture = new Promise<void>((resolve) => {
     releaseFixture = resolve;
   });
-  await page.route('**/astro-mondrian-600.glb*', async (route) => {
+  await page.route('**/{astro-mondrian-600,zone-east-workshop}.glb*', async (route) => {
     await pendingFixture;
     await route.continue();
   });

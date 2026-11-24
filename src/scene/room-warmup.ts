@@ -360,12 +360,26 @@ export function roomWarmup(
     return !!resident.__webglTexture && resident.__version === texture.version;
   }
 
+  function frontSignature(object: Renderable) {
+    const list = Array.isArray(object.material) ? object.material : [object.material];
+    const attrs = object.geometry.attributes;
+    const geoFlags =
+      (attrs.color ? 1 : 0) |
+      (attrs.tangent ? 2 : 0) |
+      (attrs.normal ? 4 : 0) |
+      (attrs.uv1 ? 8 : 0);
+    return `${object.constructor.name}/${Number(object.receiveShadow)}/${geoFlags}/${list
+      .map(materialVersion)
+      .join(',')}`;
+  }
+
   function upload(textures: Set<Texture>, budget: number) {
     const until = performance.now() + budget;
+    const canCheckResident = !!(gl.properties && (pruneResidentMaps || !isolated));
     for (const texture of textures) {
       textures.delete(texture);
-      if (pruneResidentMaps && (!texture.version || residentMap(texture))) continue;
-      if (texture.version) gl.initTexture(texture);
+      if (!texture.version || (canCheckResident && residentMap(texture))) continue;
+      gl.initTexture(texture);
       if (performance.now() >= until) break;
     }
     return textures.size === 0;
@@ -663,7 +677,7 @@ export function roomWarmup(
   }
 
   return {
-    uploadFront: () => upload(frontMaps, 3),
+    uploadFront: () => upload(frontMaps, 8),
     prepareVisible,
     reconcileFront,
     async front(target: WebGLRenderTarget | null, live = false) {
@@ -690,11 +704,23 @@ export function roomWarmup(
           ),
         );
       }
+      let compileQueue = frontQueue;
+      if (!catchUp && frontQueue.length > 1) {
+        const unique = new Set<string>();
+        compileQueue = [];
+        for (const object of frontQueue) {
+          const signature = frontSignature(object);
+          if (unique.has(signature)) continue;
+          unique.add(signature);
+          compileQueue.push(object);
+        }
+      }
+      const stepSize = catchUp ? 48 : 128;
       const batches: Promise<unknown>[] = [];
-      for (let index = 0; index < frontQueue.length; index += 48) {
+      for (let index = 0; index < compileQueue.length; index += stepSize) {
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
         if (disposed) return;
-        const batch = frontQueue.slice(index, index + 48);
+        const batch = compileQueue.slice(index, index + stepSize);
         if (catchUp) {
           const visibleLights: string[] = [];
           scene.traverseVisible((object) => {

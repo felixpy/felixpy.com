@@ -8,13 +8,14 @@ import { isMobileDevice } from './src/app/mobile-device';
 import { shareImage, siteOrigin } from './src/content/about';
 import { partLibraryPath } from './src/scene/blender-parts';
 
-function preloadStudioView(assetBase: string): Plugin {
+function preloadStudioView(assetBase: string, getManifest: () => Record<string, string>): Plugin {
   return {
     name: 'preload-studio-view',
     transformIndexHtml: {
       order: 'post',
       handler(_, context) {
         if (context.path !== '/index.html') return;
+        const manifest = getManifest();
         const tags: HtmlTagDescriptor[] = [
           {
             tag: 'link',
@@ -22,7 +23,7 @@ function preloadStudioView(assetBase: string): Plugin {
               rel: 'preload',
               as: 'fetch',
               crossorigin: '',
-              href: assetUrl(partLibraryPath('studio'), assetBase),
+              href: assetUrl(partLibraryPath('studio'), assetBase, manifest),
             },
           },
         ];
@@ -64,19 +65,24 @@ export default defineConfig(({ command, mode }) => {
     command === 'build'
       ? (loadEnv(mode, process.cwd(), 'VITE_').VITE_ASSET_BASE_URL?.trim() ?? '')
       : '';
+  const parts = studioParts(assetBase);
 
   return {
     plugins: [
       react(),
       tailwindcss(),
-      renderAboutPages(assetBase),
-      studioParts(),
-      preloadStudioView(assetBase),
-      Boolean(assetBase) && {
+      renderAboutPages(assetBase, parts.getManifest),
+      parts.plugin,
+      preloadStudioView(assetBase, parts.getManifest),
+      {
         name: 'studio-share-image',
         transformIndexHtml(html, { path }) {
           if (path === '/index.html') {
-            return html.replace(siteOrigin + shareImage, assetUrl(shareImage, assetBase));
+            const manifest = parts.getManifest();
+            const resolved = assetBase
+              ? assetUrl(shareImage, assetBase, manifest)
+              : siteOrigin + assetUrl(shareImage, '', manifest);
+            return html.replace(siteOrigin + shareImage, resolved);
           }
         },
       },
@@ -91,7 +97,7 @@ export default defineConfig(({ command, mode }) => {
       ? {
           renderBuiltUrl(filename) {
             const path = '/' + filename;
-            const url = assetUrl(path, assetBase);
+            const url = assetUrl(path, assetBase, parts.getManifest());
             if (url !== path) return url;
           },
         }

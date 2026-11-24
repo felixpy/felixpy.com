@@ -30,11 +30,11 @@ export function paperSection(
 }
 
 export function photoEmulsion(image: T.Texture) {
-  const ink = new T.MeshPhysicalMaterial({
+  const ink = new T.MeshStandardMaterial({
     name: 'Photographic dyes under satin emulsion',
     map: image,
-    roughness: 0.66,
-    specularIntensity: 0.13,
+    roughness: 0.72,
+    envMapIntensity: 0.35,
   });
   ink.onBeforeCompile = (shader) => {
     shader.fragmentShader = shader.fragmentShader.replace(

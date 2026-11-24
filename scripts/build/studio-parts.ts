@@ -1,13 +1,28 @@
-import { cpSync, readdirSync, readFileSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { copyFileSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import type { Plugin } from 'vite';
+import {
+  assetUrl,
+  insertContentHash,
+  isHostedAssetPath,
+  isImmutableAssetPath,
+} from '../../src/app/asset-url';
 import { meshStreams, partLibraryPath, type PartLibrary } from '../../src/scene/blender-parts';
 import { workshopToolParts } from '../../src/scene/workshop-tool-parts';
+import {
+  zoneBundleIds,
+  zoneBundleModels,
+  zoneBundlePath,
+  type ZoneBundleId,
+} from '../../src/scene/zone-bundles';
 import { installedProduct } from './installed-product.mjs';
+import { assembleProducts, readProduct } from './static-product.mjs';
 
 const publicDirectory = resolve('public');
 const root = join(publicDirectory, 'media', 'models');
+const unhashedPublicPaths = new Set(['/media/credits.txt']);
 const roomFamilies = new Set([
   'aio',
   'amsterdam',
@@ -32,6 +47,10 @@ const roomCollections = new Set([
   'stationery',
 ]);
 const toolNames = new Set<string>(Object.values(workshopToolParts));
+
+function shortHash(bytes: Buffer) {
+  return createHash('sha256').update(bytes).digest('hex').slice(0, 10);
+}
 
 function deltaMesh(bytes: Buffer) {
   const streams = meshStreams(bytes);
@@ -76,6 +95,28 @@ function pack(files: string[]) {
   return gzipSync(Buffer.concat(chunks), { level: 9 });
 }
 
+function packZone(zone: ZoneBundleId) {
+  const sources: ReturnType<typeof readProduct>[] = [];
+  const roots: [ReturnType<typeof readProduct>, number][] = [];
+  for (const [index, modelPath] of zoneBundleModels[zone].entries()) {
+    const file = modelPath.replace(/^\/media\/models\//, '');
+    const raw = installedProduct(file, readFileSync(join(root, file)));
+    const source = readProduct(raw);
+    const sceneIndex = source.doc.scene ?? 0;
+    const sceneNodes = source.doc.scenes?.[sceneIndex]?.nodes ?? [];
+    source.doc.nodes ??= [];
+    const wrapperIndex =
+      source.doc.nodes.push({
+        name: `zone_item_${index}`,
+        extras: { zoneModelPath: modelPath },
+        children: [...sceneNodes],
+      }) - 1;
+    sources.push(source);
+    roots.push([source, wrapperIndex]);
+  }
+  return gzipSync(assembleProducts(sources, roots), { level: 9 });
+}
+
 function deliveries() {
   const build = new Map<string, () => Buffer>();
   const libraries: Record<PartLibrary, string[]> = { studio: [], workshop: [] };
@@ -93,6 +134,9 @@ function deliveries() {
   if (libraries.workshop.length !== toolNames.size) throw new Error('Missing workshop tool mesh');
   for (const collection of ['studio', 'workshop'] as const)
     build.set(partLibraryPath(collection), () => pack(libraries[collection]));
+  for (const zone of zoneBundleIds) {
+    build.set(zoneBundlePath(zone) + '.gz', () => packZone(zone));
+  }
   for (const file of modelFiles('.glb')) {
     build.set('/media/models/' + file + '.gz', () =>
       gzipSync(installedProduct(file, readFileSync(join(root, file))), { level: 9 }),
@@ -101,18 +145,87 @@ function deliveries() {
   return build;
 }
 
-export function studioParts(): Plugin {
-  return {
+function includePublicFile(rel: string) {
+  return (
+    !/^media\/models\/.*\.(mesh|glb)$/.test(rel) &&
+    !/^media\/photography\/field-notes(\/|$)/.test(rel)
+  );
+}
+
+function scanPublicFiles() {
+  const files: Array<{ rel: string; fullPath: string }> = [];
+  for (const entry of readdirSync(publicDirectory, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const fullPath = join(entry.parentPath, entry.name);
+    const rel = relative(publicDirectory, fullPath).replaceAll('\\', '/');
+    if (!includePublicFile(rel)) continue;
+    files.push({ rel, fullPath });
+  }
+  files.sort((a, b) => a.rel.localeCompare(b.rel));
+  return files;
+}
+
+export function studioParts(assetBase = ''): {
+  plugin: Plugin;
+  getManifest: () => Record<string, string>;
+} {
+  let isBuild = false;
+  let generated = new Map<string, Buffer>();
+  let publicFiles: Array<{ rel: string; fullPath: string }> = [];
+  let manifest: Record<string, string> = {};
+
+  function prepareBuildAssets() {
+    generated = new Map<string, Buffer>();
+    manifest = {};
+    for (const [url, build] of deliveries()) {
+      const bytes = build();
+      generated.set(url, bytes);
+      manifest[url] = insertContentHash(url, shortHash(bytes));
+    }
+    publicFiles = scanPublicFiles();
+    for (const { rel, fullPath } of publicFiles) {
+      const url = '/' + rel;
+      if (!isHostedAssetPath(rel) || unhashedPublicPaths.has(url)) continue;
+      const hash = shortHash(readFileSync(fullPath));
+      manifest[url] = insertContentHash(url, hash);
+    }
+  }
+
+  const plugin: Plugin = {
     name: 'studio-blender-parts',
+    enforce: 'pre',
+    configResolved(config) {
+      isBuild = config.command === 'build';
+    },
+    buildStart() {
+      if (isBuild) prepareBuildAssets();
+    },
+    transform(code, id) {
+      if (!isBuild) return null;
+      const normalized = id.split('?')[0].replaceAll('\\', '/');
+      if (!normalized.endsWith('/src/app/asset-url.ts')) return null;
+      const pattern = /const defaultManifest(?::\s*Record<string,\s*string>)?\s*=\s*\{\s*\};/;
+      if (!pattern.test(code)) {
+        throw new Error('Failed to inject media manifest into src/app/asset-url.ts');
+      }
+      return {
+        code: code.replace(
+          pattern,
+          `const defaultManifest: Record<string, string> = ${JSON.stringify(manifest)};`,
+        ),
+        map: null,
+      };
+    },
     configureServer(server) {
       const cache = new Map<string, Buffer>();
       let builds: ReturnType<typeof deliveries> | undefined;
       server.watcher.on('all', (_, file) => {
         if (!/\.(mesh|glb)$/.test(file)) return;
         builds = undefined;
-        if (file.endsWith('.glb'))
+        if (file.endsWith('.glb')) {
           cache.delete('/media/models/' + relative(root, file).replaceAll('\\', '/') + '.gz');
-        else {
+          for (const zone of zoneBundleIds) cache.delete(zoneBundlePath(zone) + '.gz');
+        } else {
           cache.delete(partLibraryPath('studio'));
           cache.delete(partLibraryPath('workshop'));
         }
@@ -127,19 +240,57 @@ export function studioParts(): Plugin {
         response.end(cache.get(url));
       });
     },
-    generateBundle() {
-      for (const [url, build] of deliveries())
-        this.emitFile({ type: 'asset', fileName: url.slice(1), source: build() });
+    configurePreviewServer(server) {
+      server.middlewares.use((request, response, next) => {
+        const pathname = (request.url ?? '/').split('?')[0];
+        if (isImmutableAssetPath(pathname)) {
+          response.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else if (
+          pathname === '/' ||
+          pathname.endsWith('.html') ||
+          pathname === '/media-manifest.json' ||
+          pathname === '/media/credits.txt'
+        ) {
+          response.setHeader('Cache-Control', 'public, no-cache');
+        }
+        next();
+      });
+    },
+    generateBundle(_, bundle) {
+      for (const [url, bytes] of generated) {
+        const outPath = (manifest[url] ?? url).slice(1);
+        this.emitFile({ type: 'asset', fileName: outPath, source: bytes });
+      }
+      this.emitFile({
+        type: 'asset',
+        fileName: 'media-manifest.json',
+        source: JSON.stringify(manifest, null, 2) + '\n',
+      });
+      // Rewrite static CSS url('/fonts/...') and url('/media/...') to content-hashed URLs.
+      for (const item of Object.values(bundle)) {
+        if (item.type !== 'asset' || !item.fileName.endsWith('.css')) continue;
+        if (typeof item.source !== 'string') continue;
+        item.source = item.source.replace(
+          /url\((['"]?)(\/(?:media|fonts)\/[^'")]+)\1\)/g,
+          (_match, quote: string, path: string) =>
+            `url(${quote}${assetUrl(path, assetBase, manifest)}${quote})`,
+        );
+      }
     },
     writeBundle({ dir }) {
       if (!dir) throw new Error('The studio requires a static output directory');
-      cpSync(publicDirectory, dir, {
-        recursive: true,
-        filter: (file) =>
-          !/^media\/models\/.*\.(mesh|glb)$/.test(
-            relative(publicDirectory, file).replaceAll('\\', '/'),
-          ),
-      });
+      for (const { rel, fullPath } of publicFiles) {
+        const url = '/' + rel;
+        const targetRel = (manifest[url] ?? url).slice(1);
+        const dest = join(dir, targetRel);
+        mkdirSync(dirname(dest), { recursive: true });
+        copyFileSync(fullPath, dest);
+      }
     },
+  };
+
+  return {
+    plugin,
+    getManifest: () => manifest,
   };
 }

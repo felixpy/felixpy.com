@@ -49,7 +49,9 @@ function lightCoolingSleeve(material: T.MeshStandardMaterial, phase: T.IUniform<
       shader.vertexShader.replace(
         '#include <uv_vertex>',
         `#include <uv_vertex>
+       #ifdef USE_NORMALMAP
        vNormalMapUv.y *= 5.5;
+       #endif
        guidePosition = 0.78 - 0.72 * uv.y;`,
       );
     shader.fragmentShader =
@@ -82,17 +84,18 @@ export function caseComponentLights(
       material.emissiveIntensity = intensity * value;
     });
     const mirrored = material.name === fanPanelGuide;
-    material.customProgramCacheKey = () => (mirrored ? fanPanelGuide : 'case-accent-lightguide');
+    material.customProgramCacheKey = () => 'case-accent-lightguide';
     material.onBeforeCompile = (shader) => {
       shader.uniforms.auraPhase = phase;
       shader.uniforms.auraGradient = { value: gradient };
+      shader.uniforms.auraMirror = { value: mirrored ? 1 : 0 };
       shader.vertexShader =
-        'varying float guidePosition;\nuniform vec4 auraGradient;\n' +
+        'varying float guidePosition;\nuniform vec4 auraGradient;\nuniform float auraMirror;\n' +
         shader.vertexShader.replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
           vec3 guidePoint = position;
-          ${mirrored ? 'guidePoint.y *= sign(position.x);' : ''}
+          guidePoint.y *= mix(1.0, sign(position.x), auraMirror);
           guidePosition = dot(vec4(guidePoint, 1.), auraGradient);`,
         );
       shader.fragmentShader =
@@ -134,36 +137,35 @@ export function caseComponentLights(
     if (name === boardGuide) return;
     if (sleeve) return lightCoolingSleeve(material, phase);
 
-    material.customProgramCacheKey = () => 'case-guide-' + name;
+    material.customProgramCacheKey = () => (guide ? 'case-guide-emissive' : 'case-guide-scatter');
     material.onBeforeCompile = (shader) => {
       shader.uniforms.auraPhase = phase;
       shader.uniforms.auraScatter = scatter;
       shader.uniforms.auraToCase = caseMatrix;
+      shader.uniforms.auraIsMemory = { value: memory ? 1 : 0 };
       shader.vertexShader =
-        'uniform mat4 auraToCase;\nvarying float guidePosition;\n' +
+        'uniform mat4 auraToCase;\nuniform float auraIsMemory;\nvarying float guidePosition;\n' +
         shader.vertexShader.replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
-          ${
-            memory
-              ? 'guidePosition = 0.79 - (position.y / 0.13102 + 0.5) * 0.69 + ((auraToCase * modelMatrix[3]).z + 0.102) * 2.6;'
-              : 'guidePosition = 0.35 + (position.x / 0.208 + 0.5) * 0.79;'
-          }`,
+          float memPos = 0.79 - (position.y / 0.13102 + 0.5) * 0.69 + ((auraToCase * modelMatrix[3]).z + 0.102) * 2.6;
+          float holdPos = 0.35 + (position.x / 0.208 + 0.5) * 0.79;
+          guidePosition = mix(holdPos, memPos, auraIsMemory);`,
         );
-      shader.fragmentShader = spectrum + shader.fragmentShader;
+      shader.fragmentShader = 'uniform float auraIsMemory;\n' + spectrum + shader.fragmentShader;
       if (guide) {
         shader.fragmentShader = shader.fragmentShader.replace(
           '#include <emissivemap_fragment>',
           `
           float mask = engraving(texture2D(emissiveMap, vEmissiveMapUv).rgb);
-          ${
-            memory
-              ? 'mask = smoothstep(0.006, 0.62, mask);'
-              : `mask = mix(mask, sqrt(mask), 0.43);
-               if (auraScatter > 0.) {
-                 float nearby = engraving(texture2D(emissiveMap, vEmissiveMapUv, 3.7).rgb);
-                 mask += auraScatter * max(0., sqrt(nearby) - mask) * 0.19;
-               }`
+          if (auraIsMemory > 0.5) {
+            mask = smoothstep(0.006, 0.62, mask);
+          } else {
+            mask = mix(mask, sqrt(mask), 0.43);
+            if (auraScatter > 0.) {
+              float nearby = engraving(texture2D(emissiveMap, vEmissiveMapUv, 3.7).rgb);
+              mask += auraScatter * max(0., sqrt(nearby) - mask) * 0.19;
+            }
           }
           totalEmissiveRadiance *= guideColour() * mask;
         `,
@@ -179,14 +181,11 @@ export function caseComponentLights(
         `
         #include <aomap_fragment>
         if (auraScatter > 0.) {
-          ${
-            memory
-              ? `float cut = clamp(min((vMapUv.x - 0.167) / 0.389, (0.729 - vMapUv.x) / 0.167), 0., 1.);
-               float edgeDistance = abs(1. - 0.295 * cut - vMapUv.y);
-               float edgeLight = 1. - smoothstep(0., 0.165, edgeDistance);`
-              : `float rail = mix(0.79, 0.735, smoothstep(0.47, 0.51, vMapUv.x));
-               float edgeLight = 1. - smoothstep(0., 0.13, abs(rail - vMapUv.y));`
-          }
+          float cut = clamp(min((vMapUv.x - 0.167) / 0.389, (0.729 - vMapUv.x) / 0.167), 0., 1.);
+          float memEdge = 1. - smoothstep(0., 0.165, abs(1. - 0.295 * cut - vMapUv.y));
+          float rail = mix(0.79, 0.735, smoothstep(0.47, 0.51, vMapUv.x));
+          float railEdge = 1. - smoothstep(0., 0.13, abs(rail - vMapUv.y));
+          float edgeLight = mix(railEdge, memEdge, auraIsMemory);
           reflectedLight.indirectDiffuse += guideColour() * edgeLight * edgeLight * auraScatter *
             (vec3(0.018) + 0.28 * material.diffuseColor);
         }

@@ -110,27 +110,22 @@ export function sillBotanicals(
     bumpMap = bladeTexture(true);
   const leaves = ['#c7d8bb', '#e1dcc4', '#e6e9c0'].map(
     (color) =>
-      new T.MeshPhysicalMaterial({
+      new T.MeshStandardMaterial({
         color,
         map,
         bumpMap,
         bumpScale: 0.00014,
-        roughness: 0.48,
+        roughness: 0.44,
         side: T.DoubleSide,
-        clearcoat: 0.14,
-        clearcoatRoughness: 0.42,
-        specularIntensity: 0.53,
       }),
   );
   const clay = surface('#a87960', 0.88);
   clay.normalMap = p.plaster.normalMap;
   clay.normalScale.set(0.31, 0.31);
-  const glaze = new T.MeshPhysicalMaterial({
+  const glaze = new T.MeshStandardMaterial({
     color: '#9a8c72',
-    metalness: 0.03,
-    roughness: 0.37,
-    clearcoat: 0.54,
-    clearcoatRoughness: 0.26,
+    metalness: 0.04,
+    roughness: 0.28,
   });
   glaze.normalMap = p.plaster.normalMap;
   glaze.normalScale.set(0.12, 0.12);

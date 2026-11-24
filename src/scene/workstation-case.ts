@@ -31,6 +31,7 @@ export function workstationCase(
     opacity: 0.115,
     depthWrite: false,
   });
+  glass.customProgramCacheKey = () => 'gr701-tempered-glass';
   glass.onBeforeCompile = (shader) => {
     shader.fragmentShader = shader.fragmentShader
       .replace(
@@ -48,8 +49,10 @@ export function workstationCase(
       );
   };
   const glassPanel = box(unit, [0.004, 0.524, 0.487], [-w / 2 + 0.011, 0, -0.0505], glass, 0.001);
+  glassPanel.name = 'GR701 port tempered glass';
   glassPanel.castShadow = false;
   const rightGlass = glass.clone();
+  rightGlass.customProgramCacheKey = glass.customProgramCacheKey;
   rightGlass.onBeforeCompile = glass.onBeforeCompile;
   rightGlass.opacity = 0.29;
   const glassDoor = box(
@@ -156,7 +159,7 @@ export function workstationCase(
   const cardBounce = new T.PointLight('#ef6daf', 0, 0.19, 2);
   cardBounce.name = 'Astral edge lighting on the PSU shroud';
   cardBounce.position.set(-0.087, -0.061, -0.11);
-  unit.add(radiatorBounce, intakeBounce, cardBounce);
+  // Micro bounce PointLights replaced by emissive RGB guides + caseReflections (keeps NUM_POINT_LIGHTS lean)
   return {
     unit: assembly,
     showPower,

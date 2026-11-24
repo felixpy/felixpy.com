@@ -52,11 +52,10 @@ export function developmentPhone(parent: T.Group, p: Palette, wallpaper: T.Textu
   tube(disc, [0, 0, 0], [0, 0, 0.002], 0.0246, p.rubber);
   const phone = group(dock, 'iPhone 18 Pro Max', [0, 0.091, -0.0085]);
   phone.rotation.x = -0.19;
-  const glass = new T.MeshPhysicalMaterial({
+  const glass = new T.MeshStandardMaterial({
     color: '#101416',
-    roughness: 0.13,
-    clearcoat: 1,
-    clearcoatRoughness: 0.1,
+    roughness: 0.1,
+    metalness: 0.12,
   });
   const finishes: Record<string, T.Material> = {
     alloy: surface('#555653', 0.31, 0.79),
