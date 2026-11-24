@@ -67,13 +67,16 @@ export function createZoneCuller(padding = DEFAULT_ZONE_PADDING) {
         const target = entry.cullTargets[i];
         if (target.visible) {
           target.visible = false;
+          target.userData.studioZoneCulled = true;
           entry.hiddenNodes.push(target);
         }
       }
       entry.culled = true;
     } else {
       for (let i = 0; i < entry.hiddenNodes.length; i++) {
-        entry.hiddenNodes[i].visible = true;
+        const target = entry.hiddenNodes[i];
+        target.visible = true;
+        delete target.userData.studioZoneCulled;
       }
       entry.hiddenNodes.length = 0;
       entry.culled = false;
