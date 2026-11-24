@@ -445,6 +445,7 @@ export function roomVisibility(
             resolve();
             return;
           }
+          loaded.colorSpace = T.NoColorSpace;
           loaded.minFilter = T.LinearFilter;
           loaded.magFilter = T.LinearFilter;
           loaded.generateMipmaps = false;
@@ -458,17 +459,28 @@ export function roomVisibility(
         () => resolve(),
       );
     });
+  let rearLightmapPromise: Promise<void> | undefined;
+  const prepareRearLightmap = () => {
+    if (!rearLightmapPromise) {
+      rearLightmapPromise = loadPlanarMap(
+        '/media/lighting/room-rear-lightmap.webp',
+        rearLight,
+        rearLightReady,
+      );
+    }
+    return rearLightmapPromise;
+  };
   const ready = Promise.all([
     load().catch(() => {}),
-    loadPlanarMap('/media/lighting/room-contact-ao.png', contactAo, contactAoReady),
-    loadPlanarMap('/media/lighting/room-rect-lightmap.png', rectLight, rectLightReady),
-    loadPlanarMap('/media/lighting/room-rear-lightmap.png', rearLight, rearLightReady),
+    loadPlanarMap('/media/lighting/room-contact-ao.webp', contactAo, contactAoReady),
+    loadPlanarMap('/media/lighting/room-rect-lightmap.webp', rectLight, rectLightReady),
   ]).then(() => {});
   return {
     get ready() {
       return Promise.all([ready, bounce.ready]);
     },
     prepareMaterials,
+    prepareRearLightmap,
     update(env: Environment, delta: number) {
       const cull = cullAllLighting || (cullLighting && env.quality === 'low');
       const lean = leanKernel && env.quality === 'low';

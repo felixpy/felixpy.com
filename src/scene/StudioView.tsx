@@ -516,6 +516,7 @@ function CameraRig(
     function moveToStation(next: Station) {
       station.current = next;
       if (next === 'bench') {
+        void visibility.prepareRearLightmap();
         void model.prepareRear('bench');
         looks.current.bench = { yaw: benchEye.yaw, pitch: benchEye.pitch };
         void model
@@ -627,9 +628,16 @@ function CameraRig(
         live.current.onHint('');
         return;
       }
-      if (target.type === 'gear') void model.prepareRear('gear');
-      else if (target.id === 'collection-cabinet') void model.prepareRear('cabinet');
-      else if (target.id === 'filament-printer') void model.prepareRear('bench');
+      if (target.type === 'gear') {
+        void visibility.prepareRearLightmap();
+        void model.prepareRear('gear');
+      } else if (target.id === 'collection-cabinet') {
+        void visibility.prepareRearLightmap();
+        void model.prepareRear('cabinet');
+      } else if (target.id === 'filament-printer') {
+        void visibility.prepareRearLightmap();
+        void model.prepareRear('bench');
+      }
       if (isWallView(target.type)) {
         const bounds = localBounds(target.object);
         const center = target.object.localToWorld(bounds.getCenter(new T.Vector3()));
@@ -1506,6 +1514,14 @@ function CameraRig(
     if (wallFocus.current) forcedObjects.push(wallFocus.current.object);
     if (drawerFocus.current) forcedObjects.push(drawerFocus.current.object);
 
+    if (
+      current === 'bench' ||
+      current === 'gear' ||
+      current === 'case' ||
+      Math.abs(looks.current[station.current].yaw) > 0.45
+    ) {
+      void roomMaterials.current?.prepareRearLightmap();
+    }
     model.zoneCuller.update(camera, {
       forceAll: authoring || needsShadowUpdate,
       forceZones: forcedZones,
