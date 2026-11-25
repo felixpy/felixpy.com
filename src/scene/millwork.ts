@@ -1,6 +1,22 @@
 import * as T from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { box, cable, group, luminous, mesh, surface, tube } from './geometry';
 import type { Palette } from './materials';
+
+const acousticFinTints = ['#f8f4e9', '#efe9dd', '#fff9ee', '#f3ece2'].map(
+  (hex) => new T.Color(hex),
+);
+const acousticFinMaterials = new WeakMap<T.MeshStandardMaterial, T.MeshStandardMaterial>();
+
+function sharedFinMaterial(base: T.MeshStandardMaterial): T.MeshStandardMaterial {
+  let material = acousticFinMaterials.get(base);
+  if (!material) {
+    material = base.clone();
+    material.color.set('#ffffff');
+    acousticFinMaterials.set(base, material);
+  }
+  return material;
+}
 
 export function acousticWall(
   root: T.Group,
@@ -16,22 +32,35 @@ export function acousticWall(
   const backing = p.cloth.clone();
   backing.color.set('#383630');
   box(panel, [width, height - 0.012, 0.012], [width / 2, height / 2, 0.006], backing);
-  const variants = ['#f8f4e9', '#efe9dd', '#fff9ee', '#f3ece2'].map((color) => {
-    const wood = p.woodVertical.clone();
-    wood.color.set(color);
-    return wood;
-  });
   const count = Math.floor(width / 0.035);
+  if (count <= 0) return;
   const pitch = width / count;
+  const finWidth = pitch - 0.01;
+  const finHeight = height - 0.018;
+  const finDepth = 0.022;
+  const finGeometry = new RoundedBoxGeometry(
+    finWidth,
+    finHeight,
+    finDepth,
+    2,
+    Math.min(0.0015, finWidth * 0.49, finHeight * 0.49, finDepth * 0.49),
+  );
+  const fins = new T.InstancedMesh(finGeometry, sharedFinMaterial(p.woodVertical), count);
+  fins.name = 'Ash fins';
+  fins.castShadow = fins.receiveShadow = true;
+  fins.userData.exportInstalledInstances = true;
+  const matrix = new T.Matrix4();
   for (let i = 0; i < count; i++) {
-    box(
-      panel,
-      [pitch - 0.01, height - 0.018, 0.022],
-      [(i + 0.5) * pitch, height / 2, 0.023],
-      variants[(i * 7) % 4],
-      0.0015,
-    );
+    fins.setMatrixAt(i, matrix.makeTranslation((i + 0.5) * pitch, height / 2, 0.023));
+    fins.setColorAt(i, acousticFinTints[(i * 7) % 4]);
   }
+  fins.instanceMatrix.needsUpdate = true;
+  if (fins.instanceColor) fins.instanceColor.needsUpdate = true;
+  fins.computeBoundingBox();
+  fins.computeBoundingSphere();
+  fins.matrixAutoUpdate = false;
+  fins.updateMatrix();
+  panel.add(fins);
 }
 
 export function archiveLight(root: T.Group, p: Palette, north: number) {

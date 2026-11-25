@@ -152,10 +152,7 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
     void prepareFonts();
     void loadStudio().then(
       (module) => {
-        if (active) {
-          setStudio(module);
-          void loadDesktop();
-        }
+        if (active) setStudio(module);
       },
       () => {
         if (active) setStudioUnavailable(true);
@@ -165,6 +162,10 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
       active = false;
     };
   }, [webGL, prepareFonts]);
+
+  useEffect(() => {
+    if (ready) void loadDesktop();
+  }, [ready]);
 
   useEffect(() => {
     const keepPageFocus = (event: KeyboardEvent) => {
@@ -376,7 +377,7 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
           />
         )}
         <div ref={screen} className="screen-anchor" data-visible="false" data-interactive="false">
-          {(studio !== null || mode === 'computer' || request.sequence > 0) && (
+          {(ready || mode === 'computer' || request.sequence > 0) && (
             <Suspense fallback={null}>
               <Desktop
                 request={request}

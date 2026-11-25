@@ -4,8 +4,10 @@ import {
   DoubleSide,
   Frustum,
   Group,
+  InstancedMesh,
   Light,
   Line,
+  Material,
   Matrix4,
   Mesh,
   NoToneMapping,
@@ -18,7 +20,7 @@ import {
   Texture,
   UnsignedByteType,
 } from 'three';
-import type { Material, Object3D, WebGLRenderTarget, WebGLRenderer } from 'three';
+import type { Object3D, WebGLRenderTarget, WebGLRenderer } from 'three';
 
 type Renderable = Mesh | Line | Points;
 type LinkedProgram = NonNullable<WebGLRenderer['info']['programs']>[number] & {
@@ -378,6 +380,123 @@ export function roomWarmup(
     return !!resident.__webglTexture && resident.__version === texture.version;
   }
 
+  const internedText = new Map<string, number>();
+
+  function internKey(text: string) {
+    let id = internedText.get(text);
+    if (id === undefined) {
+      id = internedText.size + 1;
+      internedText.set(text, id);
+    }
+    return id;
+  }
+
+  const shaderMapFields = [
+    'map',
+    'alphaMap',
+    'aoMap',
+    'bumpMap',
+    'displacementMap',
+    'emissiveMap',
+    'envMap',
+    'lightMap',
+    'metalnessMap',
+    'normalMap',
+    'roughnessMap',
+    'clearcoatMap',
+    'clearcoatRoughnessMap',
+    'clearcoatNormalMap',
+    'sheenColorMap',
+    'sheenRoughnessMap',
+    'specularIntensityMap',
+    'specularColorMap',
+    'thicknessMap',
+    'transmissionMap',
+    'iridescenceMap',
+    'iridescenceThicknessMap',
+    'anisotropyMap',
+    'gradientMap',
+    'matcap',
+  ] as const;
+
+  function definesKey(defines?: Record<string, unknown>) {
+    if (!defines) return '';
+    const entries = Object.entries(defines);
+    if (!entries.length) return '';
+    entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return entries.map(([k, v]) => `${k}=${String(v)}`).join(',');
+  }
+
+  function materialShaderKey(material: Material) {
+    const customKey = material.customProgramCacheKey();
+    const record = material as unknown as Record<string, unknown>;
+    const defines = definesKey(record.defines as Record<string, unknown> | undefined);
+    const commonFlags =
+      (material.side & 3) |
+      (material.transparent ? 4 : 0) |
+      (material.alphaTest > 0 ? 8 : 0) |
+      (material.alphaHash ? 16 : 0) |
+      (material.premultipliedAlpha ? 32 : 0) |
+      (material.vertexColors ? 64 : 0) |
+      (material.toneMapped ? 128 : 0) |
+      (material.dithering ? 256 : 0) |
+      (record.fog ? 512 : 0) |
+      (record.flatShading ? 1024 : 0) |
+      (record.wireframe ? 2048 : 0) |
+      (material.clippingPlanes?.length ? 4096 : 0) |
+      (record.lights ? 8192 : 0);
+
+    if (material instanceof ShaderMaterial) {
+      return `S/${material.type}/${customKey}/${internKey(material.vertexShader)}/${internKey(
+        material.fragmentShader,
+      )}/${material.glslVersion ?? ''}/${commonFlags}/${defines}`;
+    }
+
+    let mapBits = 0;
+    for (let i = 0; i < shaderMapFields.length; i++) {
+      if (record[shaderMapFields[i]]) mapBits |= 1 << i;
+    }
+    const mapChannel = (record.map as Texture | null | undefined)?.channel ?? 0;
+    const aoChannel = (record.aoMap as Texture | null | undefined)?.channel ?? 0;
+    const lightChannel = (record.lightMap as Texture | null | undefined)?.channel ?? 0;
+    const envMapping = (record.envMap as Texture | null | undefined)?.mapping ?? 0;
+    const normalMapType = record.normalMap ? Number(record.normalMapType ?? 0) : 0;
+    const physicalFlags =
+      (Number(record.clearcoat ?? 0) > 0 ? 1 : 0) |
+      (Number(record.sheen ?? 0) > 0 ? 2 : 0) |
+      (Number(record.transmission ?? 0) > 0 ? 4 : 0) |
+      (Number(record.iridescence ?? 0) > 0 ? 8 : 0) |
+      (Number(record.anisotropy ?? 0) > 0 ? 16 : 0) |
+      (Number(record.dispersion ?? 0) > 0 ? 32 : 0) |
+      (Number(record.thickness ?? 0) > 0 ? 64 : 0);
+    const compileHook =
+      !customKey && material.onBeforeCompile !== Material.prototype.onBeforeCompile
+        ? internKey(material.onBeforeCompile.toString())
+        : 0;
+
+    return `${material.type}/${customKey}/${compileHook}/${commonFlags}/${mapBits}/${physicalFlags}/${mapChannel}:${aoChannel}:${lightChannel}:${envMapping}:${normalMapType}/${material.shadowSide ?? ''}/${defines}`;
+  }
+
+  function compileSignature(object: Renderable) {
+    const list = Array.isArray(object.material) ? object.material : [object.material];
+    const attrs = object.geometry.attributes;
+    const morph = object.geometry.morphAttributes;
+    const geoFlags =
+      (attrs.color ? (attrs.color.itemSize === 4 ? 3 : 1) : 0) |
+      (attrs.tangent ? 4 : 0) |
+      (attrs.normal ? 8 : 0) |
+      (attrs.uv ? 16 : 0) |
+      (attrs.uv1 ? 32 : 0) |
+      (attrs.uv2 ? 64 : 0) |
+      (attrs.skinIndex ? 128 : 0) |
+      (morph?.position?.length ? 256 : 0) |
+      (morph?.normal?.length ? 512 : 0);
+    const instancing = object instanceof InstancedMesh ? (object.instanceColor ? 2 : 1) : 0;
+    return `${object.constructor.name}/${instancing}/${Number(object.receiveShadow)}/${
+      object.layers.mask
+    }/${geoFlags}/${list.map(materialShaderKey).join('|')}`;
+  }
+
   function frontSignature(object: Renderable) {
     const list = Array.isArray(object.material) ? object.material : [object.material];
     const attrs = object.geometry.attributes;
@@ -391,12 +510,52 @@ export function roomWarmup(
       .join(',')}`;
   }
 
+  function uploadableMap(texture: Texture) {
+    if (!texture.version || texture.isRenderTargetTexture || !texture.source?.dataReady)
+      return false;
+    const typed = texture as Texture & {
+      isCompressedTexture?: boolean;
+      isDataTexture?: boolean;
+      isCubeTexture?: boolean;
+    };
+    if (typed.isCompressedTexture) {
+      return Array.isArray(texture.mipmaps) && texture.mipmaps.length > 0;
+    }
+    if (typed.isDataTexture) {
+      const dataImage = texture.image as
+        | { width?: number; height?: number; data?: ArrayBufferView }
+        | undefined;
+      return Boolean(dataImage && dataImage.width && dataImage.height && dataImage.data);
+    }
+    if (typed.isCubeTexture) {
+      return Array.isArray(texture.image) && texture.image.length === 6;
+    }
+    const image = texture.image as unknown;
+    if (!image) return false;
+    if (typeof HTMLImageElement !== 'undefined' && image instanceof HTMLImageElement) {
+      return image.complete && image.naturalWidth > 0 && image.naturalHeight > 0;
+    }
+    if (typeof HTMLCanvasElement !== 'undefined' && image instanceof HTMLCanvasElement) {
+      return image.width > 0 && image.height > 0;
+    }
+    if (typeof OffscreenCanvas !== 'undefined' && image instanceof OffscreenCanvas) {
+      return image.width > 0 && image.height > 0;
+    }
+    if (typeof ImageBitmap !== 'undefined' && image instanceof ImageBitmap) {
+      return image.width > 0 && image.height > 0;
+    }
+    if (typeof HTMLVideoElement !== 'undefined' && image instanceof HTMLVideoElement) {
+      return image.readyState >= 2;
+    }
+    return false;
+  }
+
   function upload(textures: Set<Texture>, budget: number) {
     const until = performance.now() + budget;
     const canCheckResident = !!(gl.properties && (pruneResidentMaps || !isolated));
     for (const texture of textures) {
       textures.delete(texture);
-      if (!texture.version || (canCheckResident && residentMap(texture))) continue;
+      if (!uploadableMap(texture) || (canCheckResident && residentMap(texture))) continue;
       gl.initTexture(texture);
       if (performance.now() >= until) break;
     }
@@ -409,7 +568,7 @@ export function roomWarmup(
     let count = 0;
     let bytes = 0;
     for (const texture of frontMaps) {
-      if (!texture.version || residentMap(texture)) {
+      if (!uploadableMap(texture) || residentMap(texture)) {
         frontMaps.delete(texture);
         continue;
       }
@@ -713,7 +872,7 @@ export function roomWarmup(
       for (let i = offset; i < queue.length; i++) {
         const object = queue[i];
         if (!object.parent || hasPreviewProgram(object, target)) continue;
-        const signature = frontSignature(object);
+        const signature = compileSignature(object);
         if (bgSignatures.has(signature)) continue;
         bgSignatures.add(signature);
         compileQueue.push(object);
@@ -731,7 +890,8 @@ export function roomWarmup(
       let completed = 0;
       const batches: Promise<unknown>[] = [];
       for (let index = 0; index < total; index += stepSize) {
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        if (index > 0 || !canAsync)
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
         if (disposed) return;
         const batch = compileQueue.slice(index, index + stepSize);
         const revealed: Renderable[] = [];
@@ -868,7 +1028,7 @@ export function roomWarmup(
         while (offset < queue.length && group.children.length < batchCap) {
           const object = queue[offset++];
           if (!object.parent || hasPreviewProgram(object, target)) continue;
-          const sig = frontSignature(object);
+          const sig = compileSignature(object);
           if (bgSignatures.has(sig)) continue;
           bgSignatures.add(sig);
           if (!object.visible) {

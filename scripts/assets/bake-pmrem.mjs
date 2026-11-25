@@ -15,8 +15,9 @@ import { execSync, spawn } from 'node:child_process';
 import { gzipSync } from 'node:zlib';
 import { chromium } from 'playwright';
 
-const PROBES = ['desk-day', 'desk-night'];
-const PORT = 4187;
+const DEFAULT_PROBES = ['desk-day', 'desk-night', 'aj-day', 'aj-night', 'camp-day', 'camp-night'];
+const PROBES = process.argv.length > 2 ? process.argv.slice(2) : DEFAULT_PROBES;
+const PORT = Number(process.env.BAKE_PMREM_PORT) || 4187;
 
 async function startDevServer() {
   const server = spawn(

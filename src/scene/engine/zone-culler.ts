@@ -2,7 +2,7 @@ import * as T from 'three';
 
 export type StudioZone = 'desk' | 'north' | 'east-workshop' | 'south-rear';
 
-export const DEFAULT_ZONE_PADDING = 0.45;
+export const DEFAULT_ZONE_PADDING = 0.18;
 
 type ZoneEntry = {
   zone: StudioZone;

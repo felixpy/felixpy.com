@@ -25,9 +25,11 @@ import { warmRoomEffect } from './room-effect-material';
 import { warmRiverFerry } from './river-ferry';
 import { Minimap } from './Minimap';
 import { prelinkPreviewReflection, studioReflections } from './reflections';
+import { roomLookFilter } from './room-looks';
 import { roomVisibility } from './room-visibility';
 import { roomDetail } from './room-detail';
 import {
+  batchRoomStaticGeometry,
   createHeroLru,
   createHoverPicker,
   type HeroLru,
@@ -121,6 +123,7 @@ type RigProps = Props & {
   phonePanel: RefObject<HTMLDivElement | null>;
   setPhoneHeld: (held: boolean) => void;
   nativeLow: boolean;
+  cssGrade: boolean;
 };
 
 type Assembly = {
@@ -394,7 +397,9 @@ function CameraRig(
     roomMaterials.current = visibility;
     reflections.current = reflectionMap;
     const reflectionPromise = props.fullPrewarm
-      ? reflectionMap.select(live.current.environment.night, live.current.environment.quality)
+      ? reflectionMap.select(live.current.environment.night, live.current.environment.quality, {
+          skipPreview: true,
+        })
       : Promise.resolve();
     renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.needsUpdate = true;
@@ -532,6 +537,10 @@ function CameraRig(
     };
     if (props.fullPrewarm) {
       live.current.onProgress(0.15, 'Loading room geometry & textures...');
+      const lodPromise = !authoringMode.current
+        ? (roomMeshes.current?.preload() ?? Promise.resolve())
+        : Promise.resolve();
+      if (!authoringMode.current) roomMeshes.current?.select(true);
       const rearPromise = model.prepareRear();
       const fixturePromise = model.preloadFixtureReflections();
       void Promise.allSettled([
@@ -540,6 +549,7 @@ function CameraRig(
         fixturePromise,
         surfacePromise,
         reflectionPromise,
+        lodPromise,
       ]).then(() => {
         if (surfaceAbort.signal.aborted) return;
         rearDone = true;
@@ -547,6 +557,7 @@ function CameraRig(
         visibility.prepareMaterials();
         finishNormals.current?.();
         roomMeshes.current?.refresh();
+        batchRoomStaticGeometry(model, roomMeshes.current ?? undefined);
         model.zoneCuller.refreshBounds();
         hoverPicker.invalidate();
         performance.mark('studio-room-material-prep-end');
@@ -563,6 +574,7 @@ function CameraRig(
         visibility.prepareMaterials();
         finishNormals.current?.();
         roomMeshes.current?.refresh();
+        batchRoomStaticGeometry(model, roomMeshes.current ?? undefined);
         model.zoneCuller.refreshBounds();
         hoverPicker.invalidate();
         props.detailRevision.current++;
@@ -638,6 +650,7 @@ function CameraRig(
             if (!surfaceAbort.signal.aborted) {
               finishNormals.current?.();
               roomMeshes.current?.refresh();
+              batchRoomStaticGeometry(model, roomMeshes.current ?? undefined);
               visibility.prepareMaterials();
               model.zoneCuller.refreshBounds();
               hoverPicker.invalidate();
@@ -1210,7 +1223,9 @@ function CameraRig(
 
   useEffect(() => {
     if (props.roomVisible || props.fullPrewarm)
-      void reflections.current?.select(props.environment.night, props.environment.quality);
+      void reflections.current?.select(props.environment.night, props.environment.quality, {
+        skipPreview: props.fullPrewarm && !props.roomVisible,
+      });
   }, [props.environment.night, props.environment.quality, props.fullPrewarm, props.roomVisible]);
 
   const { blinds, angle, reducedMotion } = props.environment;
@@ -1299,7 +1314,7 @@ function CameraRig(
     const authoring = authoringMode.current;
     const roomLodActive =
       !authoring &&
-      load.complete &&
+      (load.complete || props.fullPrewarm) &&
       (isStation(current) || atWindow(current) || current === 'computer' || current === 'case');
     if (roomLodActive) {
       const detail =
@@ -1671,6 +1686,7 @@ function CameraRig(
 
     if (needsShadowUpdate) {
       shadowWarmup.current = Math.max(0, shadowWarmup.current - 1);
+      model.requestShadowUpdate();
       gl.shadowMap.needsUpdate = true;
     }
   });
@@ -1714,6 +1730,7 @@ function StudioRoom({
       query.get('studio-low-shading') !== 'simple' &&
       rearMode !== 'late';
     const deferWaterMotion = fullPrewarm ? waterMotion === 'deferred' : waterMotion !== 'eager';
+    const buildMode = query.get('studio-build');
     const waterfront = query.get('studio-waterfront');
     return {
       firstFrame,
@@ -1721,10 +1738,11 @@ function StudioRoom({
       fullPrewarm,
       environment: props.environment,
       earlyRear: rearMode === 'early' || rearMode === 'idle',
-      sliced: query.get('studio-build') === 'sliced',
+      sliced:
+        buildMode === 'sliced' || (!fullPrewarm && buildMode !== 'sync' && buildMode !== 'eager'),
       simpleLow: query.get('studio-low-shading') === 'simple',
       options: {
-        deferBookBacks: query.get('studio-startup') === 'deferred-books',
+        deferBookBacks: query.get('studio-startup') !== 'eager-books',
         prioritizeRear: rearMode === 'priority' || rearMode === 'early',
         preloadInspection: query.get('studio-details') === 'preload',
         atlasDetailOnInspect: query.get('studio-atlas-detail') === 'on-inspect',
@@ -1742,7 +1760,7 @@ function StudioRoom({
   const [assembly, setAssembly] = useState<Assembly | null>(() => {
     if (startup.sliced) return null;
     initStudioKtx2(gl);
-    firstFrame.warm(gl);
+    if (!startup.fullPrewarm) firstFrame.warm(gl);
     const { assets, manager, frontReady } = assemblyLoading();
     performance.mark('studio-room-build-start');
     const model = buildStudio(manager, startup.environment, startup.options);
@@ -1756,7 +1774,7 @@ function StudioRoom({
   useEffect(() => {
     if (!startup.sliced) return;
     initStudioKtx2(gl);
-    firstFrame.warm(gl);
+    if (!startup.fullPrewarm) firstFrame.warm(gl);
     const { assets, manager, frontReady } = assemblyLoading();
     const steps = buildStudioSteps(manager, startup.environment, startup.options);
     let frame = requestAnimationFrame(advance);
@@ -1839,6 +1857,7 @@ function StudioRoom({
         firstPicture={props.firstPicture}
         detailRevision={props.detailRevision}
         interacting={props.interacting}
+        cssGrade={props.cssGrade}
         fullPrewarm={startup.fullPrewarm}
         assetsReady={props.assetsReady}
         forceAllZones={props.forceAllZones}
@@ -1864,6 +1883,15 @@ export default function StudioView(props: Props) {
   const [nativeLow] = useState(
     () => new URLSearchParams(location.search).get('studio-low') === 'native',
   );
+  const [gradeMode] = useState(() => {
+    const query = new URLSearchParams(location.search);
+    return {
+      legacyOutput: query.get('studio-output') === 'legacy',
+      legacyGtao: query.get('studio-gtao') === 'legacy',
+    };
+  });
+  const cssGrade =
+    !gradeMode.legacyOutput && !(gradeMode.legacyGtao && props.environment.quality === 'high');
   const detailRevision = useRef(0);
   const interacting = useRef(false);
   const assetsReady = useRef(false);
@@ -1883,6 +1911,7 @@ export default function StudioView(props: Props) {
     <>
       <Canvas
         className="studio-canvas"
+        style={cssGrade ? { filter: roomLookFilter(props.environment.roomLook) } : undefined}
         shadows={props.environment.quality === 'high'}
         dpr={
           props.environment.quality === 'high'
@@ -1931,6 +1960,7 @@ export default function StudioView(props: Props) {
           setPhoneHeld={setPhoneHeld}
           setLowScale={setLowScale}
           nativeLow={nativeLow}
+          cssGrade={cssGrade}
         />
       </Canvas>
       {phoneHeld && (

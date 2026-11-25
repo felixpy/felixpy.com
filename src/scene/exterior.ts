@@ -162,11 +162,7 @@ export function buildExterior(
   plate.name = panoramaMeshName;
   plate.castShadow = plate.receiveShadow = false;
   const query = typeof location === 'undefined' ? undefined : new URLSearchParams(location.search);
-  if (
-    query?.get('studio-window-clip') === 'scissor' &&
-    query.get('studio-low') === 'native' &&
-    !query.has('review')
-  ) {
+  if (query?.get('studio-window-clip') !== 'off' && !query?.has('review')) {
     const project = roomExteriorScissor();
     const identity = new T.Matrix4();
     const size = new T.Vector2();
@@ -185,9 +181,7 @@ export function buildExterior(
       if (
         scene.overrideMaterial ||
         renderer.getRenderTarget() ||
-        renderer.getPixelRatio() !== 1 ||
         renderer.getScissorTest() ||
-        renderer.shadowMap.enabled ||
         renderer.xr.isPresenting ||
         !root.matrixWorld.equals(identity)
       )

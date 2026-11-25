@@ -92,8 +92,9 @@ export function prelinkPreviewReflection(renderer: T.WebGLRenderer) {
 export function studioReflections(
   renderer: T.WebGLRenderer,
   scene: T.Scene,
-  generator = new T.PMREMGenerator(renderer),
+  providedGenerator?: T.PMREMGenerator,
 ) {
+  let generator = providedGenerator;
   const loader = new HDRLoader(defaultStudioLoadingManager);
   const probes: Record<Time, Probe> = { day: {}, night: {} };
   const canPrefilter = supportsRadiance(renderer);
@@ -102,6 +103,7 @@ export function studioReflections(
   let disposed = false;
   function prefilter(source: T.Texture) {
     try {
+      generator ??= new T.PMREMGenerator(renderer);
       return generator.fromEquirectangular(source);
     } finally {
       source.dispose();
@@ -131,15 +133,36 @@ export function studioReflections(
     });
   }
   return {
-    select(night: boolean, quality: Environment['quality']): Promise<void> {
+    select(
+      night: boolean,
+      quality: Environment['quality'],
+      options?: { skipPreview?: boolean } | boolean,
+    ): Promise<void> {
       if (!canPrefilter) return Promise.resolve();
+      const skipPreview = typeof options === 'boolean' ? options : Boolean(options?.skipPreview);
       active = night ? 'night' : 'day';
       detailed = quality === 'high';
       const time = active;
       const probe = probes[time];
-      probe.preview ??= prefilter(previewTexture(time));
-      scene.environment = probeTexture((detailed && probe.full) || probe.preview);
-      if (!detailed || probe.full) return Promise.resolve();
+      if (!detailed) {
+        if (probe.full) {
+          scene.environment = probeTexture(probe.full);
+        } else {
+          probe.preview ??= prefilter(previewTexture(time));
+          scene.environment = probeTexture(probe.preview);
+        }
+        return Promise.resolve();
+      }
+      if (probe.full) {
+        scene.environment = probeTexture(probe.full);
+        return Promise.resolve();
+      }
+      if (!skipPreview) {
+        probe.preview ??= prefilter(previewTexture(time));
+        scene.environment = probeTexture(probe.preview);
+      } else if (probe.preview) {
+        scene.environment = probeTexture(probe.preview);
+      }
       if (probe.pending) return probe.pending;
       const pmremPath = '/media/lighting/desk-' + time + '.pmrem.gz';
       const url = defaultStudioLoadingManager.resolveURL(pmremPath);
@@ -168,7 +191,7 @@ export function studioReflections(
         probe.preview?.dispose();
         probe.full?.dispose();
       }
-      generator.dispose();
+      generator?.dispose();
     },
   };
 }

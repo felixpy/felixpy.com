@@ -1030,6 +1030,20 @@ export function* buildStudioSteps(
   benchLight.target.position.copy(benchShade.localToWorld(new T.Vector3(0, -0.66, 0)));
   const inspectionFill = new T.PointLight('#f0e6d6', 0, 0.9, 2);
   root.add(benchLight, benchLight.target, inspectionFill);
+  const shadowedLights = [windowLight, warm, upper, benchLight, bench.boardLight.wash];
+  for (const light of shadowedLights) {
+    light.shadow.autoUpdate = false;
+    light.shadow.needsUpdate = light.intensity > 0 && light.shadow.intensity > 0;
+  }
+  const requestShadowUpdate = () => {
+    for (const light of shadowedLights) {
+      light.shadow.needsUpdate = light.intensity > 0 && light.shadow.intensity > 0;
+    }
+  };
+  let auraSynced = false;
+  let lastAura = initial.aura;
+  let lastQuality = initial.quality;
+  let lastReducedMotion = initial.reducedMotion;
 
   let activeDrawer = -1;
   let destination = -1;
@@ -1055,6 +1069,7 @@ export function* buildStudioSteps(
     gearWall: fieldGear.zone,
     pickRoots: [interior, window.unit],
     zoneCuller,
+    requestShadowUpdate,
     preloadFixtureReflections() {
       return Promise.all([floorLamp.preload(), fieldGear.preloadReflections()]).then(() => {});
     },
@@ -1211,61 +1226,74 @@ export function* buildStudioSteps(
       const deskVisible =
         zoneCuller.isZoneVisible('desk') ||
         inspectedHardware === 'case' ||
-        inspectedHardware === 'mac-studio';
+        inspectedHardware === 'mac-studio' ||
+        inspectedHardware === 'keyboard' ||
+        inspectedHardware === 'mouse';
       if (deskVisible) {
         updateSteam(env.reducedMotion ? 1 : clock);
         updateDisplay(env.locale, env.reducedMotion ? 0 : clock);
         updateTelemetry(clock, fullInspection && env.quality === 'low');
         updatePhone(env.locale);
       }
-      const phase = env.reducedMotion ? 0 : Math.sin(clock * 0.16) * 0.036;
-      for (const [i, source] of aura.entries()) {
-        source.emissive.setHSL(channelHues[i] + phase, 0.92, 0.64, T.SRGBColorSpace);
-        source.color.set(env.aura ? '#aaa6ac' : '#d0cfd2');
-        source.emissiveIntensity = env.aura ? 2.8 : 0;
-      }
-      for (const blades of fanGuides) {
-        blades.color.set(env.aura ? '#929aa6' : '#c5c9cf');
-        blades.emissiveIntensity = env.aura ? 2.4 : 0;
-      }
-      reflections.strength.value = env.aura && env.quality === 'high' ? 1 : 0;
-      updateLightGuide(env.aura, env.quality === 'high');
-      setComponentLights(env.aura, delta, clock, env);
-      const musicBeat = env.reducedMotion ? 0 : audio.beat;
-      const musicLevel = env.reducedMotion ? 0 : audio.bass * 0.65 + audio.mid * 0.35;
-      const peripheralTime = env.reducedMotion ? 0 : clock / 4.8;
-      for (const [i, light] of keyLight.entries()) {
-        const wave = peripheralTime - i / keyLight.length;
-        const crest = env.reducedMotion ? 0.55 : 0.5 + 0.5 * Math.cos(2 * Math.PI * wave);
-        light.emissive.setHSL(0.57 + wave, 0.84, 0.58, T.SRGBColorSpace);
-        light.color.copy(light.emissive).multiplyScalar(env.aura ? 0.2 : 0.025);
-        light.emissiveIntensity = dim(
-          light.emissiveIntensity,
-          env.aura ? 0.32 + crest * crest * 2.1 + musicLevel * 0.32 + musicBeat * 0.18 : 0,
+      const auraChanged =
+        !auraSynced ||
+        env.aura !== lastAura ||
+        env.quality !== lastQuality ||
+        env.reducedMotion !== lastReducedMotion;
+      if (deskVisible || auraChanged) {
+        auraSynced = true;
+        lastAura = env.aura;
+        lastQuality = env.quality;
+        lastReducedMotion = env.reducedMotion;
+        const phase = env.reducedMotion ? 0 : Math.sin(clock * 0.16) * 0.036;
+        for (const [i, source] of aura.entries()) {
+          source.emissive.setHSL(channelHues[i] + phase, 0.92, 0.64, T.SRGBColorSpace);
+          source.color.set(env.aura ? '#aaa6ac' : '#d0cfd2');
+          source.emissiveIntensity = env.aura ? 2.8 : 0;
+        }
+        for (const blades of fanGuides) {
+          blades.color.set(env.aura ? '#929aa6' : '#c5c9cf');
+          blades.emissiveIntensity = env.aura ? 2.4 : 0;
+        }
+        reflections.strength.value = env.aura && env.quality === 'high' ? 1 : 0;
+        updateLightGuide(env.aura, env.quality === 'high');
+        setComponentLights(env.aura, delta, clock, env);
+        const musicBeat = env.reducedMotion ? 0 : audio.beat;
+        const musicLevel = env.reducedMotion ? 0 : audio.bass * 0.65 + audio.mid * 0.35;
+        const peripheralTime = env.reducedMotion ? 0 : clock / 4.8;
+        for (const [i, light] of keyLight.entries()) {
+          const wave = peripheralTime - i / keyLight.length;
+          const crest = env.reducedMotion ? 0.55 : 0.5 + 0.5 * Math.cos(2 * Math.PI * wave);
+          light.emissive.setHSL(0.57 + wave, 0.84, 0.58, T.SRGBColorSpace);
+          light.color.copy(light.emissive).multiplyScalar(env.aura ? 0.2 : 0.025);
+          light.emissiveIntensity = dim(
+            light.emissiveIntensity,
+            env.aura ? 0.32 + crest * crest * 2.1 + musicLevel * 0.32 + musicBeat * 0.18 : 0,
+          );
+          if (env.aura) keyLegends[i].color.copy(light.emissive).multiplyScalar(0.35);
+          else keyLegends[i].color.set('#c7c7c3');
+          keyLegends[i].emissive.copy(light.emissive);
+          keyLegends[i].emissiveIntensity = light.emissiveIntensity * 0.84;
+        }
+        keyBadge.emissiveIntensity = dim(keyBadge.emissiveIntensity, env.aura ? 0.78 : 0);
+        const mousePulse = env.reducedMotion
+          ? 0.55
+          : 0.5 + 0.5 * Math.cos(2 * Math.PI * peripheralTime);
+        mouseLight.emissive.setHSL(0.57 + peripheralTime, 0.83, 0.59, T.SRGBColorSpace);
+        mouseLight.color.copy(mouseLight.emissive).multiplyScalar(env.aura ? 0.2 : 0.025);
+        mouseLight.emissiveIntensity = dim(
+          mouseLight.emissiveIntensity,
+          env.aura ? 0.66 + 1.58 * mousePulse + musicLevel * 0.28 : 0,
         );
-        if (env.aura) keyLegends[i].color.copy(light.emissive).multiplyScalar(0.35);
-        else keyLegends[i].color.set('#c7c7c3');
-        keyLegends[i].emissive.copy(light.emissive);
-        keyLegends[i].emissiveIntensity = light.emissiveIntensity * 0.84;
-      }
-      keyBadge.emissiveIntensity = dim(keyBadge.emissiveIntensity, env.aura ? 0.78 : 0);
-      const mousePulse = env.reducedMotion
-        ? 0.55
-        : 0.5 + 0.5 * Math.cos(2 * Math.PI * peripheralTime);
-      mouseLight.emissive.setHSL(0.57 + peripheralTime, 0.83, 0.59, T.SRGBColorSpace);
-      mouseLight.color.copy(mouseLight.emissive).multiplyScalar(env.aura ? 0.2 : 0.025);
-      mouseLight.emissiveIntensity = dim(
-        mouseLight.emissiveIntensity,
-        env.aura ? 0.66 + 1.58 * mousePulse + musicLevel * 0.28 : 0,
-      );
-      mouseBadge.emissive.copy(mouseLight.emissive);
-      mouseBadge.color.copy(mouseLight.color);
-      mouseBadge.emissiveIntensity = mouseLight.emissiveIntensity * 0.9;
-      for (const [i, light] of speakerMeter.entries()) {
-        const gain = musicPlaying
-          ? T.MathUtils.clamp(musicLevel * 10.5 + musicBeat * 2.8 - i, 0, 1)
-          : 0;
-        light.emissiveIntensity = dim(light.emissiveIntensity, env.aura ? 0.1 + gain * 2.45 : 0);
+        mouseBadge.emissive.copy(mouseLight.emissive);
+        mouseBadge.color.copy(mouseLight.color);
+        mouseBadge.emissiveIntensity = mouseLight.emissiveIntensity * 0.9;
+        for (const [i, light] of speakerMeter.entries()) {
+          const gain = musicPlaying
+            ? T.MathUtils.clamp(musicLevel * 10.5 + musicBeat * 2.8 - i, 0, 1)
+            : 0;
+          light.emissiveIntensity = dim(light.emissiveIntensity, env.aura ? 0.1 + gain * 2.45 : 0);
+        }
       }
       windowLight.intensity = dim(
         windowLight.intensity,
@@ -1325,7 +1353,8 @@ export function* buildStudioSteps(
       );
       ceiling.shell.emissiveIntensity = dim(ceiling.shell.emissiveIntensity, practicals * 0.17);
       ceiling.cove.intensity = dim(ceiling.cove.intensity, practicals * 0.118);
-      if (!env.reducedMotion)
+      requestShadowUpdate();
+      if (deskVisible && !env.reducedMotion)
         fans.forEach((fan, i) => {
           fan.rotation.z += delta * (10 + (i % 3) * 3.5);
         });

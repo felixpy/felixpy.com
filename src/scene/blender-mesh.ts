@@ -17,7 +17,7 @@ export function decodeBlenderMesh(buffer: ArrayBuffer) {
   const [xMin, yMin, zMin, u, v] = new Float32Array(buffer, 12, 5);
   const [xSpan, ySpan, zSpan, width, height] = new Float32Array(buffer, 32, 5);
   const positions = new Float32Array(count * 3);
-  const normals = new Float32Array(count * 3);
+  const normals = new Int16Array(count * 3);
   const uv = new Float32Array(count * 2);
   const box = new T.Box3();
   const point = new T.Vector3();
@@ -26,9 +26,9 @@ export function decodeBlenderMesh(buffer: ArrayBuffer) {
     positions[i * 3] = xMin + (xSpan * data.getUint16(offset, true)) / 65535;
     positions[i * 3 + 1] = yMin + (ySpan * data.getUint16(offset + 2, true)) / 65535;
     positions[i * 3 + 2] = zMin + (zSpan * data.getUint16(offset + 4, true)) / 65535;
-    normals[i * 3] = data.getInt16(offset + 6, true) / 32767;
-    normals[i * 3 + 1] = data.getInt16(offset + 8, true) / 32767;
-    normals[i * 3 + 2] = data.getInt16(offset + 10, true) / 32767;
+    normals[i * 3] = data.getInt16(offset + 6, true);
+    normals[i * 3 + 1] = data.getInt16(offset + 8, true);
+    normals[i * 3 + 2] = data.getInt16(offset + 10, true);
     box.expandByPoint(point.fromArray(positions, i * 3));
   }
   if (![u, v, width, height].every((value) => Object.is(value, 0))) {
@@ -48,7 +48,7 @@ export function decodeBlenderMesh(buffer: ArrayBuffer) {
   }
   const geometry = new T.BufferGeometry();
   geometry.setAttribute('position', new T.BufferAttribute(positions, 3));
-  geometry.setAttribute('normal', new T.BufferAttribute(normals, 3));
+  geometry.setAttribute('normal', new T.Int16BufferAttribute(normals, 3, true));
   geometry.setAttribute('uv', new T.BufferAttribute(uv, 2));
   geometry.setIndex(new T.BufferAttribute(new Uint16Array(buffer, indexOffset, indexCount), 1));
   geometry.boundingBox = box;

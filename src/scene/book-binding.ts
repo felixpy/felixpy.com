@@ -111,11 +111,26 @@ function frontPrint(
   });
   loader.load('/media/books/' + book.key + '.webp', (texture, tile) => {
     const master = texture.image;
+    if (tile) {
+      const atlasWidth = master.width;
+      const atlasHeight = master.height;
+      const view = texture.clone();
+      view.colorSpace = T.SRGBColorSpace;
+      view.anisotropy = 8;
+      view.repeat.set(tile.width / atlasWidth, tile.height / atlasHeight);
+      view.offset.set(tile.x / atlasWidth, 1 - (tile.y + tile.height) / atlasHeight);
+      view.needsUpdate = true;
+      const previous = material.map;
+      material.map = view;
+      material.needsUpdate = true;
+      if (previous && previous.source !== texture.source) previous.dispose();
+      return;
+    }
     const canvas = document.createElement('canvas');
-    const w = (canvas.width = tile?.width ?? master.width),
-      h = (canvas.height = tile?.height ?? master.height);
+    const w = (canvas.width = master.width),
+      h = (canvas.height = master.height);
     const ctx = canvas.getContext('2d')!;
-    ctx.drawImage(master, tile?.x ?? 0, tile?.y ?? 0, w, h, 0, 0, w, h);
+    ctx.drawImage(master, 0, 0, w, h, 0, 0, w, h);
     applyFrontDetail(book.key, wrapper, canvas);
     const hinge = w * (book.binding === 'board' ? 0.037 : 0.026);
     const fold = ctx.createLinearGradient(hinge - 3, 0, hinge + 3, 0);
@@ -143,7 +158,8 @@ function frontPrint(
     map.anisotropy = 8;
     material.map?.dispose();
     material.map = map;
-    if (!tile) texture.dispose();
+    material.needsUpdate = true;
+    texture.dispose();
   });
   return material;
 }
@@ -520,7 +536,7 @@ export function bindEdition(
   unit.userData.ISBN = book.identifier;
   const kind = book.jacket ? 'jacket' : book.binding;
   const { age, seed } = printWear(book);
-  const resolution = book.key === 'creative-act' || book.key === 'c-language' ? 3 : 1;
+  const resolution = 1;
   const deferred = deferBack && !backUsesCover(book.key) && !!rearLayouts[book.key]?.blocks.length;
   const map = bindingPrint(book, age, seed, resolution, !deferred);
   const front = frontPrint(loader, book, age, seed, map);

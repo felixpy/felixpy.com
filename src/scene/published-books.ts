@@ -210,6 +210,8 @@ export function publishedBooks(
   const sortedKeys = [...prints.keys()].sort();
   void loader.loadAsync('/media/graphics/shelf-covers.webp').then(
     (atlas) => {
+      atlas.colorSpace = T.SRGBColorSpace;
+      atlas.anisotropy = 8;
       const columns = Math.ceil(Math.sqrt(sortedKeys.length));
       const rows = Math.ceil(sortedKeys.length / columns);
       const width = atlas.image.width / columns;
@@ -224,7 +226,6 @@ export function publishedBooks(
           });
         }
       }
-      atlas.dispose();
     },
     () => {
       void Promise.allSettled(

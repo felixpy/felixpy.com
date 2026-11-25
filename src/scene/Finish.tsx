@@ -1,6 +1,6 @@
 import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, type RefObject } from 'react';
-import { DepthTexture, HalfFloatType, WebGLRenderTarget, type Object3D } from 'three';
+import { DepthTexture, HalfFloatType, Vector4, WebGLRenderTarget, type Object3D } from 'three';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import type { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import type { RoomLook } from '../app/environment';
@@ -40,6 +40,7 @@ export function Finish({
   firstFrame,
   progressiveStartup,
   interacting,
+  cssGrade = false,
   fullPrewarm = false,
   assetsReady,
   forceAllZones,
@@ -62,6 +63,7 @@ export function Finish({
   firstFrame: ReturnType<typeof roomFirstFrame>;
   progressiveStartup: boolean;
   interacting: RefObject<boolean>;
+  cssGrade?: boolean;
   fullPrewarm?: boolean;
   assetsReady?: RefObject<boolean>;
   forceAllZones?: RefObject<boolean>;
@@ -89,6 +91,8 @@ export function Finish({
     legacyGtao &&
     device.allowOffscreenGtao &&
     gl.extensions.has('EXT_color_buffer_float');
+  const useCssGrade = cssGrade && !useLegacyGtao;
+  const previewLook: RoomLook = useCssGrade ? 'neutral' : look;
   const progressive = progressiveStartup && useLegacyGtao;
   const warmup = warmupOverride ?? (progressive ? 'isolated-catch-up' : null);
   const warmWorkbench = warmup === 'workbench';
@@ -130,7 +134,10 @@ export function Finish({
   const prewarmStage = useRef<'waiting' | 'compiling' | 'uploading' | 'sweeping' | 'done'>(
     'waiting',
   );
+  const uploadsDone = useRef(false);
   const sweepStep = useRef(0);
+  const savedViewport = useRef(new Vector4());
+  const savedScissor = useRef(new Vector4());
   const preparation = useRef<ReturnType<typeof roomWarmup> | null>(null);
   const workbenchPreparation = useRef<ReturnType<typeof roomWarmup> | null>(null);
   const scannedRevision = useRef(-1);
@@ -250,6 +257,7 @@ export function Finish({
       if (prewarmStage.current === 'waiting') {
         if (!assetsReady?.current) return;
         prewarmStage.current = 'compiling';
+        uploadsDone.current = false;
         const pending = roomWarmup(
           gl,
           scene,
@@ -263,35 +271,41 @@ export function Finish({
         scannedRevision.current = detailRevision.current;
         performance.mark('studio-room-shader-warm-start');
         onPrewarmProgress?.(0.5, 'Compiling shaders...');
+        const onCompileDone = () => {
+          if (preparation.current !== pending) return;
+          performance.mark('studio-room-shader-warm-end');
+          shaders.current = 'ready';
+          if (uploadsDone.current) {
+            prewarmStage.current = 'sweeping';
+            sweepStep.current = 0;
+            if (forceAllZones) forceAllZones.current = true;
+            onPrewarmProgress?.(0.9, 'Warming up lighting & views...');
+          } else {
+            prewarmStage.current = 'uploading';
+            onPrewarmProgress?.(0.76, 'Uploading assets to GPU...');
+          }
+        };
         void pending
           .compileAll(active?.beauty ?? null, (ratio) => {
             if (preparation.current === pending)
               onPrewarmProgress?.(0.5 + ratio * 0.26, 'Compiling shaders...');
           })
-          .then(
-            () => {
-              if (preparation.current !== pending) return;
-              performance.mark('studio-room-shader-warm-end');
-              shaders.current = 'ready';
-              prewarmStage.current = 'uploading';
-              onPrewarmProgress?.(0.76, 'Uploading assets to GPU...');
-            },
-            () => {
-              if (preparation.current !== pending) return;
-              performance.mark('studio-room-shader-warm-end');
-              shaders.current = 'ready';
-              prewarmStage.current = 'uploading';
-              onPrewarmProgress?.(0.76, 'Uploading assets to GPU...');
-            },
-          );
+          .then(onCompileDone, onCompileDone);
         return;
       }
-      if (prewarmStage.current === 'compiling') return;
+      if (prewarmStage.current === 'compiling') {
+        if (!uploadsDone.current && preparation.current) {
+          const result = preparation.current.uploadAll(12);
+          uploadsDone.current = result.done;
+        }
+        return;
+      }
       if (prewarmStage.current === 'uploading') {
         const result = preparation.current?.uploadAll(12) ?? { done: true, remaining: 0, total: 1 };
         const uploaded = 1 - result.remaining / result.total;
         onPrewarmProgress?.(0.76 + uploaded * 0.14, 'Uploading assets to GPU...');
         if (result.done) {
+          uploadsDone.current = true;
           prewarmStage.current = 'sweeping';
           sweepStep.current = 0;
           if (forceAllZones) forceAllZones.current = true;
@@ -302,12 +316,15 @@ export function Finish({
       if (prewarmStage.current === 'sweeping') {
         const step = sweepStep.current;
         const sweepYaws = [-Math.PI / 2, Math.PI, Math.PI / 2];
-        const renderSceneFrame = () => {
-          grade.select(look);
+        const renderSceneFrame = (skipGrade = false) => {
           if (!active) {
             gl.render(scene, camera);
-            grade.gradeScreen(gl);
+            if (!useCssGrade && !skipGrade) {
+              grade.select(look);
+              grade.gradeScreen(gl);
+            }
           } else {
+            grade.select(look);
             const { beauty, composite, occlusion, output, drawBeauty } = active;
             const color = composite ?? beauty;
             gl.setRenderTarget(beauty);
@@ -325,26 +342,46 @@ export function Finish({
           const savedOrder = camera.rotation.order;
           const perspective = 'fov' in camera && typeof camera.fov === 'number' ? camera : null;
           const savedFov = perspective?.fov;
-          if (perspective) {
-            perspective.fov = 100;
-            perspective.updateProjectionMatrix();
+          const useTinySweep = !active;
+          const savedScissorTest = useTinySweep ? gl.getScissorTest() : false;
+          if (useTinySweep) {
+            gl.getViewport(savedViewport.current);
+            gl.getScissor(savedScissor.current);
           }
-          camera.rotation.set(0, sweepYaws[step], 0, 'YXZ');
-          camera.updateMatrixWorld(true);
-          renderSceneFrame();
-          camera.rotation.set(savedX, savedY, savedZ, savedOrder);
-          if (perspective && savedFov !== undefined) {
-            perspective.fov = savedFov;
-            perspective.updateProjectionMatrix();
+          try {
+            if (useTinySweep) {
+              const sweepSize = Math.max(1, Math.round(64 / gl.getPixelRatio()));
+              gl.setViewport(0, 0, sweepSize, sweepSize);
+              gl.setScissor(0, 0, sweepSize, sweepSize);
+              gl.setScissorTest(true);
+            }
+            if (perspective) {
+              perspective.fov = 100;
+              perspective.updateProjectionMatrix();
+            }
+            camera.rotation.set(0, sweepYaws[step], 0, 'YXZ');
+            camera.updateMatrixWorld(true);
+            renderSceneFrame(true);
+          } finally {
+            camera.rotation.set(savedX, savedY, savedZ, savedOrder);
+            if (perspective && savedFov !== undefined) {
+              perspective.fov = savedFov;
+              perspective.updateProjectionMatrix();
+            }
+            camera.updateMatrixWorld(true);
+            if (useTinySweep) {
+              gl.setViewport(savedViewport.current);
+              gl.setScissor(savedScissor.current);
+              gl.setScissorTest(savedScissorTest);
+            }
           }
-          camera.updateMatrixWorld(true);
           sweepStep.current = step + 1;
           if (step === sweepYaws.length - 1 && forceAllZones) forceAllZones.current = false;
           onPrewarmProgress?.(0.92 + step * 0.03, 'Warming up lighting & views...');
           return;
         }
         performance.mark('studio-room-full-draw-start');
-        renderSceneFrame();
+        renderSceneFrame(false);
         firstPicture.current = 'drawn';
         prewarmStage.current = 'done';
         if (!simpleLow) firstFrame.dispose();
@@ -361,7 +398,7 @@ export function Finish({
       if (firstFrame.preparing(gl, scene, camera)) return;
       const initial = firstPicture.current === 'loading';
       if (initial) performance.mark('studio-room-preview-start');
-      firstFrame.draw(gl, scene, camera, night, look);
+      firstFrame.draw(gl, scene, camera, night, previewLook);
       if (initial) {
         performance.mark('studio-room-preview-drawn');
         onInteractive();
@@ -471,7 +508,7 @@ export function Finish({
           0;
     }
     if (simpleLow && !enabled) {
-      firstFrame.draw(gl, scene, camera, night, look);
+      firstFrame.draw(gl, scene, camera, night, previewLook);
       if (firstPicture.current === 'preparing') {
         firstPicture.current = 'drawn';
         performance.mark('studio-room-shaded');
@@ -508,7 +545,7 @@ export function Finish({
           performance.mark('studio-room-shader-warm-start');
           if (isolatedCatchUp) performance.mark('studio-room-shader-catch-up-start');
         }
-        const preview = () => firstFrame.draw(gl, scene, camera, night, look);
+        const preview = () => firstFrame.draw(gl, scene, camera, night, previewLook);
         if (isolatedCatchUp) {
           const drawPreview = previewNext.current;
           previewNext.current = !drawPreview;
@@ -539,7 +576,7 @@ export function Finish({
           ) ??
             true);
         if (shaders.current === 'pending' || !mapsReady || !liveReady) {
-          firstFrame.draw(gl, scene, camera, night, look);
+          firstFrame.draw(gl, scene, camera, night, previewLook);
           return;
         }
         if (shaders.current !== 'ready' && parallel) {
@@ -568,14 +605,14 @@ export function Finish({
         }
         if (catchUp && preparation.current) {
           if (!preparation.current.prepareVisible(active?.beauty ?? null, detailRevision.current)) {
-            firstFrame.draw(gl, scene, camera, night, look);
+            firstFrame.draw(gl, scene, camera, night, previewLook);
             return;
           }
           performance.mark('studio-room-shader-warm-end');
         }
       }
       if (!workbenchReady) {
-        firstFrame.draw(gl, scene, camera, night, look);
+        firstFrame.draw(gl, scene, camera, night, previewLook);
         return;
       }
       shaders.current = 'ready';
@@ -583,13 +620,16 @@ export function Finish({
     const marker = frameMarker.current;
     const held = !!(active && drawn && marker?.holdRequested);
     if (firstPicture.current === 'preparing') performance.mark('studio-room-full-draw-start');
-    if (!held) grade.select(look);
     if (!active) {
       if (prefill && !enabled && drawn && roomMode)
         prefill.render(gl, scene, camera, detailRevision.current);
       else gl.render(scene, camera);
-      grade.gradeScreen(gl);
+      if (!useCssGrade) {
+        if (!held) grade.select(look);
+        grade.gradeScreen(gl);
+      }
     } else {
+      if (!held) grade.select(look);
       const { beauty, composite, occlusion, output, drawBeauty } = active;
       const color = composite ?? beauty;
       if (!held) {

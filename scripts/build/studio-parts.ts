@@ -3,6 +3,7 @@ import { copyFileSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import type { Plugin } from 'vite';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import {
   assetUrl,
   insertContentHash,
@@ -98,6 +99,267 @@ function pack(files: string[]) {
   return gzipSync(Buffer.concat(chunks), { level: 9 });
 }
 
+let meshoptInitialized = false;
+const meshoptReady = MeshoptDecoder.ready.then(() => {
+  meshoptInitialized = true;
+});
+
+type GltfDoc = ReturnType<typeof readProduct>['doc'];
+
+function isOpaqueMaterial(mat: Record<string, any> | undefined) {
+  if (!mat) return true;
+  if (mat.alphaMode === 'BLEND' || mat.alphaMode === 'MASK') return false;
+  if (mat.extensions?.KHR_materials_transmission || mat.extensions?.KHR_materials_volume)
+    return false;
+  const alpha = mat.pbrMetallicRoughness?.baseColorFactor?.[3];
+  return alpha === undefined || alpha >= 1;
+}
+
+function normalizeZoneProduct(source: ReturnType<typeof readProduct>) {
+  const doc = source.doc as GltfDoc & Record<string, any>;
+  const data: Buffer = source.data;
+  const mats: Record<string, any>[] = doc.materials ?? [];
+  if (!mats.length) return;
+
+  // 1. Strip no-op KHR_materials_clearcoat (clearcoatFactor === 0 and no clearcoatTexture)
+  //    so GLTFLoader builds MeshStandardMaterial natively instead of MeshPhysicalMaterial.
+  let anyClearcoatLeft = false;
+  for (const mat of mats) {
+    const cc = mat.extensions?.KHR_materials_clearcoat;
+    if (!cc) continue;
+    const factor = cc.clearcoatFactor ?? 0;
+    if (factor === 0 && !cc.clearcoatTexture) {
+      delete mat.extensions.KHR_materials_clearcoat;
+      if (Object.keys(mat.extensions).length === 0) delete mat.extensions;
+    } else {
+      anyClearcoatLeft = true;
+    }
+  }
+  if (!anyClearcoatLeft) {
+    for (const key of ['extensionsUsed', 'extensionsRequired'] as const) {
+      if (Array.isArray(doc[key])) {
+        doc[key] = doc[key].filter((ext: string) => ext !== 'KHR_materials_clearcoat');
+      }
+    }
+  }
+
+  // 2. Strip doubleSided on opaque materials whose referencing meshes are mathematically
+  //    verified closed, consistently outward-wound manifolds with positive node scale.
+  if (!meshoptInitialized || !mats.some((m) => m.doubleSided && isOpaqueMaterial(m))) return;
+  const meshes: Record<string, any>[] = doc.meshes ?? [];
+  const accessors: Record<string, any>[] = doc.accessors ?? [];
+  const bufferViews: Record<string, any>[] = doc.bufferViews ?? [];
+  const nodes: Record<string, any>[] = doc.nodes ?? [];
+
+  const meshNegScale = new Array<boolean>(meshes.length).fill(false);
+  const walkNode = (nodeIndex: number, neg: boolean) => {
+    const node = nodes[nodeIndex];
+    if (!node) return;
+    let det = 1;
+    if (node.scale) {
+      det = node.scale[0] * node.scale[1] * node.scale[2];
+    } else if (node.matrix) {
+      const m = node.matrix;
+      det =
+        m[0] * (m[5] * m[10] - m[6] * m[9]) -
+        m[4] * (m[1] * m[10] - m[2] * m[9]) +
+        m[8] * (m[1] * m[6] - m[2] * m[5]);
+    }
+    const nextNeg = det < 0 ? !neg : neg;
+    if (node.mesh !== undefined && nextNeg) meshNegScale[node.mesh] = true;
+    for (const child of node.children ?? []) walkNode(child, nextNeg);
+  };
+  const sceneNodes: number[] = doc.scenes?.[doc.scene ?? 0]?.nodes ?? [];
+  for (const rootIndex of sceneNodes) walkNode(rootIndex, false);
+
+  const decodedViews = new Map<number, Uint8Array>();
+  const decodeAccessor = (accIndex: number) => {
+    const acc = accessors[accIndex];
+    if (!acc || acc.bufferView === undefined || acc.sparse) return null;
+    const bvIndex: number = acc.bufferView;
+    const bv = bufferViews[bvIndex];
+    if (!bv) return null;
+    let raw = decodedViews.get(bvIndex);
+    if (!raw) {
+      const comp = bv.extensions?.EXT_meshopt_compression;
+      if (comp) {
+        const begin = comp.byteOffset ?? 0;
+        const src = data.subarray(begin, begin + comp.byteLength);
+        raw = new Uint8Array(comp.count * comp.byteStride);
+        MeshoptDecoder.decodeGltfBuffer(
+          raw,
+          comp.count,
+          comp.byteStride,
+          src,
+          comp.mode,
+          comp.filter,
+        );
+      } else {
+        const begin = bv.byteOffset ?? 0;
+        raw = data.subarray(begin, begin + bv.byteLength);
+      }
+      decodedViews.set(bvIndex, raw);
+    }
+    const compSize =
+      acc.componentType === 5126 || acc.componentType === 5125
+        ? 4
+        : acc.componentType === 5123 || acc.componentType === 5122
+          ? 2
+          : 1;
+    const elemCount = acc.type === 'VEC3' ? 3 : acc.type === 'VEC2' ? 2 : 1;
+    const stride: number = bv.byteStride || compSize * elemCount;
+    return { acc, raw, stride, offset: (acc.byteOffset ?? 0) as number };
+  };
+
+  const isClosedOutwardManifold = (prims: Record<string, any>[]) => {
+    const vertMap = new Map<string, number>();
+    const coords: number[] = [];
+    let nextId = 0;
+    const dirEdges = new Map<number, number>();
+    let signedVol = 0;
+    let tris = 0;
+    for (const prim of prims) {
+      if (prim.mode !== undefined && prim.mode !== 4) return false;
+      if (prim.indices === undefined || prim.attributes?.POSITION === undefined) return false;
+      const posR = decodeAccessor(prim.attributes.POSITION);
+      const idxR = decodeAccessor(prim.indices);
+      if (!posR || !idxR) return false;
+      const posView = new DataView(posR.raw.buffer, posR.raw.byteOffset, posR.raw.byteLength);
+      const idxView = new DataView(idxR.raw.buffer, idxR.raw.byteOffset, idxR.raw.byteLength);
+      const ct: number = posR.acc.componentType;
+      const scale =
+        ct === 5122 && posR.acc.normalized
+          ? 1 / 32767
+          : ct === 5123 && posR.acc.normalized
+            ? 1 / 65535
+            : 1;
+      const welded = new Int32Array(posR.acc.count);
+      for (let i = 0; i < posR.acc.count; i++) {
+        const o = posR.offset + i * posR.stride;
+        let x: number;
+        let y: number;
+        let z: number;
+        let key: string;
+        if (ct === 5126) {
+          x = posView.getFloat32(o, true);
+          y = posView.getFloat32(o + 4, true);
+          z = posView.getFloat32(o + 8, true);
+          key = `${Math.round(x * 1e5)},${Math.round(y * 1e5)},${Math.round(z * 1e5)}`;
+        } else if (ct === 5122) {
+          const ix = posView.getInt16(o, true);
+          const iy = posView.getInt16(o + 2, true);
+          const iz = posView.getInt16(o + 4, true);
+          x = ix * scale;
+          y = iy * scale;
+          z = iz * scale;
+          key = `${ix},${iy},${iz}`;
+        } else if (ct === 5123) {
+          const ix = posView.getUint16(o, true);
+          const iy = posView.getUint16(o + 2, true);
+          const iz = posView.getUint16(o + 4, true);
+          x = ix * scale;
+          y = iy * scale;
+          z = iz * scale;
+          key = `${ix},${iy},${iz}`;
+        } else {
+          return false;
+        }
+        let id = vertMap.get(key);
+        if (id === undefined) {
+          id = nextId++;
+          vertMap.set(key, id);
+          coords.push(x, y, z);
+        }
+        welded[i] = id;
+      }
+      const ict: number = idxR.acc.componentType;
+      const icStride = ict === 5125 ? 4 : ict === 5123 ? 2 : 1;
+      const triCount = Math.floor(idxR.acc.count / 3);
+      for (let t = 0; t < triCount; t++) {
+        const o0 = idxR.offset + t * 3 * icStride;
+        const i0 =
+          ict === 5125
+            ? idxView.getUint32(o0, true)
+            : ict === 5123
+              ? idxView.getUint16(o0, true)
+              : idxView.getUint8(o0);
+        const i1 =
+          ict === 5125
+            ? idxView.getUint32(o0 + icStride, true)
+            : ict === 5123
+              ? idxView.getUint16(o0 + icStride, true)
+              : idxView.getUint8(o0 + icStride);
+        const i2 =
+          ict === 5125
+            ? idxView.getUint32(o0 + 2 * icStride, true)
+            : ict === 5123
+              ? idxView.getUint16(o0 + 2 * icStride, true)
+              : idxView.getUint8(o0 + 2 * icStride);
+        const a = welded[i0];
+        const b = welded[i1];
+        const c = welded[i2];
+        if (a === b || b === c || c === a) continue;
+        tris++;
+        const ax = coords[a * 3];
+        const ay = coords[a * 3 + 1];
+        const az = coords[a * 3 + 2];
+        const bx = coords[b * 3];
+        const by = coords[b * 3 + 1];
+        const bz = coords[b * 3 + 2];
+        const cx = coords[c * 3];
+        const cy = coords[c * 3 + 1];
+        const cz = coords[c * 3 + 2];
+        signedVol +=
+          (ax * (by * cz - bz * cy) + ay * (bz * cx - bx * cz) + az * (bx * cy - by * cx)) / 6;
+        for (const [u, v] of [
+          [a, b],
+          [b, c],
+          [c, a],
+        ] as const) {
+          const lo = u < v ? u : v;
+          const hi = u < v ? v : u;
+          const k = lo * 1048576 + hi;
+          const dir = u < v ? 1 : -1;
+          dirEdges.set(k, (dirEdges.get(k) ?? 0) + dir);
+        }
+      }
+    }
+    if (tris < 4 || signedVol <= 0) return false;
+    for (const net of dirEdges.values()) {
+      if (net !== 0) return false;
+    }
+    return true;
+  };
+
+  const matClosed = new Array<boolean>(mats.length).fill(true);
+  const matUsed = new Array<boolean>(mats.length).fill(false);
+  for (let mIdx = 0; mIdx < meshes.length; mIdx++) {
+    const prims: Record<string, any>[] = meshes[mIdx].primitives ?? [];
+    const allOpaque =
+      !meshNegScale[mIdx] &&
+      prims.every((p) => isOpaqueMaterial(p.material !== undefined ? mats[p.material] : undefined));
+    const wholeClosed = allOpaque && prims.length > 1 ? isClosedOutwardManifold(prims) : false;
+    for (const p of prims) {
+      if (p.material === undefined) continue;
+      matUsed[p.material] = true;
+      if (!matClosed[p.material]) continue;
+      if (meshNegScale[mIdx]) {
+        matClosed[p.material] = false;
+        continue;
+      }
+      if (!wholeClosed && !isClosedOutwardManifold([p])) {
+        matClosed[p.material] = false;
+      }
+    }
+  }
+  for (let mi = 0; mi < mats.length; mi++) {
+    const mat = mats[mi];
+    if (mat.doubleSided && isOpaqueMaterial(mat) && matUsed[mi] && matClosed[mi]) {
+      delete mat.doubleSided;
+    }
+  }
+}
+
 function packZone(zone: ZoneBundleId) {
   const sources: ReturnType<typeof readProduct>[] = [];
   const roots: [ReturnType<typeof readProduct>, number][] = [];
@@ -105,6 +367,7 @@ function packZone(zone: ZoneBundleId) {
     const file = modelPath.replace(/^\/media\/models\//, '');
     const raw = installedProduct(file, readFileSync(join(root, file)));
     const source = readProduct(raw);
+    normalizeZoneProduct(source);
     const sceneIndex = source.doc.scene ?? 0;
     const sceneNodes = source.doc.scenes?.[sceneIndex]?.nodes ?? [];
     source.doc.nodes ??= [];
@@ -203,7 +466,8 @@ export function studioParts(assetBase = ''): {
     configResolved(config) {
       isBuild = config.command === 'build';
     },
-    buildStart() {
+    async buildStart() {
+      await meshoptReady;
       if (isBuild) prepareBuildAssets();
     },
     transform(code, id) {
@@ -238,16 +502,20 @@ export function studioParts(assetBase = ''): {
       server.middlewares.use((request, response, next) => {
         const url = request.url?.split('?')[0] ?? '';
         if (!url.startsWith('/media/models/') && !url.startsWith('/media/basis/')) return next();
-        const build = (builds ??= deliveries()).get(url);
-        if (!build) return next();
-        if (!cache.has(url)) cache.set(url, build());
-        const contentType = url.endsWith('.js')
-          ? 'application/javascript; charset=utf-8'
-          : url.endsWith('.wasm')
-            ? 'application/wasm'
-            : 'application/octet-stream';
-        response.setHeader('Content-Type', contentType);
-        response.end(cache.get(url));
+        const serve = () => {
+          const build = (builds ??= deliveries()).get(url);
+          if (!build) return next();
+          if (!cache.has(url)) cache.set(url, build());
+          const contentType = url.endsWith('.js')
+            ? 'application/javascript; charset=utf-8'
+            : url.endsWith('.wasm')
+              ? 'application/wasm'
+              : 'application/octet-stream';
+          response.setHeader('Content-Type', contentType);
+          response.end(cache.get(url));
+        };
+        if (meshoptInitialized) serve();
+        else void meshoptReady.then(serve, next);
       });
     },
     configurePreviewServer(server) {

@@ -47,10 +47,14 @@ export function graphicsDevice(): {
 } {
   try {
     const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
     const context = canvas.getContext('webgl2', {
       powerPreference: 'high-performance',
       alpha: false,
       antialias: false,
+      depth: false,
+      stencil: false,
     });
     if (!context) return { available: false, quality: 'low', tier: 'balanced', initialLowScale: 1 };
     const profile = detectGraphicsProfile(context);

@@ -15,6 +15,10 @@ export type StudioTextureOptions = {
 };
 
 const KTX2_PREFIXES = ['/media/materials/', '/media/photography/', '/media/panoramas/'];
+const KTX2_EXPLICIT_PATHS = new Set([
+  '/media/graphics/world-atlas.webp',
+  '/media/graphics/shelf-covers.webp',
+]);
 const KTX2_SOURCE_EXT = /\.(?:webp|png|jpe?g)$/i;
 
 // Textures intentionally kept as WebP/PNG (depth maps, tiny < 4 KB textures, or excluded atlases).
@@ -28,8 +32,14 @@ const KTX2_EXCLUDED_PATHS = new Set([
 ]);
 
 let sharedLoader: KTX2Loader | null = null;
+let fallbackGltfLoader: KTX2Loader | null = null;
 let initializedRenderer: T.WebGLRenderer | null = null;
 let hardwareCompressedSupported = false;
+
+function ktx2WorkerLimit(): number {
+  const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 2 : 2;
+  return Math.min(8, Math.max(2, cores - 2));
+}
 
 function isDisabledByQuery(): boolean {
   if (typeof location === 'undefined') return false;
@@ -56,6 +66,7 @@ function hasHardwareCompression(renderer: T.WebGLRenderer): boolean {
 export function ktx2UrlFor(url: string): string | null {
   const clean = url.split('?')[0];
   if (!KTX2_SOURCE_EXT.test(clean)) return null;
+  if (KTX2_EXPLICIT_PATHS.has(clean)) return clean.replace(KTX2_SOURCE_EXT, '.ktx2');
   if (!KTX2_PREFIXES.some((prefix) => clean.startsWith(prefix))) return null;
   if (clean.startsWith('/media/photography/field-notes/')) return null;
   if (clean.startsWith('/media/panoramas/') && /-depth\.png$/i.test(clean)) return null;
@@ -80,6 +91,10 @@ export function initStudioKtx2(renderer: T.WebGLRenderer): boolean {
     sharedLoader.dispose();
     sharedLoader = null;
   }
+  if (fallbackGltfLoader) {
+    fallbackGltfLoader.dispose();
+    fallbackGltfLoader = null;
+  }
 
   initializedRenderer = renderer;
   if (isDisabledByQuery() || !hasHardwareCompression(renderer)) {
@@ -89,8 +104,7 @@ export function initStudioKtx2(renderer: T.WebGLRenderer): boolean {
 
   const loader = new KTX2Loader(defaultStudioLoadingManager);
   loader.setTranscoderPath('/media/basis/');
-  const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 2 : 2;
-  loader.setWorkerLimit(Math.min(4, Math.max(1, cores)));
+  loader.setWorkerLimit(ktx2WorkerLimit());
   loader.detectSupport(renderer);
 
   sharedLoader = loader;
@@ -102,10 +116,44 @@ export function ktx2Supported(): boolean {
   return hardwareCompressedSupported && sharedLoader !== null;
 }
 
+/**
+ * Return the initialized hardware-accelerated shared `KTX2Loader`, or `null` if
+ * `initStudioKtx2(renderer)` has not enabled hardware compression yet.
+ */
+export function getStudioKtx2Loader(): KTX2Loader | null {
+  return sharedLoader;
+}
+
+/**
+ * Return a `KTX2Loader` suitable for `GLTFLoader.setKTX2Loader(...)`.
+ *
+ * Prefers the hardware-accelerated shared loader created by `initStudioKtx2(renderer)`,
+ * and lazily falls back to a software-RGBA32 `KTX2Loader` in environments without
+ * renderer initialization (such as headless model unit tests or software WebGL).
+ */
+export function getOrCreateGltfKtx2Loader(): KTX2Loader | null {
+  if (sharedLoader) return sharedLoader;
+  if (typeof Worker === 'undefined') return null;
+  if (!fallbackGltfLoader) {
+    const loader = new KTX2Loader(defaultStudioLoadingManager);
+    loader.setTranscoderPath('/media/basis/');
+    loader.setWorkerLimit(ktx2WorkerLimit());
+    loader.detectSupport({
+      extensions: { has: () => false, get: () => null },
+    } as unknown as T.WebGLRenderer);
+    fallbackGltfLoader = loader;
+  }
+  return fallbackGltfLoader;
+}
+
 export function disposeStudioKtx2(): void {
   if (sharedLoader) {
     sharedLoader.dispose();
     sharedLoader = null;
+  }
+  if (fallbackGltfLoader) {
+    fallbackGltfLoader.dispose();
+    fallbackGltfLoader = null;
   }
   initializedRenderer = null;
   hardwareCompressedSupported = false;
@@ -128,12 +176,22 @@ function applyOptions(
   if (!isCompressed && options.flipY !== undefined) texture.flipY = options.flipY;
 }
 
+function attachCompressedClone(instance: T.Texture): void {
+  instance.clone = function compressedClone(this: T.Texture) {
+    const cloned = T.Texture.prototype.clone.call(this);
+    (cloned as T.Texture & { isCompressedTexture?: boolean }).isCompressedTexture = true;
+    attachCompressedClone(cloned);
+    return cloned;
+  };
+}
+
 function hydrateCompressed(
   target: T.Texture,
   loaded: T.CompressedTexture,
   options: StudioTextureOptions | undefined,
 ): void {
   (target as T.Texture & { isCompressedTexture?: boolean }).isCompressedTexture = true;
+  attachCompressedClone(target);
   target.source = loaded.source;
   target.mipmaps = loaded.mipmaps;
   target.format = loaded.format;

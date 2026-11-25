@@ -46,14 +46,6 @@ export function leanRoomPhysicalLighting(source: string) {
     .replace(
       'LTC_Evaluate( normal, viewDir, position, mat3( 1.0 ), rectCoords )',
       'studioRectDiffuse(normal, position, rectCoords)',
-    )
-    .replace(
-      'computeMultiscattering( material.dfg, material.diffuseColor,',
-      'if (material.metalness != 0.0) computeMultiscattering( material.dfg, material.diffuseColor,',
-    )
-    .replace(
-      'computeMultiscatteringIridescence( material.dfg, material.diffuseColor,',
-      'if (material.metalness != 0.0) computeMultiscatteringIridescence( material.dfg, material.diffuseColor,',
     );
 }
 

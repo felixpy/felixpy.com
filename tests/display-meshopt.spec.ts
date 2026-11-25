@@ -1,8 +1,10 @@
 import { expect, test } from '@playwright/test';
 
-test('the default Meshopt decoder mounts the Mac Studio inspection model', async ({ page }) => {
+test('the default Meshopt decoder and KTX2 loader mount the Mac Studio inspection model', async ({
+  page,
+}) => {
   await page.goto('/robots.txt');
-  const { installed, meshCount } = await page.evaluate(async () => {
+  const { installed, meshCount, hasTexture } = await page.evaluate(async () => {
     const three = '/node_modules/three/build/three.module.js';
     const displayModel = '/src/scene/display-model.ts';
     const T = (await import(three)) as typeof import('three');
@@ -15,13 +17,19 @@ test('the default Meshopt decoder mounts the Mac Studio inspection model', async
       mounted: () => installed++,
     });
     let meshCount = 0;
+    let hasTexture = false;
     root.traverse((object) => {
       const mesh = object as import('three').Mesh;
-      if (mesh.isMesh && mesh.geometry.attributes.position.count > 0) meshCount++;
+      if (mesh.isMesh && mesh.geometry.attributes.position.count > 0) {
+        meshCount++;
+        const mat = mesh.material as import('three').MeshStandardMaterial;
+        if (mat.map && mat.map.image) hasTexture = true;
+      }
     });
-    return { installed, meshCount };
+    return { installed, meshCount, hasTexture };
   });
 
   expect(installed).toBe(1);
   expect(meshCount).toBeGreaterThan(0);
+  expect(hasTexture).toBe(true);
 });

@@ -2,8 +2,16 @@ import * as T from 'three';
 import { defaultStudioLoadingManager } from './asset-loading';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { getOrCreateGltfKtx2Loader } from './ktx2-loader';
 import { packedBuffer } from './packed-buffer';
 import { zoneBundlePath, zoneForModel, type ZoneBundleId } from './zone-bundles';
+
+function createGltfLoader(manager: T.LoadingManager): GLTFLoader {
+  const loader = new GLTFLoader(manager).setMeshoptDecoder(MeshoptDecoder);
+  const ktx2 = getOrCreateGltfKtx2Loader();
+  if (ktx2) loader.setKTX2Loader(ktx2);
+  return loader;
+}
 
 type ModelSetup = {
   mesh?: (mesh: T.Mesh) => void;
@@ -31,7 +39,7 @@ function loadZoneArchive(zone: ZoneBundleId, manager: T.LoadingManager): Promise
     const response = await fetch(url);
     const buffer = await packedBuffer(response);
     await MeshoptDecoder.ready;
-    const loader = new GLTFLoader(manager).setMeshoptDecoder(MeshoptDecoder);
+    const loader = createGltfLoader(manager);
     const { scene } = await loader.parseAsync(buffer, T.LoaderUtils.extractUrlBase(bundlePath));
     const entries = new Map<string, T.Object3D>();
     for (const child of scene.children) {
@@ -89,7 +97,8 @@ export function loadDisplayModel(
 ) {
   const { mark } = setup;
   async function loadStandalone(authoring: boolean): Promise<T.Group> {
-    const loader = new GLTFLoader(manager).setMeshoptDecoder(MeshoptDecoder);
+    await MeshoptDecoder.ready;
+    const loader = createGltfLoader(manager);
     const url = manager.resolveURL(authoring ? path : path + '.gz');
     const fetchStart = mark?.('fetch-start').startTime;
     const response = await fetch(url);
