@@ -134,6 +134,7 @@ export function roomWarmup(
   let liveFront: LiveFront | undefined;
   let smallMapBatches = 0;
   let bgLinking = false;
+  let totalUploadMaps = 0;
   const bgSignatures = new Set<string>();
 
   function traverseWarmable(object: Object3D, callback: (node: Object3D) => void) {
@@ -696,6 +697,80 @@ export function roomWarmup(
 
   return {
     uploadFront: () => upload(frontMaps, 8),
+    uploadAll(budgetMs: number) {
+      if (frontMaps.size) {
+        for (const texture of frontMaps) maps.add(texture);
+        frontMaps.clear();
+      }
+      if (maps.size > totalUploadMaps) totalUploadMaps = maps.size;
+      const done = upload(maps, budgetMs);
+      return { done, remaining: maps.size, total: Math.max(1, totalUploadMaps) };
+    },
+    async compileAll(target: WebGLRenderTarget | null, onProgress?: (ratio: number) => void) {
+      scene.updateMatrixWorld();
+      scan();
+      const compileQueue: Renderable[] = [];
+      for (let i = offset; i < queue.length; i++) {
+        const object = queue[i];
+        if (!object.parent || hasPreviewProgram(object, target)) continue;
+        const signature = frontSignature(object);
+        if (bgSignatures.has(signature)) continue;
+        bgSignatures.add(signature);
+        compileQueue.push(object);
+      }
+      offset = queue.length = 0;
+      const total = compileQueue.length;
+      if (!total) {
+        onProgress?.(1);
+        return;
+      }
+      const canAsync =
+        typeof gl.compileAsync === 'function' &&
+        Boolean(gl.extensions?.has('KHR_parallel_shader_compile'));
+      const stepSize = canAsync ? 64 : 16;
+      let completed = 0;
+      const batches: Promise<unknown>[] = [];
+      for (let index = 0; index < total; index += stepSize) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        if (disposed) return;
+        const batch = compileQueue.slice(index, index + stepSize);
+        const revealed: Renderable[] = [];
+        for (const object of batch) {
+          if (!object.visible) {
+            object.visible = true;
+            revealed.push(object);
+          }
+          group.children.push(object);
+        }
+        const previous = gl.getRenderTarget();
+        gl.setRenderTarget(target);
+        let linking: Promise<unknown> | undefined;
+        try {
+          if (canAsync) linking = gl.compileAsync(group, camera, scene);
+          else gl.compile(group, camera, scene);
+        } finally {
+          for (const object of revealed) object.visible = false;
+          group.children.length = 0;
+          gl.setRenderTarget(previous);
+        }
+        if (linking) {
+          batches.push(
+            linking
+              .catch(() => {})
+              .finally(() => {
+                if (disposed) return;
+                completed = Math.min(total, completed + batch.length);
+                onProgress?.(completed / total);
+              }),
+          );
+        } else {
+          completed = Math.min(total, completed + batch.length);
+          onProgress?.(completed / total);
+        }
+      }
+      if (batches.length) await Promise.all(batches);
+      if (!disposed) onProgress?.(1);
+    },
     prepareVisible,
     reconcileFront,
     async front(target: WebGLRenderTarget | null, live = false) {

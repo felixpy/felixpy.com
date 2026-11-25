@@ -130,6 +130,24 @@
     monospace;
   font-variant-numeric: tabular-nums;
 }
+.phosphor-status {
+  position: absolute;
+  top: 64.5%;
+  left: 50%;
+  z-index: 2;
+  width: 44%;
+  transform: translateX(-50%);
+  color: #7da669;
+  text-align: center;
+  font:
+    500 clamp(10px, 0.9vw, 16px)/1.35 'IBM Plex Sans',
+    'Studio Han',
+    sans-serif;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 @keyframes phosphor-blink {
   to {
     opacity: 0.35;

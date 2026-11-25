@@ -5,7 +5,7 @@ import { defaultStudioLoadingManager } from './asset-loading';
 export function fixtureReflections(location: 'aj' | 'camp') {
   type Time = 'day' | 'night';
   const samples = new Map<Time, T.DataTexture>();
-  const pending = new Set<Time>();
+  const pending = new Map<Time, Promise<void>>();
   const retryAfter = new Map<Time, number>();
   const finishes = new Set<T.MeshStandardMaterial>();
   const loader = new HDRLoader(defaultStudioLoadingManager);
@@ -19,33 +19,47 @@ export function fixtureReflections(location: 'aj' | 'camp') {
     material.needsUpdate = true;
   }
 
-  function loadVisible() {
-    if (!detailed || released || samples.has(active) || pending.has(active)) return;
-    if (performance.now() < (retryAfter.get(active) ?? 0)) return;
+  function loadVisible(): Promise<void> {
+    if (!detailed || released || samples.has(active)) return Promise.resolve();
+    const existing = pending.get(active);
+    if (existing) return existing;
+    if (performance.now() < (retryAfter.get(active) ?? 0)) return Promise.resolve();
     const time = active;
-    pending.add(time);
-    loader.load(
-      '/media/lighting/' + location + '-' + time + '.hdr',
-      (texture) => {
-        pending.delete(time);
-        if (released) return texture.dispose();
-        texture.mapping = T.EquirectangularReflectionMapping;
-        samples.set(time, texture);
-        if (time === active && detailed) for (const material of finishes) apply(material, texture);
-      },
-      undefined,
-      () => {
-        pending.delete(time);
-        retryAfter.set(time, performance.now() + 3000);
-      },
-    );
+    const loading = new Promise<void>((resolve) => {
+      loader.load(
+        '/media/lighting/' + location + '-' + time + '.hdr',
+        (texture) => {
+          pending.delete(time);
+          if (released) {
+            texture.dispose();
+            resolve();
+            return;
+          }
+          texture.mapping = T.EquirectangularReflectionMapping;
+          samples.set(time, texture);
+          if (time === active && detailed)
+            for (const material of finishes) apply(material, texture);
+          resolve();
+        },
+        undefined,
+        () => {
+          pending.delete(time);
+          retryAfter.set(time, performance.now() + 3000);
+          resolve();
+        },
+      );
+    });
+    pending.set(time, loading);
+    return loading;
   }
 
   return {
     bind(material: T.MeshStandardMaterial) {
       if (finishes.has(material) || released) return;
       finishes.add(material);
-      material.onBeforeRender = loadVisible;
+      material.onBeforeRender = () => {
+        void loadVisible();
+      };
       if (detailed) apply(material, samples.get(active) ?? null);
       material.addEventListener('dispose', () => {
         finishes.delete(material);
@@ -56,7 +70,7 @@ export function fixtureReflections(location: 'aj' | 'camp') {
       });
     },
     preload() {
-      loadVisible();
+      return loadVisible();
     },
     select(night: boolean, high: boolean) {
       const time = night ? 'night' : 'day';

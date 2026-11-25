@@ -40,6 +40,11 @@ export function Finish({
   firstFrame,
   progressiveStartup,
   interacting,
+  fullPrewarm = false,
+  assetsReady,
+  forceAllZones,
+  onPrewarmProgress,
+  onPrewarmDone,
 }: {
   enabled: boolean;
   look: RoomLook;
@@ -57,6 +62,11 @@ export function Finish({
   firstFrame: ReturnType<typeof roomFirstFrame>;
   progressiveStartup: boolean;
   interacting: RefObject<boolean>;
+  fullPrewarm?: boolean;
+  assetsReady?: RefObject<boolean>;
+  forceAllZones?: RefObject<boolean>;
+  onPrewarmProgress?: (ratio: number, status: string) => void;
+  onPrewarmDone?: () => void;
 }) {
   const { gl, scene, camera, size, viewport, setDpr } = useThree();
   const device = useMemo(() => detectGraphicsProfile(gl.getContext()), [gl]);
@@ -117,6 +127,10 @@ export function Finish({
   > | null>(null);
   const shaders = useRef<'cold' | 'pending' | 'ready'>('cold');
   const previewNext = useRef(true);
+  const prewarmStage = useRef<'waiting' | 'compiling' | 'uploading' | 'sweeping' | 'done'>(
+    'waiting',
+  );
+  const sweepStep = useRef(0);
   const preparation = useRef<ReturnType<typeof roomWarmup> | null>(null);
   const workbenchPreparation = useRef<ReturnType<typeof roomWarmup> | null>(null);
   const scannedRevision = useRef(-1);
@@ -231,6 +245,117 @@ export function Finish({
 
   useFrame(({ clock }, delta) => {
     if (document.hidden) return;
+    const active = pipeline.current;
+    if (fullPrewarm && firstPicture.current !== 'drawn') {
+      if (prewarmStage.current === 'waiting') {
+        if (!assetsReady?.current) return;
+        prewarmStage.current = 'compiling';
+        const pending = roomWarmup(
+          gl,
+          scene,
+          camera,
+          undefined,
+          undefined,
+          undefined,
+          keepPreviewPrograms,
+        );
+        preparation.current = pending;
+        scannedRevision.current = detailRevision.current;
+        performance.mark('studio-room-shader-warm-start');
+        onPrewarmProgress?.(0.5, 'Compiling shaders...');
+        void pending
+          .compileAll(active?.beauty ?? null, (ratio) => {
+            if (preparation.current === pending)
+              onPrewarmProgress?.(0.5 + ratio * 0.26, 'Compiling shaders...');
+          })
+          .then(
+            () => {
+              if (preparation.current !== pending) return;
+              performance.mark('studio-room-shader-warm-end');
+              shaders.current = 'ready';
+              prewarmStage.current = 'uploading';
+              onPrewarmProgress?.(0.76, 'Uploading assets to GPU...');
+            },
+            () => {
+              if (preparation.current !== pending) return;
+              performance.mark('studio-room-shader-warm-end');
+              shaders.current = 'ready';
+              prewarmStage.current = 'uploading';
+              onPrewarmProgress?.(0.76, 'Uploading assets to GPU...');
+            },
+          );
+        return;
+      }
+      if (prewarmStage.current === 'compiling') return;
+      if (prewarmStage.current === 'uploading') {
+        const result = preparation.current?.uploadAll(12) ?? { done: true, remaining: 0, total: 1 };
+        const uploaded = 1 - result.remaining / result.total;
+        onPrewarmProgress?.(0.76 + uploaded * 0.14, 'Uploading assets to GPU...');
+        if (result.done) {
+          prewarmStage.current = 'sweeping';
+          sweepStep.current = 0;
+          if (forceAllZones) forceAllZones.current = true;
+          onPrewarmProgress?.(0.9, 'Warming up lighting & views...');
+        }
+        return;
+      }
+      if (prewarmStage.current === 'sweeping') {
+        const step = sweepStep.current;
+        const sweepYaws = [-Math.PI / 2, Math.PI, Math.PI / 2];
+        const renderSceneFrame = () => {
+          grade.select(look);
+          if (!active) {
+            gl.render(scene, camera);
+            grade.gradeScreen(gl);
+          } else {
+            const { beauty, composite, occlusion, output, drawBeauty } = active;
+            const color = composite ?? beauty;
+            gl.setRenderTarget(beauty);
+            if (drawBeauty) drawBeauty(gl, camera);
+            else gl.render(scene, camera);
+            occlusion.render(gl, color, beauty, delta, false);
+            output.render(gl, beauty, color, delta, false);
+          }
+        };
+        if (step < sweepYaws.length) {
+          if (step === 0) gl.shadowMap.needsUpdate = true;
+          const savedX = camera.rotation.x;
+          const savedY = camera.rotation.y;
+          const savedZ = camera.rotation.z;
+          const savedOrder = camera.rotation.order;
+          const perspective = 'fov' in camera && typeof camera.fov === 'number' ? camera : null;
+          const savedFov = perspective?.fov;
+          if (perspective) {
+            perspective.fov = 100;
+            perspective.updateProjectionMatrix();
+          }
+          camera.rotation.set(0, sweepYaws[step], 0, 'YXZ');
+          camera.updateMatrixWorld(true);
+          renderSceneFrame();
+          camera.rotation.set(savedX, savedY, savedZ, savedOrder);
+          if (perspective && savedFov !== undefined) {
+            perspective.fov = savedFov;
+            perspective.updateProjectionMatrix();
+          }
+          camera.updateMatrixWorld(true);
+          sweepStep.current = step + 1;
+          if (step === sweepYaws.length - 1 && forceAllZones) forceAllZones.current = false;
+          onPrewarmProgress?.(0.92 + step * 0.03, 'Warming up lighting & views...');
+          return;
+        }
+        performance.mark('studio-room-full-draw-start');
+        renderSceneFrame();
+        firstPicture.current = 'drawn';
+        prewarmStage.current = 'done';
+        if (!simpleLow) firstFrame.dispose();
+        performance.mark('studio-room-shaded');
+        onPrewarmProgress?.(1, 'Ready');
+        onPrewarmDone?.();
+        onInteractive();
+        return;
+      }
+      return;
+    }
     if (firstPicture.current === 'interactive' && !roomVisible) return;
     if (firstPicture.current === 'loading' || firstPicture.current === 'interactive') {
       if (firstFrame.preparing(gl, scene, camera)) return;
@@ -353,7 +478,6 @@ export function Finish({
       }
       return;
     }
-    const active = pipeline.current;
     const drawn = firstPicture.current === 'drawn';
     if (preparation.current && drawn) {
       if (scannedRevision.current !== detailRevision.current) {

@@ -154,7 +154,10 @@ export function* buildStudioSteps(
   );
   radiator(interior, p);
   yield;
+  const rearAssets = { loaded: 0, total: 0 };
   const rearLoader = createStudioLoadingManager();
+  rearLoader.onStart = rearLoader.onProgress = (_, loaded, total) =>
+    Object.assign(rearAssets, { loaded, total });
   const rear = rearLoading(rearLoader, prioritizeRear || preloadInspection);
   const deferDesk = rear.defer('desk');
   const deferBench = rear.defer('bench');
@@ -1053,8 +1056,7 @@ export function* buildStudioSteps(
     pickRoots: [interior, window.unit],
     zoneCuller,
     preloadFixtureReflections() {
-      floorLamp.preload();
-      fieldGear.preloadReflections();
+      return Promise.all([floorLamp.preload(), fieldGear.preloadReflections()]).then(() => {});
     },
     preloadHero(id: string) {
       if (id === 'keyboard') preloadKeyboardHero();
@@ -1081,6 +1083,7 @@ export function* buildStudioSteps(
       roots: [bench.boardLight.unit, bench.tray, samplePrint, printer.unit, rocket],
       ready: rear.ready,
     },
+    rearAssets,
     rearReady: rear.ready,
     prepareRear: rear.prepare,
     targets,

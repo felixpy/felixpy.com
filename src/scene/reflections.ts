@@ -10,7 +10,7 @@ type Time = keyof typeof radiance;
 type Probe = {
   preview?: T.WebGLCubeRenderTarget;
   full?: T.WebGLCubeRenderTarget | T.CompressedCubeTexture;
-  loading?: boolean;
+  pending?: Promise<void>;
 };
 
 function probeTexture(entry: T.WebGLCubeRenderTarget | T.CompressedCubeTexture): T.Texture {
@@ -107,38 +107,43 @@ export function studioReflections(
       source.dispose();
     }
   }
-  function loadHdrFallback(time: Time, probe: Probe) {
-    loader.load(
-      '/media/lighting/desk-' + time + '.hdr',
-      (texture) => {
-        if (disposed) {
-          texture.dispose();
-          return;
-        }
-        probe.full = prefilter(texture);
-        probe.loading = false;
-        if (time === active && detailed) scene.environment = probeTexture(probe.full);
-      },
-      undefined,
-      () => {
-        probe.loading = false;
-      },
-    );
+  function loadHdrFallback(time: Time, probe: Probe): Promise<void> {
+    return new Promise<void>((resolve) => {
+      loader.load(
+        '/media/lighting/desk-' + time + '.hdr',
+        (texture) => {
+          if (disposed) {
+            texture.dispose();
+            resolve();
+            return;
+          }
+          probe.full = prefilter(texture);
+          probe.pending = undefined;
+          if (time === active && detailed) scene.environment = probeTexture(probe.full);
+          resolve();
+        },
+        undefined,
+        () => {
+          probe.pending = undefined;
+          resolve();
+        },
+      );
+    });
   }
   return {
-    select(night: boolean, quality: Environment['quality']) {
-      if (!canPrefilter) return;
+    select(night: boolean, quality: Environment['quality']): Promise<void> {
+      if (!canPrefilter) return Promise.resolve();
       active = night ? 'night' : 'day';
       detailed = quality === 'high';
       const time = active;
       const probe = probes[time];
       probe.preview ??= prefilter(previewTexture(time));
       scene.environment = probeTexture((detailed && probe.full) || probe.preview);
-      if (!detailed || probe.full || probe.loading) return;
-      probe.loading = true;
+      if (!detailed || probe.full) return Promise.resolve();
+      if (probe.pending) return probe.pending;
       const pmremPath = '/media/lighting/desk-' + time + '.pmrem.gz';
       const url = defaultStudioLoadingManager.resolveURL(pmremPath);
-      void fetch(url)
+      probe.pending = fetch(url)
         .then((response) => packedBuffer(response))
         .then((buffer) => {
           const cube = decodePmrem(buffer);
@@ -147,13 +152,14 @@ export function studioReflections(
             return;
           }
           probe.full = cube;
-          probe.loading = false;
+          probe.pending = undefined;
           if (time === active && detailed) scene.environment = cube;
         })
         .catch(() => {
           if (disposed) return;
-          loadHdrFallback(time, probe);
+          return loadHdrFallback(time, probe);
         });
+      return probe.pending;
     },
     dispose() {
       disposed = true;

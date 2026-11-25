@@ -178,3 +178,20 @@ Following playtesting on Apple Silicon (Mac M3 Pro 36 GB) and desktop RTX 4090, 
 ### Production publish scope
 
 - **Live R2 & Vercel production publish:** Verified locally via `VITE_ASSET_BASE_URL=https://assets.felixpy.com/felix-studio/ npm run build` + `node scripts/deploy/r2-assets.mjs dist --check` and `tests/media-manifest.spec.ts` (confirming `public, max-age=31536000, immutable` on all hashed media/KTX2/WASM/fonts, `public, no-cache` on `media/credits.txt`, and strictly additive non-destructive R2 uploads for old-version coexistence and instant rollback). Actual production publish is handled separately.
+
+### Phase 4 full-room prewarm loader (`2026-11-25`)
+
+To eliminate first-rotation stalls right after dismissing the loading screen, the default startup flow (`StudioView.tsx`, `Finish.tsx`, `room-warmup.ts`, `LoadingScreen.tsx`) now completes full-room prewarming behind the phosphor loader across 5 real stages with centered `IBM Plex Sans` English status copy:
+
+1. `Initializing studio engine...` (`0% → 15%`)
+2. `Loading room geometry & textures...` (`15% → 50%`): loads front + rear spatial bundles, `workshop-tools.bpk`, PMR2 reflections, `aj`/`camp` HDR reflections, surface normals, and animated water in parallel while snapping room lights to steady-state intensities.
+3. `Compiling shaders...` (`50% → 76%`): runs `roomWarmup.compileAll()` in parallel `gl.compileAsync` batches across all 4 zones and hidden `studioWarmable` close-up details.
+4. `Uploading assets to GPU...` (`76% → 90%`): drains `roomWarmup.uploadAll(12)` to push all pending textures into VRAM before dismissal.
+5. `Warming up lighting & views...` (`90% → 100%`): disables zone culling temporarily and renders wide-FOV (`100°`) East/South/West sweep frames with `shadowMap.needsUpdate = true` to push all VBOs/IBOs/PSOs and shadow maps into VRAM, then restores default North desk culling and renders the final shaded desk frame before dismissing `.studio-loading` (`Ready`).
+
+#### Verified immediate 360° turn results (RTX 4090 native 4K, 0 ms after loader dismissal)
+
+| Visit                               |                    Total loader duration | Programs before → after 360° spin | Immediate 360° spin FPS | Frame P50 / P95 / Max (ms) | Frames > 33.4 ms / > 50 ms |
+| ----------------------------------- | ---------------------------------------: | :-------------------------------: | ----------------------: | -------------------------: | :------------------------: |
+| **Cold** (fresh empty shader cache) | 17.50 s (14.5 s cold D3D11 HLSL compile) |       **116 → 116** (0 new)       |           **138.5 FPS** |   **7.0 / 10.6 / 13.5 ms** |         **0 / 0**          |
+| **Warm** (cached visit)             |                               **2.57 s** |       **116 → 116** (0 new)       |           **137.2 FPS** |    **7.0 / 8.6 / 22.6 ms** |         **0 / 0**          |

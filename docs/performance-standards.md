@@ -17,7 +17,7 @@ Accept an average cadence up to 5% below the nominal release target using the mi
 | 60 FPS         | 16.67 ms     | 10 / 14 ms                           | 17.0 / 17.5 ms                            |
 | 30 FPS         | 33.33 ms     | 20 / 28 ms                           | 34.0 / 35.0 ms                            |
 
-Provide visible loading feedback at least once a second while the loader is active. Publish new progress promptly and enter the room as soon as it accepts input. Measure the entire room load through asset and shading readiness.
+Provide visible loading feedback at least once a second while the loader is active, reporting each loading stage (engine initialization, full-room geometry & textures, shader compilation, GPU texture upload, and 360° lighting/view prewarm). Enter the room once full-room assets, shaders, GPU uploads, and view prewarming are ready so the first 360° rotation incurs zero resource- or shader-induced stalls. Measure the entire room load through asset and shading readiness.
 
 CPU and GPU work overlap. Record CSS viewport, device pixel ratio, drawing-buffer dimensions and the main render target separately. Report adaptive resolution in a separate row. A 4090 run at 1440p is a repeatable development comparator. Verify the monitor refresh mode and actual presented cadence on the target system.
 

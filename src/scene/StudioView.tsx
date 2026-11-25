@@ -84,7 +84,7 @@ type Props = {
   onHint: (text: string) => void;
   onHover: (text: string, point?: { x: number; y: number }) => void;
   onReady: () => void;
-  onProgress: (ratio: number) => void;
+  onProgress: (ratio: number, status?: string) => void;
   musicLevels: () => { bass: number; mid: number; beat: number };
   musicPlaying: boolean;
   screen: RefObject<HTMLDivElement | null>;
@@ -115,6 +115,8 @@ type RigProps = Props & {
   firstPicture: RefObject<FirstPicture>;
   detailRevision: RefObject<number>;
   interacting: RefObject<boolean>;
+  assetsReady: RefObject<boolean>;
+  forceAllZones: RefObject<boolean>;
   preparedReflection: RefObject<PreparedReflection | null>;
   phonePanel: RefObject<HTMLDivElement | null>;
   setPhoneHeld: (held: boolean) => void;
@@ -130,20 +132,29 @@ type Assembly = {
 function assemblyLoading() {
   const assets = { loaded: 0, total: 0 };
   const manager = createStudioLoadingManager();
+  let pending: Promise<void> | undefined;
   manager.onStart = manager.onProgress = (_, loaded, total) =>
     Object.assign(assets, { loaded, total });
   function frontReady() {
     if (assets.loaded === assets.total) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      manager.onLoad = resolve;
+    pending ??= new Promise<void>((resolve) => {
+      manager.onLoad = () => {
+        pending = undefined;
+        resolve();
+      };
     });
+    return pending;
   }
   return { assets, manager, frontReady };
 }
 
 function CameraRig(
   props: RigProps &
-    Assembly & { earlyRear: boolean; firstFrame: ReturnType<typeof roomFirstFrame> },
+    Assembly & {
+      earlyRear: boolean;
+      fullPrewarm: boolean;
+      firstFrame: ReturnType<typeof roomFirstFrame>;
+    },
 ) {
   const { camera: baseCamera, gl, scene } = useThree();
   const camera = baseCamera as T.PerspectiveCamera;
@@ -369,20 +380,22 @@ function CameraRig(
     const visibility = roomVisibility(model.pickRoots, live.current.environment, model.slats);
     const surfaceAbort = new AbortController();
     roomMeshes.current = roomDetail(model.interior, surfaceAbort.signal);
-    if (
-      !(import.meta.env.DEV && new URLSearchParams(location.search).get('review') === 'authoring')
-    ) {
-      void surfaceFinish(model.interior, surfaceAbort.signal)
-        .then((apply) => {
-          if (!surfaceAbort.signal.aborted) {
-            finishNormals.current = apply;
-            apply();
-          }
-        })
-        .catch(() => {});
-    }
+    const surfacePromise =
+      import.meta.env.DEV && new URLSearchParams(location.search).get('review') === 'authoring'
+        ? Promise.resolve()
+        : surfaceFinish(model.interior, surfaceAbort.signal)
+            .then((apply) => {
+              if (!surfaceAbort.signal.aborted) {
+                finishNormals.current = apply;
+                apply();
+              }
+            })
+            .catch(() => {});
     roomMaterials.current = visibility;
     reflections.current = reflectionMap;
+    const reflectionPromise = props.fullPrewarm
+      ? reflectionMap.select(live.current.environment.night, live.current.environment.quality)
+      : Promise.resolve();
     renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.needsUpdate = true;
     renderer.shadowMap.type = T.PCFShadowMap;
@@ -517,25 +530,53 @@ function CameraRig(
       deskHeroPreloadStarted = true;
       scheduleNextDeskHero();
     };
-    void model.rearReady.then(() => {
-      if (surfaceAbort.signal.aborted) return;
-      rearDone = true;
-      visibility.prepareMaterials();
-      finishNormals.current?.();
-      roomMeshes.current?.refresh();
-      model.zoneCuller.refreshBounds();
-      hoverPicker.invalidate();
-      props.detailRevision.current++;
-      shadowWarmup.current = 2;
-      performance.mark('studio-room-rear-ready');
-      const warmReflections = () => {
-        if (!surfaceAbort.signal.aborted) model.preloadFixtureReflections();
-      };
-      if (typeof window.requestIdleCallback === 'function')
-        window.requestIdleCallback(warmReflections, { timeout: 1200 });
-      else window.setTimeout(warmReflections, 64);
-      maybeStartDeskHeroPreload();
-    });
+    if (props.fullPrewarm) {
+      live.current.onProgress(0.15, 'Loading room geometry & textures...');
+      const rearPromise = model.prepareRear();
+      const fixturePromise = model.preloadFixtureReflections();
+      void Promise.allSettled([
+        props.frontReady(),
+        rearPromise,
+        fixturePromise,
+        surfacePromise,
+        reflectionPromise,
+      ]).then(() => {
+        if (surfaceAbort.signal.aborted) return;
+        rearDone = true;
+        performance.mark('studio-room-material-prep-start');
+        visibility.prepareMaterials();
+        finishNormals.current?.();
+        roomMeshes.current?.refresh();
+        model.zoneCuller.refreshBounds();
+        hoverPicker.invalidate();
+        performance.mark('studio-room-material-prep-end');
+        performance.mark('studio-room-rear-ready');
+        props.detailRevision.current++;
+        shadowWarmup.current = 2;
+        props.assetsReady.current = true;
+        maybeStartDeskHeroPreload();
+      });
+    } else {
+      void model.rearReady.then(() => {
+        if (surfaceAbort.signal.aborted) return;
+        rearDone = true;
+        visibility.prepareMaterials();
+        finishNormals.current?.();
+        roomMeshes.current?.refresh();
+        model.zoneCuller.refreshBounds();
+        hoverPicker.invalidate();
+        props.detailRevision.current++;
+        shadowWarmup.current = 2;
+        performance.mark('studio-room-rear-ready');
+        const warmReflections = () => {
+          if (!surfaceAbort.signal.aborted) void model.preloadFixtureReflections();
+        };
+        if (typeof window.requestIdleCallback === 'function')
+          window.requestIdleCallback(warmReflections, { timeout: 1200 });
+        else window.setTimeout(warmReflections, 64);
+        maybeStartDeskHeroPreload();
+      });
+    }
 
     function walkTo(x: number, y: number, z: number) {
       const position = camera.position.clone();
@@ -1119,14 +1160,14 @@ function CameraRig(
   }, [model, props.roomVisible, shaded]);
 
   useEffect(() => {
-    if (!props.roomVisible || (!props.earlyRear && !shaded)) return;
+    if (props.fullPrewarm || !props.roomVisible || (!props.earlyRear && !shaded)) return;
     if (typeof window.requestIdleCallback === 'function') {
       const idle = window.requestIdleCallback(() => void model.prepareRear(), { timeout: 240 });
       return () => window.cancelIdleCallback(idle);
     }
     const timer = window.setTimeout(() => void model.prepareRear(), 32);
     return () => window.clearTimeout(timer);
-  }, [model, props.earlyRear, props.roomVisible, shaded]);
+  }, [model, props.earlyRear, props.fullPrewarm, props.roomVisible, shaded]);
 
   useEffect(() => {
     const prepare = model.prepareWaterMotion;
@@ -1168,9 +1209,9 @@ function CameraRig(
   }, [camera, gl, model, props.roomVisible, scene, shaded]);
 
   useEffect(() => {
-    if (props.roomVisible)
-      reflections.current?.select(props.environment.night, props.environment.quality);
-  }, [props.environment.night, props.environment.quality, props.roomVisible]);
+    if (props.roomVisible || props.fullPrewarm)
+      void reflections.current?.select(props.environment.night, props.environment.quality);
+  }, [props.environment.night, props.environment.quality, props.fullPrewarm, props.roomVisible]);
 
   const { blinds, angle, reducedMotion } = props.environment;
   useLayoutEffect(() => {
@@ -1186,27 +1227,49 @@ function CameraRig(
     const delta = Math.min(elapsed, 0.05);
     const { environment: env, screen } = live.current;
     const load = loading.current;
-    if (!load.complete && assets.total) {
-      const ratio = assets.loaded / assets.total;
-      if (ratio === 1 && props.roomVisible && props.firstPicture.current === 'interactive') {
-        performance.mark('studio-room-material-prep-start');
-        roomMaterials.current?.prepareMaterials();
-        finishNormals.current?.();
-        performance.mark('studio-room-material-prep-end');
-        props.firstPicture.current = 'preparing';
-      }
-      if (ratio !== load.reported) {
-        load.reported = ratio;
-        live.current.onProgress(ratio);
-      }
-      if (ratio === 1 && props.firstPicture.current === 'drawn') {
-        load.complete = true;
-        setShaded(true);
-        if (
-          import.meta.env.DEV &&
-          new URLSearchParams(location.search).get('review') === 'window'
-        ) {
-          window.__studioReview?.activate('window');
+    if (!load.complete) {
+      if (props.fullPrewarm) {
+        if (!props.assetsReady.current) {
+          const loaded = assets.loaded + model.rearAssets.loaded;
+          const total = Math.max(1, assets.total + model.rearAssets.total);
+          const stageProgress = 0.15 + 0.35 * Math.min(1, loaded / total);
+          if (stageProgress > load.reported) {
+            load.reported = stageProgress;
+            live.current.onProgress(stageProgress, 'Loading room geometry & textures...');
+          }
+        }
+        if (props.firstPicture.current === 'drawn') {
+          load.complete = true;
+          setShaded(true);
+          if (
+            import.meta.env.DEV &&
+            new URLSearchParams(location.search).get('review') === 'window'
+          ) {
+            window.__studioReview?.activate('window');
+          }
+        }
+      } else if (assets.total) {
+        const ratio = assets.loaded / assets.total;
+        if (ratio === 1 && props.roomVisible && props.firstPicture.current === 'interactive') {
+          performance.mark('studio-room-material-prep-start');
+          roomMaterials.current?.prepareMaterials();
+          finishNormals.current?.();
+          performance.mark('studio-room-material-prep-end');
+          props.firstPicture.current = 'preparing';
+        }
+        if (ratio !== load.reported) {
+          load.reported = ratio;
+          live.current.onProgress(ratio);
+        }
+        if (ratio === 1 && props.firstPicture.current === 'drawn') {
+          load.complete = true;
+          setShaded(true);
+          if (
+            import.meta.env.DEV &&
+            new URLSearchParams(location.search).get('review') === 'window'
+          ) {
+            window.__studioReview?.activate('window');
+          }
         }
       }
     }
@@ -1571,7 +1634,7 @@ function CameraRig(
       finishReturn();
     }
     const geometryMoving = model.update(
-      env,
+      props.fullPrewarm && !load.complete ? { ...env, reducedMotion: true } : env,
       delta,
       clock.elapsedTime,
       live.current.musicLevels(),
@@ -1601,7 +1664,7 @@ function CameraRig(
     if (drawerFocus.current) forcedObjects.push(drawerFocus.current.object);
 
     model.zoneCuller.update(camera, {
-      forceAll: authoring || needsShadowUpdate,
+      forceAll: authoring || needsShadowUpdate || props.forceAllZones.current,
       forceZones: forcedZones,
       forceObjects: forcedObjects,
     });
@@ -1644,11 +1707,18 @@ function StudioRoom({
     });
     const rearMode = query.get('studio-rear');
     const waterMotion = query.get('studio-water-motion');
-    const deferWaterMotion = waterMotion !== 'eager';
+    const fullPrewarm =
+      !query.has('studio-warmup') &&
+      query.get('studio-high-startup') !== 'legacy' &&
+      !nativeLow &&
+      query.get('studio-low-shading') !== 'simple' &&
+      rearMode !== 'late';
+    const deferWaterMotion = fullPrewarm ? waterMotion === 'deferred' : waterMotion !== 'eager';
     const waterfront = query.get('studio-waterfront');
     return {
       firstFrame,
       progressive,
+      fullPrewarm,
       environment: props.environment,
       earlyRear: rearMode === 'early' || rearMode === 'idle',
       sliced: query.get('studio-build') === 'sliced',
@@ -1756,6 +1826,7 @@ function StudioRoom({
         {...assembly}
         nativeLow={nativeLow}
         earlyRear={startup.earlyRear}
+        fullPrewarm={startup.fullPrewarm}
         firstFrame={firstFrame}
       />
       <Finish
@@ -1768,6 +1839,10 @@ function StudioRoom({
         firstPicture={props.firstPicture}
         detailRevision={props.detailRevision}
         interacting={props.interacting}
+        fullPrewarm={startup.fullPrewarm}
+        assetsReady={props.assetsReady}
+        forceAllZones={props.forceAllZones}
+        onPrewarmProgress={props.onProgress}
         workbench={assembly.model.workbench}
         setLowScale={setLowScale}
         nativeLow={nativeLow}
@@ -1791,6 +1866,8 @@ export default function StudioView(props: Props) {
   );
   const detailRevision = useRef(0);
   const interacting = useRef(false);
+  const assetsReady = useRef(false);
+  const forceAllZones = useRef(false);
   const [lowScale, setLowScale] = useState(props.initialLowScale);
   useLayoutEffect(() => {
     if (props.roomVisible) performance.mark('studio-input-ready');
@@ -1847,6 +1924,8 @@ export default function StudioView(props: Props) {
           firstPicture={firstPicture}
           detailRevision={detailRevision}
           interacting={interacting}
+          assetsReady={assetsReady}
+          forceAllZones={forceAllZones}
           preparedReflection={preparedReflection}
           phonePanel={phonePanel}
           setPhoneHeld={setPhoneHeld}
