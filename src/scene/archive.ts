@@ -49,41 +49,97 @@ const printThickness = 0.00025908;
 const filmThickness = 0.00058;
 const printCurl = 0.0011;
 
-function instantPhoto(parent: T.Group, p: Palette, image: T.Texture, note: string, index: number) {
-  const photo = group(parent, note);
-  const face = canvasTexture(432, 688, (ctx) => {
-    const rng = random(149 + index);
-    ctx.fillStyle = ['#f7f2e8', '#f2eee5', '#f5f1e9'][index % 3];
-    ctx.fillRect(0, 0, 432, 688);
-    for (let i = 0; i < 6500; i++) {
-      ctx.fillStyle = i % 2 ? '#bea98611' : '#ffffff28';
-      ctx.fillRect(rng() * 432, rng() * 688, 0.8, 1.1);
+const instantPaperTints = ['#f7f2e8', '#f2eee5', '#f5f1e9'] as const;
+let sharedInstantGrain: HTMLCanvasElement | undefined;
+
+function instantPaperGrain() {
+  if (sharedInstantGrain) return sharedInstantGrain;
+  const canvas = document.createElement('canvas');
+  canvas.width = 432;
+  canvas.height = 688;
+  const ctx = canvas.getContext('2d')!;
+  const image = ctx.createImageData(432, 688);
+  const data = image.data;
+  const rng = random(149);
+  for (let i = 0; i < 6500; i++) {
+    const x = Math.min(431, Math.floor(rng() * 432));
+    const y = Math.min(687, Math.floor(rng() * 688));
+    const offset = (y * 432 + x) * 4;
+    if (i % 2) {
+      data[offset] = 190;
+      data[offset + 1] = 169;
+      data[offset + 2] = 134;
+      data[offset + 3] = 17;
+    } else {
+      data[offset] = 255;
+      data[offset + 1] = 255;
+      data[offset + 2] = 255;
+      data[offset + 3] = 40;
     }
-    if (index !== 3 && index !== 7) {
+  }
+  ctx.putImageData(image, 0, 0);
+  sharedInstantGrain = canvas;
+  return canvas;
+}
+
+function instantPhoto(
+  parent: T.Group,
+  p: Palette,
+  image: T.Texture,
+  note: string,
+  index: number,
+  shared: {
+    grain: HTMLCanvasElement;
+    backing: T.MeshStandardMaterial;
+    pod: T.MeshStandardMaterial;
+    plainFaces: Map<number, T.MeshStandardMaterial>;
+  },
+) {
+  const photo = group(parent, note);
+  const tintIndex = index % 3;
+  let faceMaterial: T.MeshStandardMaterial;
+  if (index === 3 || index === 7) {
+    let cached = shared.plainFaces.get(tintIndex);
+    if (!cached) {
+      const face = canvasTexture(432, 688, (ctx) => {
+        ctx.fillStyle = instantPaperTints[tintIndex];
+        ctx.fillRect(0, 0, 432, 688);
+        ctx.drawImage(shared.grain, 0, 0);
+      });
+      cached = new T.MeshStandardMaterial({
+        map: face,
+        roughness: 0.81,
+        normalMap: p.paper.normalMap,
+        normalScale: new T.Vector2(0.035, 0.035),
+      });
+      shared.plainFaces.set(tintIndex, cached);
+    }
+    faceMaterial = cached;
+  } else {
+    const face = canvasTexture(432, 688, (ctx) => {
+      const rng = random(149 + index);
+      ctx.fillStyle = instantPaperTints[tintIndex];
+      ctx.fillRect(0, 0, 432, 688);
+      ctx.drawImage(shared.grain, 0, 0);
       ctx.translate(215, 621);
       ctx.rotate((rng() - 0.5) * 0.055);
       ctx.font = '500 38px Caveat, cursive';
       ctx.fillStyle = '#494641';
       ctx.textAlign = 'center';
       ctx.fillText(note, 0, 0, 348);
-    }
-  });
-  const backing = surface('#d5d1c5', 0.7);
-  paperSection(photo, 'instant-film', 'edge', backing);
-  paperSection(photo, 'instant-film', 'back', backing);
-  paperSection(
-    photo,
-    'instant-film',
-    'face',
-    new T.MeshStandardMaterial({
+    });
+    faceMaterial = new T.MeshStandardMaterial({
       map: face,
       roughness: 0.81,
       normalMap: p.paper.normalMap,
       normalScale: new T.Vector2(0.035, 0.035),
-    }),
-  );
+    });
+  }
+  paperSection(photo, 'instant-film', 'edge', shared.backing);
+  paperSection(photo, 'instant-film', 'back', shared.backing);
+  paperSection(photo, 'instant-film', 'face', faceMaterial);
   paperSection(photo, 'instant-film', 'image', photoEmulsion(image));
-  paperSection(photo, 'instant-film', 'pod', surface('#4a443f', 0.66));
+  paperSection(photo, 'instant-film', 'pod', shared.pod);
   paperSection(photo, 'instant-film', 'stripe', p.graphite);
   return photo;
 }
@@ -193,8 +249,8 @@ export function personalArchive(
 ) {
   const board = group(root, 'Travel photographs and instant film', [-0.183, 1.864, -0.537]);
   const instanced =
-    typeof location !== 'undefined' &&
-    new URLSearchParams(location.search).get('studio-photo-fasteners') === 'instanced';
+    typeof location === 'undefined' ||
+    new URLSearchParams(location.search).get('studio-photo-fasteners') !== 'separate';
   const pins: PrintPin[] | undefined = instanced ? [] : undefined;
   function mountPrint(card: T.Object3D, height: number, index: number) {
     const pin = fasten(board, p, card, height, index);
@@ -237,6 +293,12 @@ export function personalArchive(
   const instantAtlas = load('/media/photography/field-notes-atlas.webp');
   const instantCols = 5;
   const instantRows = 4;
+  const instantShared = {
+    grain: instantPaperGrain(),
+    backing: surface('#d5d1c5', 0.7),
+    pod: surface('#4a443f', 0.66),
+    plainFaces: new Map<number, T.MeshStandardMaterial>(),
+  };
   const instant = instantPhotos.map(([key, en, zh, x, y, turn], i) => {
     const tile = instantAtlas.clone();
     tile.repeat.set(1 / instantCols, 1 / instantRows);
@@ -244,7 +306,7 @@ export function personalArchive(
       (i % instantCols) / instantCols,
       (instantRows - 1 - Math.floor(i / instantCols)) / instantRows,
     );
-    const photo = instantPhoto(board, p, tile, en, i);
+    const photo = instantPhoto(board, p, tile, en, i, instantShared);
     const backing = overlaidFilm.has(key) ? printThickness + printCurl + 0.000025 : 0;
     photo.position.set(x, y, corkFace + backing + filmThickness / 2 + 0.000025);
     photo.rotation.z = turn;

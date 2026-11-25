@@ -4,6 +4,20 @@ import { assetUrl } from '../app/asset-url';
 import { packedBuffer } from './packed-buffer';
 import { surfaceKey } from './surface-finish';
 
+export { surfaceKey } from './surface-finish';
+
+export function hasRoomLodKey(
+  geometry: T.BufferGeometry,
+  lodKeys: ReadonlySet<string>,
+  lodCounts?: ReadonlySet<number>,
+): boolean {
+  if (!lodKeys.size || geometry.drawRange.count !== Infinity) return false;
+  const count = geometry.attributes.position?.count;
+  if (!count || (lodCounts && !lodCounts.has(count))) return false;
+  const key = surfaceKey(geometry);
+  return key !== '' && lodKeys.has(key);
+}
+
 export function roomDetail(interior: T.Object3D, signal: AbortSignal) {
   const indices = new Map<string, T.BufferAttribute>();
   const counts = new Set<number>();
@@ -70,8 +84,27 @@ export function roomDetail(interior: T.Object3D, signal: AbortSignal) {
     }
     apply();
   }
+  function preload() {
+    if (!loading)
+      loading = load().catch(() => {
+        loading = undefined;
+      });
+    return loading;
+  }
+
   return {
     refresh: apply,
+    preload,
+    isLoaded() {
+      return indices.size > 0;
+    },
+    hasLodGeometry(geometry: T.BufferGeometry) {
+      if (changed.has(geometry)) return true;
+      if (!indices.size || geometry.drawRange.count !== Infinity) return false;
+      const count = geometry.attributes.position?.count;
+      if (!count || !counts.has(count)) return false;
+      return indices.has(surfaceKey(geometry));
+    },
     select(low: boolean, focus?: T.Object3D) {
       if (low === reduced && focus === focused) return;
       reduced = low;
@@ -84,12 +117,11 @@ export function roomDetail(interior: T.Object3D, signal: AbortSignal) {
         changed.clear();
         fullDetail.clear();
       } else {
-        if (!loading)
-          loading = load().catch(() => {
-            loading = undefined;
-          });
+        void preload();
         apply();
       }
     },
   };
 }
+
+export type RoomDetail = ReturnType<typeof roomDetail>;

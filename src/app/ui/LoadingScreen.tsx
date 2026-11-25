@@ -8,9 +8,11 @@ const progressIntervalMs = 100;
 
 export default function LoadingScreen({
   progress,
+  status,
   reducedMotion,
 }: {
   progress: number;
+  status?: string;
   reducedMotion: boolean;
 }) {
   const track = useRef<HTMLDivElement>(null);
@@ -53,14 +55,21 @@ export default function LoadingScreen({
     const started = (start.current ??= performance.now());
     let frame = 0;
     let timer = 0;
+    const realStage = Boolean(status);
     function update(now: number) {
       const elapsed = Math.max(0, now - started);
-      const waiting = Math.min(1, elapsed / 1900);
-      const next = Math.max(
-        displayed.current,
-        approachProgress * (1 - (1 - waiting) ** 2.4),
-        progress * 0.95,
-      );
+      let next: number;
+      if (realStage) {
+        const target = progress >= 1 ? 1 : Math.min(0.99, progress);
+        next = Math.max(displayed.current, target);
+      } else {
+        const waiting = Math.min(1, elapsed / 1900);
+        next = Math.max(
+          displayed.current,
+          approachProgress * (1 - (1 - waiting) ** 2.4),
+          progress * 0.95,
+        );
+      }
       if (next !== displayed.current) {
         displayed.current = next;
         track.current?.style.setProperty('--progress', (next * 100).toFixed(2) + '%');
@@ -69,7 +78,7 @@ export default function LoadingScreen({
         if (percent.current && percent.current.textContent !== label)
           percent.current.textContent = label;
       }
-      if (waiting >= 1 || next >= approachProgress) return;
+      if (realStage || next >= approachProgress) return;
       if (legacy) frame = requestAnimationFrame(update);
       else timer = window.setTimeout(() => update(performance.now()), progressIntervalMs);
     }
@@ -79,7 +88,7 @@ export default function LoadingScreen({
       cancelAnimationFrame(frame);
       window.clearTimeout(timer);
     };
-  }, [legacy, progress]);
+  }, [legacy, progress, status]);
 
   return (
     <section
@@ -112,6 +121,9 @@ export default function LoadingScreen({
         <span className="phosphor-percent" ref={percent} aria-hidden="true">
           0%
         </span>
+      </div>
+      <div className="phosphor-status" role="status" aria-live="polite">
+        {status || 'Initializing studio engine...'}
       </div>
     </section>
   );

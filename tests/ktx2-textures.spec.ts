@@ -12,6 +12,7 @@ const KTX2_MAGIC = Buffer.from([
 const MEDIA_ROOT = resolve('public/media');
 const BASIS_DIR = resolve('node_modules/three/examples/jsm/libs/basis');
 const SCAN_DIRS = ['materials', 'photography', 'panoramas'];
+const EXPLICIT_GRAPHICS = ['graphics/world-atlas.webp', 'graphics/shelf-covers.webp'];
 const SOURCE_EXTS = new Set(['.webp', '.png', '.jpg', '.jpeg']);
 const MIN_BYTES = 4000;
 
@@ -36,6 +37,11 @@ function collectExpectedKtx2() {
       if (skip) excluded.push(ktx2Path);
       else expected.push({ rel, ktx2Path });
     }
+  }
+  for (const rel of EXPLICIT_GRAPHICS) {
+    const fullPath = join(MEDIA_ROOT, rel);
+    const ext = extname(rel).toLowerCase();
+    expected.push({ rel, ktx2Path: fullPath.slice(0, -ext.length) + '.ktx2' });
   }
   return { expected, excluded };
 }
@@ -94,6 +100,8 @@ test('r2-assets maps KTX2, WASM, and Basis JS transcoder MIME types and ktx2UrlF
   expect(ktx2UrlFor('/media/photography/field-notes/arcade.webp')).toBeNull();
   expect(ktx2UrlFor('/media/materials/carbon-weave.webp')).toBeNull();
   expect(ktx2UrlFor('/media/graphics/white-dunes.webp')).toBeNull();
+  expect(ktx2UrlFor('/media/graphics/world-atlas.webp')).toBe('/media/graphics/world-atlas.ktx2');
+  expect(ktx2UrlFor('/media/graphics/shelf-covers.webp')).toBe('/media/graphics/shelf-covers.ktx2');
 });
 
 test('ktx2-loader transcodes KTX2 textures with clone hydration and falls back seamlessly to WebP', async ({
@@ -210,10 +218,18 @@ test('ktx2-loader transcodes KTX2 textures with clone hydration and falls back s
       },
     );
 
+    // Clone AFTER KTX2 transcoding has settled (and chain a second clone) to ensure
+    // isCompressedTexture is preserved so WebGLTextures uses compressedTexSubImage2D.
+    const postLoadClone = loadedTex.clone();
+    const nestedClone = postLoadClone.clone();
+
     return {
       enabled,
       primaryCompressed: Boolean((loadedTex as T.CompressedTexture).isCompressedTexture),
       cloneCompressed: Boolean((cloneTex as T.CompressedTexture).isCompressedTexture),
+      postLoadCloneCompressed: Boolean((postLoadClone as T.CompressedTexture).isCompressedTexture),
+      nestedCloneCompressed: Boolean((nestedClone as T.CompressedTexture).isCompressedTexture),
+      postLoadCloneSharedSource: loadedTex.source === postLoadClone.source,
       normalCompressed: Boolean((normalTex as T.CompressedTexture).isCompressedTexture),
       normalColorSpace: normalTex.colorSpace,
       sharedSource: loadedTex.source === cloneTex.source,
@@ -230,6 +246,9 @@ test('ktx2-loader transcodes KTX2 textures with clone hydration and falls back s
   expect(ktx2Result.enabled).toBe(true);
   expect(ktx2Result.primaryCompressed).toBe(true);
   expect(ktx2Result.cloneCompressed).toBe(true);
+  expect(ktx2Result.postLoadCloneCompressed).toBe(true);
+  expect(ktx2Result.nestedCloneCompressed).toBe(true);
+  expect(ktx2Result.postLoadCloneSharedSource).toBe(true);
   expect(ktx2Result.normalCompressed).toBe(true);
   expect(ktx2Result.normalColorSpace).toBe('');
   expect(ktx2Result.sharedSource).toBe(true);

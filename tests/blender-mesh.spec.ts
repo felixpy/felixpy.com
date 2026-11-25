@@ -10,19 +10,22 @@ function verifyMesh(source: Buffer, name: string) {
   const minimum = Array.from({ length: 5 }, (_, i) => source.readFloatLE(12 + 4 * i));
   const span = Array.from({ length: 5 }, (_, i) => source.readFloatLE(32 + 4 * i));
   const positions = new Float32Array(count * 3);
-  const normals = new Float32Array(count * 3);
+  const normals = new Int16Array(count * 3);
   const uv = new Float32Array(count * 2);
   for (let i = 0; i < count; i++) {
     const offset = 52 + i * 16;
     for (let j = 0; j < 3; j++) {
       positions[i * 3 + j] = minimum[j] + (span[j] * source.readUInt16LE(offset + j * 2)) / 65535;
-      normals[i * 3 + j] = source.readInt16LE(offset + 6 + j * 2) / 32767;
+      normals[i * 3 + j] = source.readInt16LE(offset + 6 + j * 2);
     }
     for (let j = 0; j < 2; j++) {
       uv[i * 2 + j] =
         minimum[3 + j] + (span[3 + j] * source.readUInt16LE(offset + 12 + j * 2)) / 65535;
     }
   }
+  const normalAttr = geometry.getAttribute('normal');
+  expect(normalAttr.normalized, name + ' • normal normalized').toBe(true);
+  expect(normalAttr.array, name + ' • normal Int16Array').toBeInstanceOf(Int16Array);
   for (const [key, array] of Object.entries({ position: positions, normal: normals, uv })) {
     const decoded = geometry.getAttribute(key).array;
     expect(
@@ -31,6 +34,20 @@ function verifyMesh(source: Buffer, name: string) {
       ),
       name + ' • ' + key,
     ).toBe(true);
+  }
+  for (let i = 0; i < Math.min(count, 16); i++) {
+    expect(normalAttr.getX(i), name + ' • normal.getX').toBeCloseTo(
+      Math.max(normals[i * 3] / 32767, -1),
+      6,
+    );
+    expect(normalAttr.getY(i), name + ' • normal.getY').toBeCloseTo(
+      Math.max(normals[i * 3 + 1] / 32767, -1),
+      6,
+    );
+    expect(normalAttr.getZ(i), name + ' • normal.getZ').toBeCloseTo(
+      Math.max(normals[i * 3 + 2] / 32767, -1),
+      6,
+    );
   }
   const indices = geometry.getIndex()!.array;
   expect(

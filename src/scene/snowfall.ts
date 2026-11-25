@@ -85,6 +85,7 @@ export function snowfall(parent: T.Object3D) {
     depthWrite: false,
     toneMapped: false,
   });
+  material.customProgramCacheKey = () => 'studio-snowfall';
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, { seconds, darkness });
     const varyings = 'varying vec4 flakeAppearance;\nvarying vec3 flakeLight;\n';

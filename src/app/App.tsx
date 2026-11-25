@@ -111,6 +111,11 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
   const [studioUnavailable, setStudioUnavailable] = useState(false);
   const StudioView = studio?.default;
   const [progress, setProgress] = useState(0);
+  const [loadStatus, setLoadStatus] = useState('');
+  const handleProgress = useCallback((ratio: number, status?: string) => {
+    setProgress(ratio);
+    if (status) setLoadStatus(status);
+  }, []);
   const [environment, setEnvironment] = useState(() => loadEnvironment(graphics?.quality ?? 'low'));
   const manualConditions = useWindowConditions(
     environment.city,
@@ -147,10 +152,7 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
     void prepareFonts();
     void loadStudio().then(
       (module) => {
-        if (active) {
-          setStudio(module);
-          void loadDesktop();
-        }
+        if (active) setStudio(module);
       },
       () => {
         if (active) setStudioUnavailable(true);
@@ -160,6 +162,10 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
       active = false;
     };
   }, [webGL, prepareFonts]);
+
+  useEffect(() => {
+    if (ready) void loadDesktop();
+  }, [ready]);
 
   useEffect(() => {
     const keepPageFocus = (event: KeyboardEvent) => {
@@ -278,7 +284,13 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
             '拖动或按方向键环顾，滚动鼠标滚轮缩放。点击物件检视，点击工作台或装备架走近查看。按 Esc 放回物件或离开当前视角。',
           )}
         </p>
-        {!ready && <LoadingScreen progress={progress} reducedMotion={environment.reducedMotion} />}
+        {!ready && (
+          <LoadingScreen
+            progress={progress}
+            status={loadStatus}
+            reducedMotion={environment.reducedMotion}
+          />
+        )}
         {ready && <FpsMeter />}
         {StudioView && (
           <StudioView
@@ -292,7 +304,7 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
             onHint={setHint}
             onHover={handleHover}
             onReady={() => setReady(true)}
-            onProgress={setProgress}
+            onProgress={handleProgress}
             musicLevels={music.levels}
             musicPlaying={music.playing}
             screen={screen}
@@ -365,7 +377,7 @@ export default function App({ prepareFonts }: { prepareFonts: () => Promise<unkn
           />
         )}
         <div ref={screen} className="screen-anchor" data-visible="false" data-interactive="false">
-          {(studio !== null || mode === 'computer' || request.sequence > 0) && (
+          {(ready || mode === 'computer' || request.sequence > 0) && (
             <Suspense fallback={null}>
               <Desktop
                 request={request}

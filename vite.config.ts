@@ -7,6 +7,16 @@ import { assetUrl } from './src/app/asset-url';
 import { isMobileDevice } from './src/app/mobile-device';
 import { shareImage, siteOrigin } from './src/content/about';
 import { partLibraryPath } from './src/scene/blender-parts';
+import { zoneBundlePath } from './src/scene/zone-bundles';
+
+const studioFetchPreloads = [
+  partLibraryPath('studio'),
+  zoneBundlePath('desk') + '.gz',
+  zoneBundlePath('south-rear') + '.gz',
+  '/media/basis/basis_transcoder.wasm',
+  '/media/lighting/desk-night.pmrem.gz',
+  '/media/models/room-lod.gz',
+] as const;
 
 function preloadStudioView(assetBase: string, getManifest: () => Record<string, string>): Plugin {
   return {
@@ -16,17 +26,15 @@ function preloadStudioView(assetBase: string, getManifest: () => Record<string, 
       handler(_, context) {
         if (context.path !== '/index.html') return;
         const manifest = getManifest();
-        const tags: HtmlTagDescriptor[] = [
-          {
-            tag: 'link',
-            attrs: {
-              rel: 'preload',
-              as: 'fetch',
-              crossorigin: '',
-              href: assetUrl(partLibraryPath('studio'), assetBase, manifest),
-            },
+        const tags: HtmlTagDescriptor[] = studioFetchPreloads.map((path) => ({
+          tag: 'link',
+          attrs: {
+            rel: 'preload',
+            as: 'fetch',
+            crossorigin: '',
+            href: assetUrl(path, assetBase, manifest),
           },
-        ];
+        }));
         const chunk = Object.values(context.bundle ?? {}).find(
           (entry) =>
             entry.type === 'chunk' && entry.facadeModuleId?.endsWith('/scene/StudioView.tsx'),

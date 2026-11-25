@@ -262,25 +262,59 @@ export function bookshelf(
   const accent = new T.PointLight('#ffddb3', 0, 2.2, 1.6);
   accent.position.set(-width / 2 + 0.14, (height + 0.08) / 2, 0.18);
   unit.add(accent);
+  const channel = group(unit, 'Recessed linear light in cabinet stile', [
+    accent.position.x,
+    0,
+    accent.position.z,
+  ]);
+  channel.rotation.y = accent.rotation.y;
+  const bayCount = levels.length - 1;
+  const housingGeometry = new T.BoxGeometry(0.013, 1, 0.006).translate(0, 0.5, 0);
+  const stripGeometry = new T.BoxGeometry(0.009, 1, 0.0018).translate(0, 0.5, 0);
+  const channelHousings = new T.InstancedMesh(housingGeometry, p.graphite, bayCount);
+  const channelStrips = new T.InstancedMesh(stripGeometry, lamps, bayCount);
+  channelHousings.name = 'Cabinet light channel housings';
+  channelStrips.name = 'Cabinet light diffusers';
+  for (const instanced of [channelHousings, channelStrips]) {
+    instanced.castShadow = instanced.receiveShadow = true;
+    instanced.userData.exportInstalledInstances = true;
+    instanced.matrixAutoUpdate = false;
+    instanced.updateMatrix();
+  }
+  const stripMatrix = new T.Matrix4();
+  const stripPos = new T.Vector3();
+  const stripQuat = new T.Quaternion();
+  const stripScale = new T.Vector3(1, 1, 1);
   for (const [i, y] of levels.entries()) {
     box(unit, [width, 0.025, 0.349], [0, y + 0.0015, -0.002], p.wood, 0.002);
     box(unit, [width - side, 0.033, 0.015], [0, y - 0.0025, 0.173], p.wood, 0.003);
     if (i === 0) continue;
     const clearHeight = y - levels[i - 1] - 0.028;
+    const centerY = y - 0.014 - clearHeight / 2;
     const back = mesh(unit, new T.PlaneGeometry(width - side, clearHeight), lining, [
       0,
-      y - 0.014 - clearHeight / 2,
+      centerY,
       -0.1558,
     ]);
     back.castShadow = false;
-    const channel = group(unit, 'Recessed linear light in cabinet stile', [
-      accent.position.x,
-      y - 0.014 - clearHeight / 2,
-      accent.position.z,
-    ]);
-    channel.rotation.y = accent.rotation.y;
-    box(channel, [0.013, clearHeight, 0.006], [0, 0, 0.002], p.graphite);
-    box(channel, [0.009, clearHeight - 0.004, 0.0018], [0, 0, -0.0015], lamps);
+    const bay = i - 1;
+    const stripHeight = clearHeight - 0.004;
+    channelHousings.setMatrixAt(
+      bay,
+      stripMatrix.compose(
+        stripPos.set(0, centerY - clearHeight / 2, 0.002),
+        stripQuat,
+        stripScale.set(1, clearHeight, 1),
+      ),
+    );
+    channelStrips.setMatrixAt(
+      bay,
+      stripMatrix.compose(
+        stripPos.set(0, centerY - stripHeight / 2, -0.0015),
+        stripQuat,
+        stripScale.set(1, stripHeight, 1),
+      ),
+    );
     for (const sx of [-1, 1]) {
       for (const sz of [-0.111, 0.104])
         tube(
@@ -292,6 +326,12 @@ export function bookshelf(
         );
     }
   }
+  for (const instanced of [channelHousings, channelStrips]) {
+    instanced.instanceMatrix.needsUpdate = true;
+    instanced.computeBoundingBox();
+    instanced.computeBoundingSphere();
+  }
+  channel.add(channelHousings, channelStrips);
   const books = publishedBooks(unit, p, loader, levels, detailLoader, deferBookBacks);
   const caseMat = p.linen.clone();
   caseMat.color.set('#9a7b54');

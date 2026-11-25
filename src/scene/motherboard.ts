@@ -42,17 +42,87 @@ export function installMotherboard(
     slot.userData.memorySocket = name;
     return slot;
   });
+  const enclosedNames = new Set([
+    '288 selectively plated connector fingers',
+    'Under-spreader thermal interface pads',
+  ]);
+  const lightGuideName = 'Continuous opaline light guide and pad printed XPG crown';
   loadDisplayModel(sockets[0], '/media/models/xpg-d50-fubuki.glb', manager, {
     mesh: registerLight,
     mounted(module) {
+      module.updateMatrixWorld(true);
+      const invModuleWorld = module.matrixWorld.clone().invert();
+      const sourceMeshes: { mesh: T.Mesh; enclosed: boolean }[] = [];
+      const enclosedMetaNames: string[] = [];
+      let hasGuide = false;
+
       module.traverse((part) => {
-        if (
-          part.userData.name === '288 selectively plated connector fingers' ||
-          part.userData.name === 'Under-spreader thermal interface pads'
-        )
-          details.enclosed(part);
+        const partName = part.userData.name;
+        if (typeof partName === 'string' && enclosedNames.has(partName)) {
+          enclosedMetaNames.push(partName);
+        }
+        if (partName === lightGuideName) hasGuide = true;
+        if (!(part instanceof T.Mesh)) return;
+        let enclosed = false;
+        for (let cur: T.Object3D | null = part; cur && cur !== module; cur = cur.parent) {
+          if (typeof cur.userData.name === 'string' && enclosedNames.has(cur.userData.name)) {
+            enclosed = true;
+            break;
+          }
+        }
+        sourceMeshes.push({ mesh: part, enclosed });
       });
-      for (const slot of sockets.slice(1)) slot.add(module.clone());
+
+      const localMatrix = new T.Matrix4();
+      const slotMatrix = new T.Matrix4();
+      const instanceMatrix = new T.Matrix4();
+      for (const { mesh: part, enclosed } of sourceMeshes) {
+        localMatrix.multiplyMatrices(invModuleWorld, part.matrixWorld);
+        const instanced = new T.InstancedMesh(part.geometry, part.material, sockets.length);
+        instanced.name = part.name;
+        instanced.castShadow = part.castShadow;
+        instanced.receiveShadow = part.receiveShadow;
+        instanced.layers.mask = part.layers.mask;
+        instanced.renderOrder = part.renderOrder;
+        instanced.userData.exportInstalledInstances = true;
+        for (let i = 0; i < sockets.length; i++) {
+          slotMatrix.makeTranslation(
+            sockets[i].position.x,
+            sockets[i].position.y,
+            sockets[i].position.z,
+          );
+          instanceMatrix.multiplyMatrices(slotMatrix, localMatrix);
+          instanced.setMatrixAt(i, instanceMatrix);
+        }
+        instanced.instanceMatrix.needsUpdate = true;
+        instanced.computeBoundingBox();
+        instanced.computeBoundingSphere();
+        instanced.matrixAutoUpdate = false;
+        instanced.updateMatrix();
+        if (enclosed) details.enclosed(instanced);
+        bank.add(instanced);
+      }
+
+      module.removeFromParent();
+      for (const slot of sockets) {
+        for (const name of enclosedMetaNames) {
+          const anchor = new T.Object3D();
+          anchor.name = name;
+          anchor.userData.name = name;
+          anchor.matrixAutoUpdate = false;
+          anchor.updateMatrix();
+          details.enclosed(anchor);
+          slot.add(anchor);
+        }
+        if (hasGuide) {
+          const guide = new T.Object3D();
+          guide.name = lightGuideName;
+          guide.userData.name = lightGuideName;
+          guide.matrixAutoUpdate = false;
+          guide.updateMatrix();
+          slot.add(guide);
+        }
+      }
       mounted?.(bank);
     },
   });

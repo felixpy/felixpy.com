@@ -5,7 +5,7 @@ import * as T from 'three';
 import { decodePmrem } from '../src/scene/pmrem-decode';
 
 test('offline PMR2 cubemaps decode losslessly into 6-mip HalfFloat PMREM cube textures', () => {
-  for (const name of ['desk-day', 'desk-night']) {
+  for (const name of ['desk-day', 'desk-night', 'aj-day', 'aj-night', 'camp-day', 'camp-night']) {
     const gz = readFileSync(`public/media/lighting/${name}.pmrem.gz`);
     const raw = gunzipSync(gz);
     const buffer = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
@@ -31,6 +31,50 @@ test('offline PMR2 cubemaps decode losslessly into 6-mip HalfFloat PMREM cube te
     expect(maxVal).toBeGreaterThan(0.05);
     cube.dispose();
   }
+});
+
+test('fixture reflections load pre-baked PMREM cubemaps and studioReflections supports skipPreview @webgl', async ({
+  page,
+}) => {
+  await page.goto('/robots.txt');
+  const result = await page.evaluate(async () => {
+    const T = (await import('/node_modules/three/build/three.module.js')) as typeof import('three');
+    const { fixtureReflections } =
+      (await import('/src/scene/fixture-reflections.ts')) as typeof import('../src/scene/fixture-reflections');
+    const { studioReflections } =
+      (await import('/src/scene/reflections.ts')) as typeof import('../src/scene/reflections');
+    const renderer = new T.WebGLRenderer();
+    const scene = new T.Scene();
+    const material = new T.MeshStandardMaterial({ roughness: 0.1, metalness: 1 });
+    const fixture = fixtureReflections('aj');
+    fixture.bind(material);
+    await fixture.preload();
+    const envMap = material.envMap as (T.Texture & { isPMREMTexture?: boolean }) | null;
+    const fixtureIsPmrem = Boolean(envMap?.isCompressedCubeTexture && envMap?.isPMREMTexture);
+
+    const reflections = studioReflections(renderer, scene);
+    const beforePrograms = (renderer.info.programs ?? []).length;
+    const selectPromise = reflections.select(true, 'high', { skipPreview: true });
+    const envBeforeLoad = scene.environment;
+    await selectPromise;
+    const envAfterLoad = scene.environment as (T.Texture & { isPMREMTexture?: boolean }) | null;
+    const afterPrograms = (renderer.info.programs ?? []).length;
+
+    reflections.dispose();
+    material.dispose();
+    renderer.dispose();
+    renderer.forceContextLoss();
+    return {
+      fixtureIsPmrem,
+      skippedPreview: envBeforeLoad === null,
+      loadedPmrem: Boolean(envAfterLoad?.isCompressedCubeTexture && envAfterLoad?.isPMREMTexture),
+      compiledPmremPrograms: afterPrograms - beforePrograms,
+    };
+  });
+  expect(result.fixtureIsPmrem).toBe(true);
+  expect(result.skippedPreview).toBe(true);
+  expect(result.loadedPmrem).toBe(true);
+  expect(result.compiledPmremPrograms).toBe(0);
 });
 
 test('5K panoramas load at 2.5K in room view and upgrade cleanly on close-up window inspection', async ({

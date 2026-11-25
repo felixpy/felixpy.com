@@ -9,6 +9,10 @@ const repoRoot = resolve(__dirname, '..', '..');
 const mediaRoot = join(repoRoot, 'public', 'media');
 
 const SCAN_DIRS = ['materials', 'photography', 'panoramas'];
+const EXPLICIT_HIGH_QUALITY_SRGB = new Set([
+  'graphics/world-atlas.webp',
+  'graphics/shelf-covers.webp',
+]);
 const SOURCE_EXTS = new Set(['.webp', '.png', '.jpg', '.jpeg']);
 const MIN_SOURCE_BYTES = 4000;
 
@@ -40,6 +44,9 @@ function isExcluded(relPath) {
 }
 
 export function classifyTexture(relPath) {
+  if (EXPLICIT_HIGH_QUALITY_SRGB.has(relPath)) {
+    return 'srgb-uastc';
+  }
   if (EXPLICIT_NORMAL_MAPS.has(relPath) || /-normal\.[^.]+$/i.test(relPath)) {
     return 'normal';
   }
@@ -76,6 +83,23 @@ function toktxArgsFor(relPath, role) {
   const originFlag = UPPER_LEFT_ORIGIN.has(relPath)
     ? '--upper_left_maps_to_s0t0'
     : '--lower_left_maps_to_s0t0';
+  if (role === 'srgb-uastc') {
+    return [
+      '--t2',
+      '--encode',
+      'uastc',
+      '--uastc_quality',
+      '3',
+      '--uastc_rdo_l',
+      '0.5',
+      '--zcmp',
+      '19',
+      '--genmipmap',
+      originFlag,
+      '--assign_oetf',
+      'srgb',
+    ];
+  }
   if (role === 'normal' || role === 'linear') {
     return [
       '--t2',
@@ -147,6 +171,23 @@ function scanCandidates(filterSubstr) {
         role: classifyTexture(relPath),
       });
     }
+  }
+
+  for (const relPath of EXPLICIT_HIGH_QUALITY_SRGB) {
+    if (filterSubstr && !relPath.includes(filterSubstr)) continue;
+    const fullPath = join(mediaRoot, relPath);
+    if (!existsSync(fullPath)) continue;
+    const ext = extname(relPath).toLowerCase();
+    const bytes = statSync(fullPath).size;
+    const outPath = fullPath.slice(0, -ext.length) + '.ktx2';
+    included.push({
+      relPath,
+      fullPath,
+      outPath,
+      ext,
+      bytes,
+      role: classifyTexture(relPath),
+    });
   }
 
   included.sort((a, b) => a.relPath.localeCompare(b.relPath));

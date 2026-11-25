@@ -36,6 +36,7 @@ export function photoEmulsion(image: T.Texture) {
     roughness: 0.72,
     envMapIntensity: 0.35,
   });
+  ink.customProgramCacheKey = () => 'photo-emulsion';
   ink.onBeforeCompile = (shader) => {
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <opaque_fragment>',
@@ -102,6 +103,7 @@ export function deskPhotoFrame(parent: T.Group, manager: T.LoadingManager, image
     map: image,
     roughness: 0.96,
   });
+  ink.customProgramCacheKey = () => 'desk-photo-print';
   ink.onBeforeCompile = (shader) => {
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <opaque_fragment>',

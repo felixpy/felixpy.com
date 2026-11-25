@@ -2,6 +2,18 @@ import * as T from 'three';
 import { loadDisplayModel } from './display-model';
 import fixtures from './cabinet-light-layout.json';
 
+export interface CabinetSpotBinding {
+  centers: T.Vector3[];
+  axes: T.Vector3[];
+  optics: T.Vector3[];
+  power: { value: number };
+  matrixWorld: T.Matrix4;
+  inverse: T.Matrix4;
+  visibility: { value: T.Texture };
+  visibilityReady: { value: number };
+  receiverMode: number;
+}
+
 export function cabinetSpots(unit: T.Group, manager: T.LoadingManager) {
   const centers = fixtures.map(() => new T.Vector3());
   const axes = centers.map(() => new T.Vector3());
@@ -16,96 +28,41 @@ export function cabinetSpots(unit: T.Group, manager: T.LoadingManager) {
   const visibility = { value: visibilityFallback as T.Texture };
   const visibilityReady = { value: 0 };
   const inverse = new T.Matrix4();
-  const finishes = new WeakMap<T.Material, T.Material>();
+  const finishes = new WeakMap<T.Material, Map<number, T.Material>>();
   let diffuser: T.MeshStandardMaterial | undefined;
 
   function illuminate(obj: T.Object3D) {
-    if (!(obj instanceof T.Mesh) || !(obj.material instanceof T.MeshStandardMaterial)) return;
-    const source = obj.material;
-    const existing = finishes.get(source);
-    if (existing) {
-      obj.material = existing;
-      return;
-    }
-    const finish = source.clone();
+    if (!(obj instanceof T.Mesh)) return;
     const receiver = obj.userData.caseShadowReceiver as 'floor' | 'back' | undefined;
     const receiverMode = receiver === 'floor' ? 1 : receiver === 'back' ? 2 : 0;
-    const cacheKey = source.customProgramCacheKey();
-    const compile = source.onBeforeCompile;
-    finish.customProgramCacheKey = () => cacheKey + '-cabinet';
-    finish.onBeforeCompile = (shader, renderer) => {
-      compile.call(finish, shader, renderer);
-      shader.uniforms.caseEmitters = { value: centers };
-      shader.uniforms.caseAxes = { value: axes };
-      shader.uniforms.caseOptics = { value: optics };
-      shader.uniforms.caseDimmer = power;
-      shader.uniforms.caseToWorld = { value: unit.matrixWorld };
-      shader.uniforms.caseFromWorld = { value: inverse };
-      shader.uniforms.caseVisibility = visibility;
-      shader.uniforms.caseVisibilityReady = visibilityReady;
-      shader.uniforms.caseReceiverMode = { value: receiverMode };
-      shader.vertexShader =
-        'uniform mat4 caseFromWorld; varying vec3 casePoint;\n' +
-        shader.vertexShader.replace(
-          '#include <project_vertex>',
-          `#include <project_vertex>
-          casePoint = (caseFromWorld * vec4(cameraPosition + transpose(mat3(viewMatrix)) * mvPosition.xyz, 1.)).xyz;`,
-        );
-      shader.fragmentShader = shader.fragmentShader.replace(
-        '#include <aomap_fragment>',
-        `#include <aomap_fragment>
-        if (caseReceiverMode > 0.5 && caseReceiverMode < 1.5) {
-          vec2 floorUV = vec2(casePoint.x / 1.145 + 0.5,
-                            0.25 * clamp((casePoint.z - 0.0195) / 0.351, 0.001, 0.999));
-          float contactVisibility = mix(1.0, texture2D(caseVisibility, floorUV).b, caseVisibilityReady);
-          reflectedLight.indirectDiffuse *= contactVisibility;
-          reflectedLight.indirectSpecular *= contactVisibility;
-        }`,
-      );
-      shader.fragmentShader =
-        `varying vec3 casePoint;
-        uniform mat4 caseToWorld; uniform vec3 caseEmitters[5], caseAxes[5], caseOptics[5];
-        uniform float caseDimmer;
-        uniform sampler2D caseVisibility;
-        uniform float caseVisibilityReady;
-        uniform float caseReceiverMode;
-        ` +
-        shader.fragmentShader.replace(
-          '#include <lights_fragment_begin>',
-          `#include <lights_fragment_begin>
-        #ifdef RE_Direct
-        if (caseDimmer > 0.001 && casePoint.z > 0.019 && casePoint.z < 0.35 &&
-            abs(casePoint.x) < 0.565 && casePoint.y > 0.5195 && casePoint.y < 1.2851) {
-          bool upper = casePoint.y >= 0.965;
-          vec3 visibleFromEmitter = vec3(1.0);
-          if (caseReceiverMode > 0.5) {
-            float atlasV = caseReceiverMode < 1.5
-              ? 0.25 * clamp((casePoint.z - 0.0195) / 0.351, 0.001, 0.999)
-              : (upper ? 0.625 + 0.375 * clamp((casePoint.y - 0.965) / 0.320, 0.001, 0.999)
-                       : 0.25 + 0.375 * clamp((casePoint.y - 0.520) / 0.445, 0.001, 0.999));
-            visibleFromEmitter = texture2D(caseVisibility, vec2(casePoint.x / 1.145 + 0.5, atlasV)).rgb;
-          }
-          for (int emitter = 0; emitter < 5; ++emitter) {
-            if (upper != (emitter < 3)) continue;
-            vec3 toPupil = caseEmitters[emitter] - casePoint;
-            float r2 = max(dot(toPupil,toPupil), 0.00006);
-            vec3 toward = toPupil * inversesqrt(r2);
-            vec3 optic = caseOptics[emitter];
-            float beam = smoothstep(optic.x,optic.y,dot(-toward,caseAxes[emitter]));
-            IncidentLight displayLight;
-            displayLight.direction = mat3(viewMatrix) * mat3(caseToWorld) * toward;
-            displayLight.color = vec3(1.0,0.723,0.423) * (caseDimmer*optic.z*beam/r2);
-            displayLight.color *= visibleFromEmitter[emitter < 3 ? emitter : emitter-3];
-            displayLight.visible = true;
-            RE_Direct(displayLight,geometryPosition,geometryNormal,geometryViewDir,geometryClearcoatNormal,material,reflectedLight);
-          }
-        }
-        #endif`,
-        );
+    const applyFinish = (source: T.Material): T.Material => {
+      if (!(source instanceof T.MeshStandardMaterial) || source.transparent) return source;
+      if (source.userData.studioCabinetSpots) return source;
+      let variants = finishes.get(source);
+      if (!variants) {
+        variants = new Map<number, T.Material>();
+        finishes.set(source, variants);
+      }
+      const existing = variants.get(receiverMode);
+      if (existing) return existing;
+      const finish = source.clone();
+      const binding: CabinetSpotBinding = {
+        centers,
+        axes,
+        optics,
+        power,
+        matrixWorld: unit.matrixWorld,
+        inverse,
+        visibility,
+        visibilityReady,
+        receiverMode,
+      };
+      finish.userData = { ...source.userData, studioCabinetSpots: binding };
+      variants.set(receiverMode, finish);
+      return finish;
     };
-    finishes.set(source, finish);
-    finishes.set(finish, finish);
-    obj.material = finish;
+    if (Array.isArray(obj.material)) obj.material = obj.material.map(applyFinish);
+    else obj.material = applyFinish(obj.material);
   }
 
   function load() {
