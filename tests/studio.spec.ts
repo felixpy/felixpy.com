@@ -1996,7 +1996,7 @@ test('the music collection shares playback state and the computer keeps portrait
   await expect(page.getByRole('region', { name: '锁屏' })).toHaveCount(0);
   await page.getByRole('button', { name: '音乐', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-audio-contexts', '1');
-  await expect(page.getByRole('heading', { name: 'Moonlit Skyline' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'The Murky Deep' })).toBeVisible();
   await expect(page.locator('.spectral-artist')).toHaveText('Nihilore');
   await expect(page.getByRole('button', { name: '暂停', exact: true })).toBeVisible();
   await expect(page.getByRole('slider', { name: '音量' })).toHaveValue('0.5');
@@ -2012,18 +2012,18 @@ test('the music collection shares playback state and the computer keeps portrait
   await repeat.click();
   await expect(repeat).toHaveAttribute('aria-pressed', 'false');
   const search = page.getByRole('searchbox', { name: '搜索曲目' });
-  await search.fill('Murky');
-  await expect(page.getByRole('button', { name: /Moonlit Skyline/ })).toHaveCount(0);
+  await search.fill('Moonlit');
+  await expect(page.getByRole('button', { name: /The Murky Deep/ })).toHaveCount(0);
   await page.getByRole('button', { name: '定位当前曲目' }).click();
   await expect(search).toHaveValue('');
   await expect(trackMarker).toBeVisible();
-  await search.fill('Murky');
-  await expect(page.getByRole('button', { name: /Moonlit Skyline/ })).toHaveCount(0);
-  await page.getByRole('button', { name: /The Murky Deep/ }).click();
-  await expect(page.locator('.spectral-mini')).toContainText('The Murky Deep');
+  await search.fill('Moonlit');
+  await expect(page.getByRole('button', { name: /The Murky Deep/ })).toHaveCount(0);
+  await page.getByRole('button', { name: /Moonlit Skyline/ }).click();
+  await expect(page.locator('.spectral-mini')).toContainText('Moonlit Skyline');
   await expect(page.locator('.spectral-mini')).toContainText('Nihilore');
   await page.getByRole('button', { name: '播放器', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'The Murky Deep' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Moonlit Skyline' })).toBeVisible();
   await expect(page.getByRole('button', { name: '暂停', exact: true })).toBeVisible();
   await page.evaluate(() => {
     Object.defineProperty(document, 'hidden', { configurable: true, value: true });
@@ -2050,7 +2050,7 @@ test('the music collection shares playback state and the computer keeps portrait
   await expect(page.getByRole('button', { name: '暂停', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '音乐', exact: true }).click();
   await expect(page.locator('.os-window-game')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'The Murky Deep' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Moonlit Skyline' })).toBeVisible();
   await expect(page.getByRole('button', { name: '暂停', exact: true })).toBeVisible();
 });
 
