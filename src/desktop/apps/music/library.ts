@@ -1,5 +1,12 @@
 export const tracks = [
   {
+    name: 'The Murky Deep',
+    artist: 'Nihilore',
+    file: 'the-murky-deep',
+    length: 320,
+    mood: ['Slow jazz', '慢爵士'],
+  },
+  {
     name: 'Moonlit Skyline',
     artist: 'Nihilore',
     file: 'moonlit-skyline',
@@ -12,13 +19,6 @@ export const tracks = [
     file: 'a-mundane-conclusion',
     length: 417,
     mood: ['Chillhop', '舒缓嘻哈'],
-  },
-  {
-    name: 'The Murky Deep',
-    artist: 'Nihilore',
-    file: 'the-murky-deep',
-    length: 320,
-    mood: ['Slow jazz', '慢爵士'],
   },
   {
     name: 'Kadupul',
