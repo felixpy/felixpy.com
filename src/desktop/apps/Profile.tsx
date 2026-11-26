@@ -60,7 +60,7 @@ export default function Profile({
           {t('You Need', '就是一切')}
         </h1>
         <p className="spectral-role">
-          {t('Full-stack engineer & AI maker', '全栈工程师与 AI 创作者')}
+          {t('Full-stack engineer building with AI', '用 AI 做产品的全栈工程师')}
         </p>
         <p className="spectral-statement">
           {t('I turn ideas into apps, videos and games.', '我把想法做成应用、视频和游戏。')}
