@@ -9,7 +9,7 @@ export const aboutPage = {
   description:
     'Felix Yang is a senior software engineer with over a decade in tech. He explores how AI can help build apps, create videos, and design games.',
   heading: 'Felix Yang.',
-  subtitle: 'Full-stack engineer & AI maker',
+  subtitle: 'Full-stack engineer building with AI',
   introduction: [
     'I’m a senior software engineer from China,',
     'with over a decade of experience in the tech industry.',
