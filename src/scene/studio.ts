@@ -1073,6 +1073,9 @@ export function* buildStudioSteps(
     preloadFixtureReflections() {
       return Promise.all([floorLamp.preload(), fieldGear.preloadReflections()]).then(() => {});
     },
+    preloadWindowScenes(renderer?: T.WebGLRenderer, hiRes = false) {
+      return window.preloadExposures(renderer, hiRes);
+    },
     preloadHero(id: string) {
       if (id === 'keyboard') preloadKeyboardHero();
       else if (id === 'mac-studio') void prepareMacDetail(rearLoader);

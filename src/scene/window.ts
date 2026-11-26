@@ -307,6 +307,7 @@ export function buildWindow(
     unit,
     setBlinds,
     prepareWaterMotion: exterior.prepareWaterMotion,
+    preloadExposures: exterior.preloadExposures,
     remoteRest: [x + 0.079, y0 + 0.037, 0.39] satisfies XYZ,
     update(env: Environment, delta: number, closeWindow = false) {
       const immediate = env.reducedMotion ? 1 : 1 - Math.exp(-delta * 7);
