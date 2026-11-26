@@ -10,7 +10,7 @@ export const eye = {
   pitch: Math.atan2(display.y - roomStation.y, roomStation.z - display.z),
 };
 export const roomFov = 63;
-export const windowEye = { x: -0.57, y: 1.46, z: 0.585, yaw: Math.PI / 2, pitch: 0.075 };
+export const windowEye = { x: 0.06, y: 1.5, z: 0.585, yaw: Math.PI / 2, pitch: 0.075 };
 export const benchEye = { x: 1.02, y: 1.25, z: workshopLayout.z, yaw: -Math.PI / 2, pitch: -0.15 };
 export const viewFov = 50;
 export const gearEye = { yaw: Math.PI, pitch: -0.028, fov: 50 };

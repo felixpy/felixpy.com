@@ -263,11 +263,11 @@ export function bookshelf(
   accent.position.set(-width / 2 + 0.14, (height + 0.08) / 2, 0.18);
   unit.add(accent);
   const channel = group(unit, 'Recessed linear light in cabinet stile', [
-    accent.position.x,
+    -width / 2 + 0.025,
     0,
-    accent.position.z,
+    0.153,
   ]);
-  channel.rotation.y = accent.rotation.y;
+  channel.rotation.y = -Math.PI * 0.49;
   const bayCount = levels.length - 1;
   const housingGeometry = new T.BoxGeometry(0.013, 1, 0.006).translate(0, 0.5, 0);
   const stripGeometry = new T.BoxGeometry(0.009, 1, 0.0018).translate(0, 0.5, 0);

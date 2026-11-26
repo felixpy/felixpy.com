@@ -397,9 +397,12 @@ function CameraRig(
     roomMaterials.current = visibility;
     reflections.current = reflectionMap;
     const reflectionPromise = props.fullPrewarm
-      ? reflectionMap.select(live.current.environment.night, live.current.environment.quality, {
-          skipPreview: true,
-        })
+      ? Promise.all([
+          reflectionMap.select(live.current.environment.night, live.current.environment.quality, {
+            skipPreview: true,
+          }),
+          reflectionMap.preload(live.current.environment.quality),
+        ]).then(() => {})
       : Promise.resolve();
     renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.needsUpdate = true;
@@ -543,10 +546,12 @@ function CameraRig(
       if (!authoringMode.current) roomMeshes.current?.select(true);
       const rearPromise = model.prepareRear();
       const fixturePromise = model.preloadFixtureReflections();
+      const windowScenesPromise = model.preloadWindowScenes(renderer, false);
       void Promise.allSettled([
         props.frontReady(),
         rearPromise,
         fixturePromise,
+        windowScenesPromise,
         surfacePromise,
         reflectionPromise,
         lodPromise,
@@ -700,6 +705,8 @@ function CameraRig(
       }
       if (opensStudioView(target) && mode.current !== 'room') leaveFocusedView(target);
       if (target.type === 'window' || target.type === 'remote') {
+        void model.preloadWindowScenes(renderer, true);
+        void reflectionMap.preload(live.current.environment.quality);
         if (!atWindow(mode.current)) {
           windowView.current = { yaw: windowEye.yaw, pitch: windowEye.pitch, fov: camera.fov };
           walkTo(windowEye.x, windowEye.y, windowEye.z);
@@ -1235,8 +1242,30 @@ function CameraRig(
   }, [model, blinds, angle, reducedMotion]);
 
   useEffect(() => {
+    if (!props.roomVisible || !shaded) return;
+    let cancelled = false;
+    const warmHiResWindow = () => {
+      if (cancelled) return;
+      void model.preloadWindowScenes(gl as T.WebGLRenderer, true);
+      void reflections.current?.preload(live.current.environment.quality);
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      const idle = window.requestIdleCallback(warmHiResWindow, { timeout: 2500 });
+      return () => {
+        cancelled = true;
+        window.cancelIdleCallback(idle);
+      };
+    }
+    const timer = window.setTimeout(warmHiResWindow, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [gl, model, props.roomVisible, shaded]);
+
+  useEffect(() => {
     shadowWarmup.current = 1;
-  }, [props.environment.quality]);
+  }, [props.environment.quality, props.environment.night, props.environment.weather]);
 
   useFrame(({ clock, size }, elapsed) => {
     const delta = Math.min(elapsed, 0.05);

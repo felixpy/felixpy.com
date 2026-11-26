@@ -2143,6 +2143,20 @@ test('the waterfront continues to move in 3D while the view is still @webgl', as
       { timeout: 10_000 },
     )
     .toBeGreaterThan(7);
+  const remotePoint = await page.evaluate(() => window.__studioReview!.project('Window remote'));
+  expect(remotePoint).not.toBeNull();
+  expect(remotePoint!.x).toBeGreaterThan(20);
+  expect(remotePoint!.x).toBeLessThan(1260);
+  expect(remotePoint!.y).toBeGreaterThan(20);
+  expect(remotePoint!.y).toBeLessThan(780);
+  await page.mouse.move(remotePoint!.x, remotePoint!.y);
+  await expect(
+    page.locator('.world-cue').getByText('Pick up the window remote', { exact: true }),
+  ).toBeVisible();
+  await page.mouse.click(remotePoint!.x, remotePoint!.y);
+  await expect(page.locator('.studio')).toHaveAttribute('data-mode', 'remote');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.studio')).toHaveAttribute('data-mode', 'window');
   const before = await page.evaluate(() => window.__studioReview!.camera());
   await page.mouse.move(410, 415);
   await page.mouse.down();

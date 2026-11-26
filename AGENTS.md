@@ -9,4 +9,5 @@
 - Group production media by purpose under `public/media/`. Record third-party sources and terms in [Media](docs/media.md) and update `public/media/credits.txt` as needed. Use `uv` for Python asset scripts and keep Python dependencies out of the global environment.
 - Keep temporary screenshots, recordings, authoring exports and review material in local, untracked storage. Keep tests and maintained documentation in their tracked directories.
 - Keep long-term standards in topic-named files under `docs/` and each development plan in `docs/specs/YYYY-MM-DD-title.md`. Link the applicable standards and reproducible checks from the plan.
+- Follow the rendering, shader, asset compression, and preloading guardrails in [Performance standards](docs/performance-standards.md) when modifying `src/scene/` or `public/media/`.
 - `npm ci` installs the Husky hooks. Use `npm run hooks:install` to reinstall them. Oxfmt checks staged files before committing. Use Conventional Commit subjects for commits and pull request titles.

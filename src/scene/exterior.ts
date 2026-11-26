@@ -5,7 +5,7 @@ import type { Environment } from '../app/environment';
 import { group, mesh } from './geometry';
 import type { buildRainGlass } from './rain-glass';
 import { panoramaMaterial, panoramaMeshName, panoramaPoint, bankSlope } from './window-depth';
-import { windowExposure, type WindowExposure } from '../content/window-scenes';
+import { windowCities, windowExposure, type WindowExposure } from '../content/window-scenes';
 import { riverFerry, type FerryWarmup } from './river-ferry';
 import { roomExteriorScissor } from './room-exterior-scissor';
 
@@ -44,25 +44,54 @@ export function buildExterior(
   const world = group(root, 'Outdoor volume');
   world.add(glass.highlights);
   const depths = new Map<string, T.Texture>();
+  const depthPromises = new Map<string, Promise<void>>();
   const tieredPanoramas = new Set(['shanghai-day', 'new-york-night']);
   const hiResLoader = new T.TextureLoader(defaultStudioLoadingManager);
-  function loadPhoto(asset: string, roomTier = false) {
+  let activeRenderer: T.WebGLRenderer | undefined;
+  function initReadyTexture(texture: T.Texture) {
+    if (!activeRenderer) return;
+    const typed = texture as T.Texture & { isCompressedTexture?: boolean };
+    if (typed.isCompressedTexture) {
+      if (Array.isArray(texture.mipmaps) && texture.mipmaps.length > 0) {
+        activeRenderer.initTexture(texture);
+      }
+      return;
+    }
+    if (texture.image) activeRenderer.initTexture(texture);
+  }
+  function loadPhoto(
+    asset: string,
+    roomTier = false,
+    photoLoader = loader,
+    onDone?: (texture?: T.Texture) => void,
+  ) {
     const file = roomTier && tieredPanoramas.has(asset) ? asset + '-room' : asset;
-    return loadStudioTexture(loader, '/media/panoramas/' + file + '.webp', {
+    return loadStudioTexture(photoLoader, '/media/panoramas/' + file + '.webp', {
       srgb: true,
       anisotropy: 8,
+      onLoad: (loaded) => {
+        initReadyTexture(loaded);
+        onDone?.(loaded);
+      },
+      onError: () => onDone?.(),
     });
   }
-  function loadPlate(scene: WindowExposure) {
+  function loadPlate(scene: WindowExposure, plateLoader = loader, preferHiRes = false) {
     const tiered = tieredPanoramas.has(scene.asset);
-    const photo = loadPhoto(scene.asset, tiered);
+    const useRoomTier = tiered && !preferHiRes;
+    let photoDone!: () => void;
+    const photoReady = new Promise<void>((resolve) => {
+      photoDone = resolve;
+    });
+    const photo = loadPhoto(scene.asset, useRoomTier, plateLoader, () => photoDone());
     if (scene.kind === 'land') {
       photo.wrapS = T.RepeatWrapping;
       return {
         scene,
         photo,
         tiered,
-        hiResRequested: false,
+        hiResRequested: !useRoomTier,
+        ready: photoReady,
         depth: photo,
         bank: 0,
         range: new T.Vector2(650, 2000),
@@ -72,8 +101,22 @@ export function buildExterior(
       };
     }
     let depth = depths.get(scene.depth);
+    let depthReady = depthPromises.get(scene.depth);
     if (!depth) {
-      depth = loader.load('/media/panoramas/' + scene.depth + '.png');
+      let resolveDepth!: () => void;
+      depthReady = new Promise<void>((resolve) => {
+        resolveDepth = resolve;
+      });
+      depthPromises.set(scene.depth, depthReady);
+      depth = plateLoader.load(
+        '/media/panoramas/' + scene.depth + '.png',
+        (loaded) => {
+          initReadyTexture(loaded);
+          resolveDepth();
+        },
+        undefined,
+        () => resolveDepth(),
+      );
       depth.magFilter = depth.minFilter = T.LinearFilter;
       depth.generateMipmaps = false;
       depths.set(scene.depth, depth);
@@ -84,7 +127,8 @@ export function buildExterior(
       scene,
       photo,
       tiered,
-      hiResRequested: false,
+      hiResRequested: !useRoomTier,
+      ready: Promise.all([photoReady, depthReady]).then(() => {}),
       depth,
       range: new T.Vector2(...scene.range),
       bank,
@@ -94,9 +138,9 @@ export function buildExterior(
     };
   }
   function upgradePlateToHiRes(plateEntry: ReturnType<typeof loadPlate>) {
-    if (!plateEntry.tiered || plateEntry.hiResRequested) return;
+    if (!plateEntry.tiered || plateEntry.hiResRequested) return Promise.resolve();
     plateEntry.hiResRequested = true;
-    void loadStudioTextureAsync(
+    return loadStudioTextureAsync(
       hiResLoader,
       '/media/panoramas/' + plateEntry.scene.asset + '.webp',
       {
@@ -106,6 +150,7 @@ export function buildExterior(
       },
     )
       .then((hiRes) => {
+        initReadyTexture(hiRes);
         const previous = plateEntry.photo;
         plateEntry.photo = hiRes;
         if (plateEntry.scene.kind === 'land') plateEntry.depth = hiRes;
@@ -116,14 +161,33 @@ export function buildExterior(
       });
   }
   const plates = new Map<WindowExposure, ReturnType<typeof loadPlate>>();
-  function view(env: Environment) {
+  function view(env: Environment, preferHiRes = false) {
     const scene = windowExposure(env.city, env.night, env.weather === '晴');
     let plate = plates.get(scene);
     if (!plate) {
-      plate = loadPlate(scene);
+      plate = loadPlate(scene, loader, preferHiRes);
       plates.set(scene, plate);
     }
     return plate;
+  }
+  function preloadExposures(renderer?: T.WebGLRenderer, hiRes = false): Promise<void> {
+    if (renderer) activeRenderer = renderer;
+    const tasks: Promise<void>[] = [];
+    for (const city of Object.values(windowCities)) {
+      for (const exposure of [city.clear, city.overcast, city.night]) {
+        let entry = plates.get(exposure);
+        if (!entry) {
+          entry = loadPlate(exposure, hiResLoader, hiRes);
+          plates.set(exposure, entry);
+          tasks.push(entry.ready);
+        } else {
+          initReadyTexture(entry.photo);
+          if (entry.depth !== entry.photo) initReadyTexture(entry.depth);
+          if (hiRes) tasks.push(upgradePlateToHiRes(entry));
+        }
+      }
+    }
+    return Promise.allSettled(tasks).then(() => {});
   }
   const { material, uniforms, createMaterial } = panoramaMaterial(
     glass,
@@ -250,16 +314,17 @@ export function buildExterior(
   return {
     world,
     prepareWaterMotion: deferWaterMotion ? prepareWaterMotion : undefined,
+    preloadExposures,
     update(env: Environment, delta: number, closeWindow = false) {
       const windowOnly = keepStaticMaterial && env.quality === 'low';
       const visibleMotion =
         windowOnly && (!closeWindow || env.reducedMotion) ? undefined : movingMaterial;
       if (keepStaticMaterial) plate.material = visibleMotion ?? material;
       if (!env.reducedMotion && visibleMotion) time += delta;
-      const desired = view(env);
+      const desired = view(env, closeWindow);
       if (closeWindow) {
-        upgradePlateToHiRes(desired);
-        if (shown !== desired) upgradePlateToHiRes(shown);
+        void upgradePlateToHiRes(desired);
+        if (shown !== desired) void upgradePlateToHiRes(shown);
       }
       if (desired.photo.image && desired.depth.image && desired !== target) {
         if (desired === shown) {

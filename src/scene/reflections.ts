@@ -132,7 +132,36 @@ export function studioReflections(
       );
     });
   }
+  function ensureFull(time: Time): Promise<void> {
+    const probe = probes[time];
+    if (probe.full) return Promise.resolve();
+    if (probe.pending) return probe.pending;
+    const pmremPath = '/media/lighting/desk-' + time + '.pmrem.gz';
+    const url = defaultStudioLoadingManager.resolveURL(pmremPath);
+    probe.pending = fetch(url)
+      .then((response) => packedBuffer(response))
+      .then((buffer) => {
+        const cube = decodePmrem(buffer);
+        if (disposed) {
+          cube.dispose();
+          return;
+        }
+        renderer.initTexture(cube);
+        probe.full = cube;
+        probe.pending = undefined;
+        if (time === active && detailed) scene.environment = cube;
+      })
+      .catch(() => {
+        if (disposed) return;
+        return loadHdrFallback(time, probe);
+      });
+    return probe.pending;
+  }
   return {
+    preload(quality: Environment['quality']): Promise<void> {
+      if (!canPrefilter || quality !== 'high') return Promise.resolve();
+      return Promise.all([ensureFull('day'), ensureFull('night')]).then(() => {});
+    },
     select(
       night: boolean,
       quality: Environment['quality'],
@@ -157,32 +186,13 @@ export function studioReflections(
         scene.environment = probeTexture(probe.full);
         return Promise.resolve();
       }
-      if (!skipPreview) {
+      if (!skipPreview && !scene.environment) {
         probe.preview ??= prefilter(previewTexture(time));
         scene.environment = probeTexture(probe.preview);
-      } else if (probe.preview) {
+      } else if (probe.preview && !scene.environment) {
         scene.environment = probeTexture(probe.preview);
       }
-      if (probe.pending) return probe.pending;
-      const pmremPath = '/media/lighting/desk-' + time + '.pmrem.gz';
-      const url = defaultStudioLoadingManager.resolveURL(pmremPath);
-      probe.pending = fetch(url)
-        .then((response) => packedBuffer(response))
-        .then((buffer) => {
-          const cube = decodePmrem(buffer);
-          if (disposed) {
-            cube.dispose();
-            return;
-          }
-          probe.full = cube;
-          probe.pending = undefined;
-          if (time === active && detailed) scene.environment = cube;
-        })
-        .catch(() => {
-          if (disposed) return;
-          return loadHdrFallback(time, probe);
-        });
-      return probe.pending;
+      return ensureFull(time);
     },
     dispose() {
       disposed = true;
