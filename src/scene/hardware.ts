@@ -236,6 +236,110 @@ const AZOTH_LAYERS: Record<AzothExplodeLayer, AzothLayerConfig> = {
 const AZOTH_LAYER_NAMES = Object.keys(AZOTH_LAYERS) as AzothExplodeLayer[];
 const AZOTH_OPEN_OMEGA = 9.5;
 const AZOTH_CLOSE_OMEGA = 14;
+const AZOTH_KEYCAP_LEGEND_MIN_Y = 0.022;
+const AZOTH_KEYCAP_LEGEND_MIN_NZ = 0.85;
+
+function buildAzothSubGeometry(source: T.BufferGeometry, triangleIndices: readonly number[]) {
+  const remap = new Map<number, number>();
+  const ordered: number[] = [];
+  const newIndices = new Array<number>(triangleIndices.length);
+  for (let i = 0; i < triangleIndices.length; i++) {
+    const oldIndex = triangleIndices[i];
+    let nextIndex = remap.get(oldIndex);
+    if (nextIndex === undefined) {
+      nextIndex = ordered.length;
+      remap.set(oldIndex, nextIndex);
+      ordered.push(oldIndex);
+    }
+    newIndices[i] = nextIndex;
+  }
+
+  const geometry = new T.BufferGeometry();
+  const vertexCount = ordered.length;
+  for (const [name, attr] of Object.entries(source.attributes)) {
+    const { itemSize } = attr;
+    if (attr instanceof T.InterleavedBufferAttribute) {
+      const values = new Float32Array(vertexCount * itemSize);
+      for (let i = 0; i < vertexCount; i++) {
+        const src = ordered[i];
+        const offset = i * itemSize;
+        values[offset] = attr.getX(src);
+        if (itemSize > 1) values[offset + 1] = attr.getY(src);
+        if (itemSize > 2) values[offset + 2] = attr.getZ(src);
+        if (itemSize > 3) values[offset + 3] = attr.getW(src);
+      }
+      geometry.setAttribute(name, new T.BufferAttribute(values, itemSize, false));
+    } else {
+      const srcArray = attr.array;
+      const ArrayCtor = srcArray.constructor as new (length: number) => T.TypedArray;
+      const dstArray = new ArrayCtor(vertexCount * itemSize);
+      for (let i = 0; i < vertexCount; i++) {
+        const srcOffset = ordered[i] * itemSize;
+        const dstOffset = i * itemSize;
+        for (let c = 0; c < itemSize; c++) {
+          dstArray[dstOffset + c] = srcArray[srcOffset + c];
+        }
+      }
+      geometry.setAttribute(name, new T.BufferAttribute(dstArray, itemSize, attr.normalized));
+    }
+  }
+  const indexArray =
+    vertexCount > 65535 ? new Uint32Array(newIndices) : new Uint16Array(newIndices);
+  geometry.setIndex(new T.BufferAttribute(indexArray, 1));
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function splitAzothSilverTransfer(source: T.BufferGeometry) {
+  const position = source.getAttribute('position');
+  if (!position) return null;
+  const index = source.index;
+  const triangleCount = Math.floor((index ? index.count : position.count) / 3);
+  const chassisIndices: number[] = [];
+  const keycapIndices: number[] = [];
+
+  for (let t = 0; t < triangleCount; t++) {
+    const i0 = index ? index.getX(t * 3) : t * 3;
+    const i1 = index ? index.getX(t * 3 + 1) : t * 3 + 1;
+    const i2 = index ? index.getX(t * 3 + 2) : t * 3 + 2;
+
+    const x0 = position.getX(i0);
+    const y0 = position.getY(i0);
+    const z0 = position.getZ(i0);
+    const x1 = position.getX(i1);
+    const y1 = position.getY(i1);
+    const z1 = position.getZ(i1);
+    const x2 = position.getX(i2);
+    const y2 = position.getY(i2);
+    const z2 = position.getZ(i2);
+
+    const cy = (y0 + y1 + y2) / 3;
+    const ux = x1 - x0;
+    const uy = y1 - y0;
+    const uz = z1 - z0;
+    const vx = x2 - x0;
+    const vy = y2 - y0;
+    const vz = z2 - z0;
+    const nx = uy * vz - uz * vy;
+    const ny = uz * vx - ux * vz;
+    const nz = ux * vy - uy * vx;
+    const len = Math.hypot(nx, ny, nz);
+    const faceNz = len > 0 ? nz / len : 0;
+
+    if (cy > AZOTH_KEYCAP_LEGEND_MIN_Y && faceNz > AZOTH_KEYCAP_LEGEND_MIN_NZ) {
+      keycapIndices.push(i0, i1, i2);
+    } else {
+      chassisIndices.push(i0, i1, i2);
+    }
+  }
+
+  if (chassisIndices.length === 0 || keycapIndices.length === 0) return null;
+  return {
+    chassis: buildAzothSubGeometry(source, chassisIndices),
+    keycaps: buildAzothSubGeometry(source, keycapIndices),
+  };
+}
 
 function stepCriticallyDamped(
   state: { value: number; velocity: number },
@@ -353,6 +457,7 @@ export function keyboard(
     lighting.set('Azoth diffuser ' + suffix, light);
     lighting.set('Azoth legend ' + suffix, legendMaterials[index]);
   });
+  let silverTransferMesh: T.Mesh | undefined;
   loadDisplayModel(unit, '/media/models/rog-azoth-extreme.glb', manager, {
     mesh(part) {
       if (!(part.material instanceof T.Material)) return;
@@ -371,6 +476,9 @@ export function keyboard(
         registerLayerMesh(part, 'wristpad');
       } else {
         part.userData.azothLayer = 'chassis';
+        if (matName === 'Azoth · silver transfer') {
+          silverTransferMesh = part;
+        }
       }
       const replacement = lighting.get(matName);
       if (replacement) {
@@ -381,6 +489,31 @@ export function keyboard(
         }
         part.material.dispose();
         part.material = replacement;
+      }
+    },
+    mounted() {
+      const part = silverTransferMesh;
+      const partParent = part?.parent;
+      silverTransferMesh = undefined;
+      if (part && partParent) {
+        const split = splitAzothSilverTransfer(part.geometry);
+        if (split) {
+          part.geometry.dispose();
+          part.geometry = split.chassis;
+          part.userData.azothLayer = 'chassis';
+          const legendMesh = new T.Mesh(split.keycaps, part.material);
+          legendMesh.name = part.name + ' · keycap legends';
+          legendMesh.position.copy(part.position);
+          legendMesh.quaternion.copy(part.quaternion);
+          legendMesh.scale.copy(part.scale);
+          legendMesh.castShadow = part.castShadow;
+          legendMesh.receiveShadow = part.receiveShadow;
+          legendMesh.layers.mask = part.layers.mask;
+          legendMesh.renderOrder = part.renderOrder;
+          legendMesh.userData.studioDynamic = true;
+          partParent.add(legendMesh);
+          registerLayerMesh(legendMesh, 'keycaps');
+        }
       }
     },
   });

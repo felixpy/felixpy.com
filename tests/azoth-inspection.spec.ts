@@ -70,6 +70,29 @@ test('a late Azoth switch delivery stays on the desk until the next exploded vie
           return { visible: group.visible, parts };
         }
       },
+      readAzothSilverTransfer() {
+        for (const scene of scenes) {
+          const kb = scene.getObjectByName('Mechanical keyboard');
+          if (!kb) continue;
+          const parts: { layer?: string; tris: number; dy: number; studioDynamic?: boolean }[] = [];
+          kb.traverse((node) => {
+            const mesh = node as Mesh;
+            if (!mesh.isMesh) return;
+            const material = mesh.material as Material | undefined;
+            if (material?.name !== 'Azoth · silver transfer') return;
+            const geo = mesh.geometry;
+            const tris = Math.floor((geo.index?.count ?? geo.attributes.position.count) / 3);
+            const rest = mesh.userData?.azothRestPos as Vector3 | undefined;
+            parts.push({
+              layer: mesh.userData?.azothLayer as string | undefined,
+              tris,
+              dy: rest ? mesh.position.y - rest.y : 0,
+              studioDynamic: mesh.userData?.studioDynamic as boolean | undefined,
+            });
+          });
+          return parts;
+        }
+      },
       readAzothLayers(): LayerOffsets | undefined {
         for (const scene of scenes) {
           const kb = scene.getObjectByName('Mechanical keyboard');
@@ -97,6 +120,16 @@ test('a late Azoth switch delivery stays on the desk until the next exploded vie
   const readLayers = () =>
     page.evaluate(() =>
       (window as Window & { readAzothLayers: () => LayerOffsets | undefined }).readAzothLayers(),
+    );
+  const readSilverTransfer = () =>
+    page.evaluate(() =>
+      (
+        window as Window & {
+          readAzothSilverTransfer: () =>
+            | { layer?: string; tris: number; dy: number; studioDynamic?: boolean }[]
+            | undefined;
+        }
+      ).readAzothSilverTransfer(),
     );
   const hold = Promise.withResolvers<void>();
   let requests = 0;
@@ -136,11 +169,22 @@ test('a late Azoth switch delivery stays on the desk until the next exploded vie
     expect(partialLayers.plate.dy).toBeGreaterThan(0.015);
     expect(partialLayers.pcb.dy).toBeGreaterThan(0.005);
     expect(partialLayers.wristpad.dz).toBeGreaterThan(0.018);
+    const explodedSilver = (await readSilverTransfer())!;
+    expect(explodedSilver).toHaveLength(2);
+    const silverChassis = explodedSilver.find((part) => part.layer === 'chassis');
+    const silverKeycaps = explodedSilver.find((part) => part.layer === 'keycaps');
+    expect(silverChassis?.tris).toBeGreaterThan(0);
+    expect(silverChassis?.dy).toBe(0);
+    expect(silverKeycaps?.tris).toBeGreaterThan(0);
+    expect(silverKeycaps?.studioDynamic).toBe(true);
+    expect(silverKeycaps?.dy).toBeCloseTo(partialLayers.keycaps.dy, 5);
     await leaveView();
     expect(await read()).toEqual({ visible: false, parts: [] });
     const collapsed = (await readLayers())!;
     expect(collapsed.keycaps.dy).toBeCloseTo(0, 5);
     expect(collapsed.wristpad.dz).toBeCloseTo(0, 5);
+    const collapsedSilver = (await readSilverTransfer())!;
+    expect(collapsedSilver.find((part) => part.layer === 'keycaps')?.dy).toBeCloseTo(0, 5);
 
     const deliveredResponse = page.waitForResponse('**/rog-azoth-extreme-switches.glb*');
     hold.resolve();

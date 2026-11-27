@@ -708,9 +708,9 @@ export function* buildStudioSteps(
       },
       orbit: {
         center: [0, 0.056, 0.008],
-        azimuth: [0.34, -1.15, 1.15],
-        elevation: [0.3, 0.08, 1.05],
-        distance: [0.45, 0.22, 0.64],
+        azimuth: [0.74, -1.15, 1.15],
+        elevation: [0.58, 0.08, 1.05],
+        distance: [0.55, 0.22, 0.68],
         closeFov: 34,
       },
     },
