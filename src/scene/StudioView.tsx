@@ -211,6 +211,7 @@ function CameraRig(
     hardwareId: 'case',
     center: new T.Vector3(),
     object: undefined as T.Object3D | undefined,
+    target: undefined as Extract<Target, { type: 'case' }> | undefined,
   });
   const returningFromTower = useRef(false);
   const wallFocus = useRef<WallFocus | null>(null);
@@ -281,7 +282,9 @@ function CameraRig(
   }
 
   const openSequence = useRef(0);
-  const inspectedTarget = useRef<Extract<Target, { type: 'inspect' }> | undefined>(undefined);
+  const inspectedTarget = useRef<Extract<Target, { type: 'inspect' | 'case' }> | undefined>(
+    undefined,
+  );
 
   function setMode(next: Mode, app?: AppID, link?: InspectionLink) {
     openSequence.current++;
@@ -309,11 +312,17 @@ function CameraRig(
     hoverPickerRef.current?.cancelHover();
     mode.current = next;
     const held = inspection.current?.target;
-    const selected = next === 'inspect' && held?.type === 'inspect' ? held : undefined;
+    const selected =
+      next === 'inspect' && held?.type === 'inspect'
+        ? held
+        : next === 'case'
+          ? caseView.current.target
+          : undefined;
     if (selected !== inspectedTarget.current) {
       inspectedTarget.current?.onInspect?.(false, live.current.environment.reducedMotion);
       selected?.onInspect?.(true, live.current.environment.reducedMotion);
       inspectedTarget.current = selected;
+      shadowWarmup.current = 2;
     }
     const heroLru = heroLruRef.current;
     if (heroLru) {
@@ -477,7 +486,7 @@ function CameraRig(
         }
         element.style.cursor = target
           ? 'pointer'
-          : canLookAround(mode.current) || mode.current === 'bookshelf'
+          : canLookAround(mode.current) || mode.current === 'bookshelf' || mode.current === 'case'
             ? 'grab'
             : '';
       },
@@ -808,6 +817,7 @@ function CameraRig(
           hardwareId: target.id,
           center: target.object.localToWorld(new T.Vector3(...orbit.center)),
           object: target.object,
+          target,
         };
         setMode('case');
         if (live.current.environment.reducedMotion) {
@@ -815,7 +825,10 @@ function CameraRig(
           camera.updateProjectionMatrix();
           camera.updateMatrixWorld(true);
         }
-        live.current.onHint(local(live.current.environment.locale, target.english, target.label));
+        const locale = live.current.environment.locale;
+        live.current.onHint(
+          target.caption?.[locale] ?? local(locale, target.english, target.label),
+        );
         return;
       }
       if (target.type === 'inspect' || target.type === 'remote') {

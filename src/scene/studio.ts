@@ -273,6 +273,7 @@ export function* buildStudioSteps(
     evictSwitches,
     selectDetail: selectKeySwitches,
     preloadHero: preloadKeyboardHero,
+    updateExplosion: updateKeyboardExplosion,
   } = keyboard(interior, manager, keyLight, detailMounted);
   if (preloadInspection) {
     deferDesk(() => prepareMacDetail(rearLoader));
@@ -696,14 +697,22 @@ export function* buildStudioSteps(
     })),
     {
       id: 'keyboard',
-      type: 'inspect',
+      type: 'case',
       object: keys,
       onInspect: selectKeySwitches,
-      label: '检视机械键盘',
-      english: 'Inspect the mechanical keyboard',
-      size: 0.335,
-      viewDistance: 0.72,
-      pose: [1.45, -0.035, 0],
+      label: '查看机械键盘分层视图',
+      english: 'Exploded mechanical keyboard',
+      caption: {
+        en: 'ROG Azoth Extreme · Exploded View',
+        zh: 'ROG Azoth Extreme · 机械键盘分层视图',
+      },
+      orbit: {
+        center: [0, 0.056, 0.008],
+        azimuth: [0.74, -1.15, 1.15],
+        elevation: [0.58, 0.08, 1.05],
+        distance: [0.55, 0.22, 0.68],
+        closeFov: 34,
+      },
     },
     {
       id: 'mouse',
@@ -1221,6 +1230,7 @@ export function* buildStudioSteps(
         angle,
       } = window.update(env, delta, closeWindow);
       slats.set(pitch, angle);
+      const keyboardMoving = updateKeyboardExplosion(delta, env.reducedMotion);
       const doorMoving = architectureParts.update(delta, clock, env.reducedMotion);
       const cabinetMoving = bench.cabinet.update(delta, env.reducedMotion);
       const ease = env.reducedMotion ? 1 : 1 - Math.exp(-delta * 5);
@@ -1377,7 +1387,13 @@ export function* buildStudioSteps(
         slideDrawer(activeDrawer, extension);
         if (!open && extension === 0) activeDrawer = -1;
       }
-      return previousExtension !== extension || blindsMoving || doorMoving || cabinetMoving;
+      return (
+        previousExtension !== extension ||
+        blindsMoving ||
+        doorMoving ||
+        cabinetMoving ||
+        keyboardMoving
+      );
     },
   };
 }

@@ -49,7 +49,12 @@ export type Target = {
         | 'board'
         | 'door';
     }
-  | { type: 'case'; orbit?: HardwareOrbit }
+  | {
+      type: 'case';
+      orbit?: HardwareOrbit;
+      onInspect?: (active: boolean, reducedMotion: boolean) => void;
+      caption?: { en: string; zh: string };
+    }
   | { type: 'computer'; app?: AppID }
   | { type: 'drawer' | 'key' | 'cabinet'; index: number }
 );
