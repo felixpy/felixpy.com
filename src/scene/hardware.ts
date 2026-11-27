@@ -214,6 +214,42 @@ export function tower(
   };
 }
 
+type AzothExplodeLayer = 'wristpad' | 'pcb' | 'plate' | 'bases' | 'stems' | 'lids' | 'keycaps';
+
+type AzothLayerConfig = {
+  dy: number;
+  dz: number;
+  openDelay: number;
+  closeDelay: number;
+};
+
+const AZOTH_LAYERS: Record<AzothExplodeLayer, AzothLayerConfig> = {
+  wristpad: { dy: 0, dz: 0.02, openDelay: 0.0, closeDelay: 0.06 },
+  pcb: { dy: 0.007, dz: 0, openDelay: 0.04, closeDelay: 0.05 },
+  plate: { dy: 0.018, dz: 0, openDelay: 0.08, closeDelay: 0.04 },
+  bases: { dy: 0.033, dz: 0, openDelay: 0.12, closeDelay: 0.03 },
+  stems: { dy: 0.051, dz: 0, openDelay: 0.16, closeDelay: 0.02 },
+  lids: { dy: 0.07, dz: 0, openDelay: 0.2, closeDelay: 0.01 },
+  keycaps: { dy: 0.096, dz: 0, openDelay: 0.24, closeDelay: 0.0 },
+};
+
+const AZOTH_LAYER_NAMES = Object.keys(AZOTH_LAYERS) as AzothExplodeLayer[];
+const AZOTH_OPEN_OMEGA = 9.5;
+const AZOTH_CLOSE_OMEGA = 14;
+
+function stepCriticallyDamped(
+  state: { value: number; velocity: number },
+  target: number,
+  omega: number,
+  dt: number,
+) {
+  const diff = state.value - target;
+  const temp = (state.velocity + omega * diff) * dt;
+  const decay = Math.exp(-omega * dt);
+  state.velocity = (state.velocity - omega * temp) * decay;
+  state.value = target + (diff + temp) * decay;
+}
+
 export function keyboard(
   parent: T.Object3D,
   manager: T.LoadingManager,
@@ -225,6 +261,7 @@ export function keyboard(
     deskSetup.mat.top,
     deskSetup.inputZ,
   ]);
+  unit.userData.studioDynamic = true;
   const legendMaterials = aura.map(
     () => new T.MeshStandardMaterial({ color: '#c7c7c3', roughness: 0.59, side: T.DoubleSide }),
   );
@@ -235,11 +272,80 @@ export function keyboard(
   const switches = group(unit, 'Azoth switch assembly');
   switches.userData.studioWarmable = true;
   details.close(switches);
-  let loadSwitches = deferredDisplayModel(
-    switches,
-    '/media/models/rog-azoth-extreme-switches.glb',
-    { mounted: detailMounted },
-  );
+
+  const layerMeshes: Record<AzothExplodeLayer, T.Mesh[]> = {
+    wristpad: [],
+    pcb: [],
+    plate: [],
+    bases: [],
+    stems: [],
+    lids: [],
+    keycaps: [],
+  };
+  const layerState: Record<AzothExplodeLayer, { value: number; velocity: number }> = {
+    wristpad: { value: 0, velocity: 0 },
+    pcb: { value: 0, velocity: 0 },
+    plate: { value: 0, velocity: 0 },
+    bases: { value: 0, velocity: 0 },
+    stems: { value: 0, velocity: 0 },
+    lids: { value: 0, velocity: 0 },
+    keycaps: { value: 0, velocity: 0 },
+  };
+  let targetExploded = false;
+  let phaseTime = 0;
+
+  function applyMeshOffset(part: T.Mesh, layer: AzothExplodeLayer, factor: number) {
+    let rest = part.userData.azothRestPos as T.Vector3 | undefined;
+    if (!rest) {
+      rest = part.position.clone();
+      part.userData.azothRestPos = rest;
+    }
+    const { dy, dz } = AZOTH_LAYERS[layer];
+    part.position.set(rest.x, rest.y + dy * factor, rest.z + dz * factor);
+  }
+
+  function registerLayerMesh(part: T.Mesh, layer: AzothExplodeLayer) {
+    part.userData.azothLayer = layer;
+    part.userData.azothRestPos = part.position.clone();
+    layerMeshes[layer].push(part);
+    const factor = layerState[layer].value;
+    if (factor > 0) applyMeshOffset(part, layer, factor);
+  }
+
+  function applyAllLayers() {
+    for (const layer of AZOTH_LAYER_NAMES) {
+      const factor = layerState[layer].value;
+      const meshes = layerMeshes[layer];
+      for (let i = 0; i < meshes.length; i++) {
+        applyMeshOffset(meshes[i], layer, factor);
+      }
+    }
+    unit.updateMatrixWorld(true);
+  }
+
+  function createSwitchLoader() {
+    return deferredDisplayModel(switches, '/media/models/rog-azoth-extreme-switches.glb', {
+      mesh(part) {
+        if (!(part.material instanceof T.Material)) return;
+        const matName = part.material.name;
+        if (matName === 'Azoth · clear switch lid') {
+          registerLayerMesh(part, 'lids');
+        } else if (matName === 'Azoth · snow-white POM stem') {
+          registerLayerMesh(part, 'stems');
+        } else if (matName === 'Azoth · NX Snow lower POM') {
+          registerLayerMesh(part, 'bases');
+        }
+      },
+      mounted(scene) {
+        if (AZOTH_LAYER_NAMES.some((layer) => layerState[layer].value > 0)) {
+          unit.updateMatrixWorld(true);
+        }
+        detailMounted(scene);
+      },
+    });
+  }
+
+  let loadSwitches = createSwitchLoader();
   const prepareSwitches = (loaderManager?: T.LoadingManager) => loadSwitches(loaderManager);
   if (switches.visible) void prepareSwitches(manager);
   aura.forEach((light, index) => {
@@ -250,7 +356,23 @@ export function keyboard(
   loadDisplayModel(unit, '/media/models/rog-azoth-extreme.glb', manager, {
     mesh(part) {
       if (!(part.material instanceof T.Material)) return;
-      const replacement = lighting.get(part.material.name);
+      const matName = part.material.name;
+      if (
+        matName === 'Azoth · graphite doubleshot PBT' ||
+        matName === 'Azoth · modifiers' ||
+        matName.startsWith('Azoth legend ')
+      ) {
+        registerLayerMesh(part, 'keycaps');
+      } else if (matName === 'Azoth · carbon-fiber positioning plate') {
+        registerLayerMesh(part, 'plate');
+      } else if (matName === 'Azoth · PCB silk' || matName.startsWith('Azoth diffuser ')) {
+        registerLayerMesh(part, 'pcb');
+      } else if (matName === 'Azoth · silicone wrist pad') {
+        registerLayerMesh(part, 'wristpad');
+      } else {
+        part.userData.azothLayer = 'chassis';
+      }
+      const replacement = lighting.get(matName);
       if (replacement) {
         if (replacement === badge && part.material instanceof T.MeshStandardMaterial) {
           badge.map = part.material.map;
@@ -262,26 +384,89 @@ export function keyboard(
       }
     },
   });
+
+  function snapExplosion(open: boolean) {
+    const goal = open ? 1 : 0;
+    let changed = false;
+    for (const layer of AZOTH_LAYER_NAMES) {
+      const state = layerState[layer];
+      if (state.value !== goal || state.velocity !== 0) {
+        state.value = goal;
+        state.velocity = 0;
+        changed = true;
+      }
+    }
+    if (changed) applyAllLayers();
+    details.select(open);
+    return changed;
+  }
+
   return {
     unit,
     legendMaterials,
     badge,
     prepareSwitches,
     evictSwitches() {
+      layerMeshes.lids.length = 0;
+      layerMeshes.stems.length = 0;
+      layerMeshes.bases.length = 0;
       details.select(false);
       disposeSubtree(switches, { keepRoot: true });
-      loadSwitches = deferredDisplayModel(
-        switches,
-        '/media/models/rog-azoth-extreme-switches.glb',
-        { mounted: detailMounted },
-      );
+      loadSwitches = createSwitchLoader();
     },
     preloadHero() {
       void prepareSwitches();
     },
-    selectDetail(inspecting: boolean) {
-      details.select(inspecting);
-      if (inspecting) void prepareSwitches();
+    selectDetail(inspecting: boolean, reducedMotion = false) {
+      if (inspecting !== targetExploded) {
+        targetExploded = inspecting;
+        phaseTime = 0;
+      }
+      if (inspecting) {
+        details.select(true);
+        void prepareSwitches();
+      }
+      if (reducedMotion) {
+        snapExplosion(inspecting);
+      }
+    },
+    updateExplosion(delta: number, reducedMotion: boolean) {
+      const goal = targetExploded ? 1 : 0;
+      if (reducedMotion) return snapExplosion(targetExploded);
+      let moving = false;
+      let anyOpen = false;
+      for (const layer of AZOTH_LAYER_NAMES) {
+        const state = layerState[layer];
+        if (state.value !== goal || state.velocity !== 0) {
+          moving = true;
+          break;
+        }
+      }
+      if (!moving) {
+        if (!targetExploded && switches.visible) details.select(false);
+        return false;
+      }
+      phaseTime += delta;
+      const omega = targetExploded ? AZOTH_OPEN_OMEGA : AZOTH_CLOSE_OMEGA;
+      for (const layer of AZOTH_LAYER_NAMES) {
+        const state = layerState[layer];
+        const delay = targetExploded
+          ? AZOTH_LAYERS[layer].openDelay
+          : AZOTH_LAYERS[layer].closeDelay;
+        if (phaseTime >= delay) {
+          stepCriticallyDamped(state, goal, omega, delta);
+          if (Math.abs(state.value - goal) < 0.0005 && Math.abs(state.velocity) < 0.001) {
+            state.value = goal;
+            state.velocity = 0;
+          }
+        }
+        if (state.value > 0) anyOpen = true;
+      }
+      applyAllLayers();
+      if (!targetExploded && !anyOpen) {
+        details.select(false);
+      }
+      return true;
     },
   };
 }
